@@ -1,0 +1,3 @@
+# Render agent context from Git-backed sources
+
+agentsmith will keep reusable instruction and skill sources in Git and render self-contained native artifacts rather than deploying symlinks or depending on harness-native includes. Rendering is necessary because selected machine and project concerns must contribute inside precise document sections, and because generated skills must flatten reusable building blocks without relying on agents to perform runtime chaining correctly. This costs us a small composition language and explicit generation step, but produces reviewable artifacts that work without agentsmith at runtime.
