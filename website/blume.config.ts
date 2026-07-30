@@ -4,6 +4,10 @@ export default defineConfig({
   title: "agentsmith",
   description: "Assemble agent instructions and skills for every machine and repository.",
   content: { root: "docs" },
+  deployment: {
+    site: "https://niieani.github.io",
+    base: "/agentsmith",
+  },
   theme: { accent: "emerald", radius: "md", mode: "system" },
   search: { provider: "orama" },
   markdown: {
