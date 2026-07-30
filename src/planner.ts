@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import {
   discoverProjectConfig,
   loadMachineConfig,
@@ -218,16 +218,8 @@ async function planSkills(
 ): Promise<void> {
   const sourceIds = await enabledSkills(scope, packs);
   const enabledSet = new Set(sourceIds);
-  for (const pack of packs) {
-    const skillContributionRoot = join(pack.directory, "skills");
-    if (!existsSync(skillContributionRoot)) continue;
-    const entries = await (await import("node:fs/promises")).readdir(skillContributionRoot, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const matching = sourceIds.some((id) => basename(id) === entry.name);
-      if (!matching) warning(context.diagnostics, "skill-contribution-inactive", `Pack ${pack.sourceId} contributes to non-enabled skill ${entry.name} in scope ${scope.path}`);
-    }
-  }
+  const contributions = (await Promise.all(packs.map((pack) => loadSkillContributions(pack, harness)))).flat();
+  const usedContributionPaths = new Set<string>();
 
   for (const sourceId of sourceIds) {
     const skill = await loadSkill(context.sources, sourceId);
@@ -238,7 +230,6 @@ async function planSkills(
       : adapter.projectSkillRoot(context.projectRoot!, scope.path);
     const destinationDir = join(root, skill.name);
     context.skillPlacements.push({ harness, scope: scope.path, name: skill.name, sourceId, destinationDir });
-    const contributions = (await Promise.all(packs.map((pack) => loadSkillContributions(pack, sourceId, harness)))).flat();
     const files = await walkFiles(skillDir);
     const markdownFiles = files.filter((file) => file.relativePath.endsWith(".md"));
     const slotsByFile = new Map<string, Set<string>>();
@@ -250,6 +241,9 @@ async function planSkills(
     }
     for (const [slot, owners] of ownersBySlot) {
       if (owners.length > 1) error(context.diagnostics, "skill-slot-duplicate", `Skill ${skill.name} declares slot ${slot} in multiple files: ${owners.join(", ")}`);
+      for (const contribution of contributions) {
+        if (contribution.slot === slot) usedContributionPaths.add(contribution.path);
+      }
     }
     let markdownBytes = 0;
     let supportBytes = 0;
@@ -258,11 +252,6 @@ async function planSkills(
       const destination = join(destinationDir, file.relativePath);
       if (file.relativePath.endsWith(".md")) {
         const fileContributions = contributions.filter((item) => slotsByFile.get(file.absolutePath)?.has(item.slot));
-        // Route unmatched contributions through SKILL.md so the renderer emits
-        // one precise missing-slot diagnostic rather than one per Markdown file.
-        if (file.relativePath === "SKILL.md") {
-          fileContributions.push(...contributions.filter((item) => !ownersBySlot.has(item.slot)));
-        }
         const rendered = await renderContent(
           context,
           new TextDecoder().decode(file.content),
@@ -319,6 +308,16 @@ async function planSkills(
       supportBytes,
       files: fileExplanations,
     });
+  }
+
+  for (const contribution of contributions) {
+    if (usedContributionPaths.has(contribution.path)) continue;
+    warning(
+      context.diagnostics,
+      "skill-contribution-inactive",
+      `Pack ${contribution.pack} contributes to skill slot ${contribution.slot}, but no enabled skill declares that slot in scope ${scope.path} for ${harness}`,
+      contribution.path,
+    );
   }
 
   for (const excluded of scope.skillsDisable) {
@@ -459,6 +458,17 @@ async function planScopes(context: PlannerContext, scopes: ScopeInput[]): Promis
   const sorted = [...scopes].sort((a, b) => scopeDepth(a.path) - scopeDepth(b.path) || (a.path < b.path ? -1 : 1));
   for (const scope of sorted) {
     const packs = scope.packs.map((sourceId) => loadPack(context.sources, sourceId));
+    for (const pack of packs) {
+      const coupledSkillRoot = join(pack.directory, "skills");
+      if (existsSync(coupledSkillRoot)) {
+        error(
+          context.diagnostics,
+          "skill-contribution-layout",
+          `Pack ${pack.sourceId} uses skill-name-coupled contributions; move reusable snippets from skills/<skill>/<slot>/ to skill-slots/<slot>/`,
+          coupledSkillRoot,
+        );
+      }
+    }
     for (const harness of scope.harnesses) {
       await planInstruction(context, scope, harness, packs);
       await planSkills(context, scope, harness, packs);

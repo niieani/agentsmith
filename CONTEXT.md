@@ -84,12 +84,16 @@ _Avoid_: Section, placeholder, hook
 An ordered piece of content contributed by a pack to a slot.
 _Avoid_: Fragment, addition
 
+**Skill Slot Contribution**:
+An ordered snippet supplied once by a selected pack and inserted into every enabled skill declaring the matching slot. It is identified by slot name, not consuming skill name.
+_Avoid_: Skill override, skill-specific snippet
+
 **Partial**:
 Reusable content included directly by a template or another partial. Unlike a snippet, a partial is selected by an explicit include rather than by pack membership and slot name.
 _Avoid_: Shared snippet, sub-template
 
 **Pack**:
-A named, additive collection of snippets and skill contributions representing one reusable concern, capability, or convention.
+A named, additive collection of instruction snippets, reusable Skill Slot Contributions, and optional skill enablements representing one concern, capability, or convention.
 _Avoid_: Category, tag, layer, scope
 
 **Project Pack**:

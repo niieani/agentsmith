@@ -1,4 +1,8 @@
 /dist/
+/website/dist/
+/website/.blume/
+/website/.blume-verify/
+/.blume-docs/
 /node_modules/
 *.local.md
 coverage/

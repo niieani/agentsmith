@@ -9,6 +9,10 @@
   "scripts": {
     "dev": "bun run src/cli.ts",
     "build": "bun build src/cli.ts --compile --outfile dist/asmith",
+    "docs:dev": "cd website && blume dev",
+    "docs:build": "cd website && blume build --strict",
+    "docs:check": "cd website && blume check --strict",
+    "docs:validate": "cd website && blume validate --strict",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "test:coverage": "bun test --coverage",
@@ -21,7 +25,8 @@
   },
   "devDependencies": {
     "@types/bun": "1.3.14",
-    "typescript": "7.0.2"
+    "blume": "1.0.3",
+    "typescript": "6.0.3"
   },
   "engines": {
     "bun": ">=1.3.0"

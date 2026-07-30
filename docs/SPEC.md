@@ -31,14 +31,13 @@ packs/
       codex/
         tools/
           20-codex.md
-    skills/
-      to-issues/
-        tracker/
-          10-github.md
-        harnesses/
-          claude-code/
-            tracker/
-              20-claude.md
+    skill-slots/
+      tracker/
+        10-github.md
+      harnesses/
+        claude-code/
+          tracker/
+            20-claude.md
 skills/
   to-issues/
     SKILL.md
@@ -217,19 +216,24 @@ Names use logical Source ID syntax. Unknown or malformed `agentsmith:` directive
 - A template or skill may declare a slot name at most once.
 - `slot` disappears when no snippets contribute.
 - `required-slot` fails when no snippets contribute.
-- A selected contribution whose slot is absent from the receiving Instruction Layer or enabled skill is an error.
+- A selected instruction contribution whose slot is absent from the receiving Instruction Layer is an error.
+- A selected skill-slot contribution is inserted into every enabled skill that declares its slot.
+- A selected skill-slot contribution that matches no enabled skill is a warning.
 - Contributions for a scope with no Instruction Layer are warnings.
-- Contributions for a skill not enabled at that scope are warnings.
 
 Instruction snippets for pack `github` and slot `tools` are discovered in this order:
 
 1. `packs/github/instructions/tools/*.md`
 2. `packs/github/instructions/<harness>/tools/*.md`
 
-Skill snippets for skill Source ID `to-issues` and slot `tracker` are discovered in this order:
+Reusable skill snippets for slot `tracker` are discovered in this order:
 
-1. `packs/github/skills/to-issues/tracker/*.md`
-2. `packs/github/skills/to-issues/harnesses/<harness>/tracker/*.md`
+1. `packs/github/skill-slots/tracker/*.md`
+2. `packs/github/skill-slots/harnesses/<harness>/tracker/*.md`
+
+Skill-slot contributions are keyed only by slot name, never by consuming skill name. The same snippet may therefore be rendered into multiple enabled skills. Skill sources and contributing packs may have different owners: for example, an `@project/tracker` pack may fill `tracker` slots in shared skills.
+
+A `skills/<skill>/<slot>/` directory inside a pack is invalid because it couples the provider to a consumer. Planning fails with a migration diagnostic directing the author to `skill-slots/<slot>/`.
 
 Across packs, the Scope Pack Selection order is primary.
 

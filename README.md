@@ -14,7 +14,7 @@ The command is `asmith`.
 - previews diffs, validates composition, and explains provenance;
 - refuses to overwrite dirty project artifacts or modified global artifacts.
 
-See [the product requirements](docs/PRD.md), [v1 specification](docs/SPEC.md), and [domain language](CONTEXT.md).
+See the [end-user documentation](website/docs/index.mdx), [product requirements](docs/PRD.md), [v1 specification](docs/SPEC.md), and [domain language](CONTEXT.md).
 
 ## Development
 
@@ -24,6 +24,12 @@ Requirements: Bun 1.3 or newer.
 bun install
 bun run check
 bun run build
+```
+
+Run the documentation site:
+
+```sh
+bun run docs:dev
 ```
 
 Run from source:

@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { lstat, readFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import {
   loadPackConfig,
   parseSourceId,
@@ -104,11 +104,9 @@ export async function loadInstructionContributions(pack: LoadedPack, harness: Ha
 
 export async function loadSkillContributions(
   pack: LoadedPack,
-  skillSourceId: string,
   harness: HarnessName,
 ): Promise<Contribution[]> {
-  const skillName = basename(parseSourceId(skillSourceId).name);
-  const root = join(pack.directory, "skills", skillName);
+  const root = join(pack.directory, "skill-slots");
   const common = existsSync(root)
     ? (await contributionsBySlot(root, pack.sourceId)).filter((item) => {
         const first = item.path.slice(root.length + 1).split(/[\\/]/)[0];

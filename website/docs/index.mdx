@@ -1,0 +1,45 @@
+---
+title: agentsmith
+description: Assemble the right instructions and skills for every agent, machine, and repository.
+sidebar:
+  order: 0
+---
+
+agentsmith turns reusable, Git-backed source material into the native context files that coding agents already understand. Define templates, packs, and skills once; select them for a machine or repository; then let `asmith` generate `AGENTS.md`, `CLAUDE.md`, and native skill directories.
+
+:::note
+agentsmith is an early v0.1 project. Build it from source while installation packaging is being finalized.
+:::
+
+## Why agentsmith?
+
+- Keep shared instructions consistent across long-running machines.
+- Adapt the same guidance to Codex and Claude Code.
+- Compose project context for repositories and monorepo subtrees.
+- Generate self-contained skills without runtime include chains.
+- Review every change and protect hand-edited output.
+
+## Two workflows
+
+### Global context
+
+A machine profile selects reusable packs and a template. `asmith global sync` fast-forwards the source repository and regenerates global instructions and skills.
+
+### Project context
+
+A checked-in project config declares repository and subtree scopes. `asmith project generate` renders local instruction layers and skills without pulling anything.
+
+## Start here
+
+1. [Install agentsmith](/getting-started/install).
+2. [Generate context for a project](/getting-started/first-project).
+3. [Set up synchronized global context](/getting-started/global-setup).
+
+If you want the model before the mechanics, read [packs and templates](/guides/packs-and-templates) and [projects and scopes](/guides/projects-and-scopes).
+
+## Learn by role
+
+- **I want consistent agents on my computers:** follow the [personal user walkthrough](/use-cases/personal-user).
+- **I write reusable agent skills:** follow the [skill author walkthrough](/use-cases/skill-author).
+- **I maintain context for a repository or monorepo:** follow the [project maintainer walkthrough](/use-cases/project-maintainer).
+- **I want to see what each feature buys me:** browse the [feature cookbook](/use-cases/feature-cookbook).
