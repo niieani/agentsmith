@@ -24,9 +24,8 @@ const codex: HarnessAdapter = {
   projectSkillDirectory: join(".agents", "skills"),
   globalInstruction(home): string {
     const actualHome = home ?? homedir();
-    const codexHome = home === undefined && process.env.CODEX_HOME
-      ? resolve(process.env.CODEX_HOME.replace(/^~(?=$|\/)/, actualHome))
-      : join(actualHome, ".codex");
+    const codexHome =
+      home === undefined && process.env.CODEX_HOME ? resolve(process.env.CODEX_HOME.replace(/^~(?=$|\/)/, actualHome)) : join(actualHome, ".codex");
     return join(codexHome, "AGENTS.md");
   },
   globalSkillRoot(home = homedir()): string {
@@ -41,12 +40,14 @@ const codex: HarnessAdapter = {
   preflightInstruction(destination): Diagnostic[] {
     const override = join(resolve(destination, ".."), "AGENTS.override.md");
     return existsSync(override)
-      ? [{
-          severity: "error",
-          code: "codex-override-shadow",
-          message: `${override} shadows the generated ${destination}`,
-          path: override,
-        }]
+      ? [
+          {
+            severity: "error",
+            code: "codex-override-shadow",
+            message: `${override} shadows the generated ${destination}`,
+            path: override,
+          },
+        ]
       : [];
   },
 };

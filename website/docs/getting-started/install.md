@@ -1,14 +1,36 @@
 ---
 title: Install agentsmith
-description: Build the asmith command from source and make it available on your PATH.
+description: Install the asmith command from Homebrew, a release archive, or source.
 ---
 
-agentsmith currently requires [Bun](https://bun.sh/) 1.3 or newer and Git.
+## Homebrew
+
+On Apple Silicon macOS, install the signed and notarized release:
+
+```sh
+brew install --cask niieani/tap/agentsmith
+asmith --version
+```
+
+## Release archives
+
+The [GitHub Releases page](https://github.com/niieani/agentsmith/releases) provides macOS ARM64, Linux x64, and Linux ARM64 archives plus `checksums.txt`.
+
+Verify a downloaded archive before installing:
+
+```sh
+shasum -a 256 -c checksums.txt
+tar -xzf agentsmith_*_linux_arm64.tar.gz
+install -m 755 asmith ~/.local/bin/asmith
+asmith --version
+```
 
 ## Build from source
 
+Building from source requires [Bun](https://bun.sh/) 1.3 or newer and Git.
+
 ```sh
-git clone <agentsmith-repository-url>
+git clone https://github.com/niieani/agentsmith.git
 cd agentsmith
 bun install
 bun run check

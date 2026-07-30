@@ -26,6 +26,17 @@ bun run check
 bun run build
 ```
 
+## Install
+
+Install the signed and notarized macOS ARM64 release with Homebrew:
+
+```sh
+brew install --cask niieani/tap/agentsmith
+```
+
+Linux ARM64 and x64 archives, macOS ARM64 archives, and checksums are published on the
+[GitHub Releases page](https://github.com/niieani/agentsmith/releases).
+
 Run the documentation site:
 
 ```sh

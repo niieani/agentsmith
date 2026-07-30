@@ -12,11 +12,7 @@ async function put(path: string, content: string): Promise<void> {
 
 async function run(command: string[], cwd: string) {
   const child = Bun.spawn(command, { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-    child.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   return { stdout, stderr, exitCode };
 }
 
@@ -34,16 +30,10 @@ describe("CLI project workflow", () => {
     await put(join(source, "skills", skill, "SKILL.md"), `---\nname: ${skill}\ndescription: Fixture workflow.\n---\n\nDo the fixture work.\n`);
     const machine = join(root, ".agents", "agentsmith", "config.toml");
     await put(machine, `version = 1\nsource = ${JSON.stringify(source)}\nprofile = "unused"\n`);
-    await put(join(project, ".config", "agentsmith", "config.toml"), [
-      "version = 1",
-      'harnesses = ["codex", "claude-code"]',
-      "",
-      "[[scopes]]",
-      'path = "."',
-      'template = "base"',
-      'packs = ["base"]',
-      "",
-    ].join("\n"));
+    await put(
+      join(project, ".config", "agentsmith", "config.toml"),
+      ["version = 1", 'harnesses = ["codex", "claude-code"]', "", "[[scopes]]", 'path = "."', 'template = "base"', 'packs = ["base"]', ""].join("\n"),
+    );
     expect((await run(["git", "init"], project)).exitCode).toBe(0);
     await run(["git", "config", "user.email", "fixture@example.test"], project);
     await run(["git", "config", "user.name", "Fixture"], project);
@@ -54,7 +44,9 @@ describe("CLI project workflow", () => {
     const env = { ...Bun.env, HOME: root };
     const firstChild = Bun.spawn(args, { cwd: project, env, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
     const [firstOut, firstErr, firstCode] = await Promise.all([
-      new Response(firstChild.stdout).text(), new Response(firstChild.stderr).text(), firstChild.exited,
+      new Response(firstChild.stdout).text(),
+      new Response(firstChild.stderr).text(),
+      firstChild.exited,
     ]);
     expect(firstCode, firstErr).toBe(0);
     expect(firstOut).toContain("Generated 4 file(s)");
@@ -73,21 +65,29 @@ describe("CLI project workflow", () => {
     const [thirdError, thirdCode] = await Promise.all([new Response(third.stderr).text(), third.exited]);
     expect(thirdCode, thirdError).toBe(0);
 
-    await put(join(project, ".config", "agentsmith", "config.toml"), [
-      "version = 1",
-      'harnesses = ["codex", "claude-code"]',
-      "",
-      "[[scopes]]",
-      'path = "."',
-      'template = "base"',
-      'packs = ["base"]',
-      `skills_disable = ["${skill}"]`,
-      "",
-    ].join("\n"));
+    await put(
+      join(project, ".config", "agentsmith", "config.toml"),
+      [
+        "version = 1",
+        'harnesses = ["codex", "claude-code"]',
+        "",
+        "[[scopes]]",
+        'path = "."',
+        'template = "base"',
+        'packs = ["base"]',
+        `skills_disable = ["${skill}"]`,
+        "",
+      ].join("\n"),
+    );
     const disabled = Bun.spawn(args, { cwd: project, env, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
     const [disabledError, disabledCode] = await Promise.all([new Response(disabled.stderr).text(), disabled.exited]);
     expect(disabledCode, disabledError).toBe(0);
-    expect(await access(join(project, ".agents", "skills", skill)).then(() => true, () => false)).toBeFalse();
+    expect(
+      await access(join(project, ".agents", "skills", skill)).then(
+        () => true,
+        () => false,
+      ),
+    ).toBeFalse();
   });
 });
 
@@ -104,13 +104,7 @@ describe("CLI global workflow", () => {
     await run(["git", "config", "user.name", "Fixture"], seed);
     await put(join(seed, ".gitignore"), "*.local.md\n");
     await put(join(seed, "agentsmith.toml"), "version = 1\n");
-    await put(join(seed, "profiles", "test.toml"), [
-      "version = 1",
-      'harnesses = ["codex"]',
-      'template = "base"',
-      'packs = ["base"]',
-      "",
-    ].join("\n"));
+    await put(join(seed, "profiles", "test.toml"), ["version = 1", 'harnesses = ["codex"]', 'template = "base"', 'packs = ["base"]', ""].join("\n"));
     await put(join(seed, "templates", "base", "codex.md"), "# Global\n\n<!-- agentsmith:slot notes -->\n");
     await put(join(seed, "packs", "base", "pack.toml"), "version = 1\n");
     await put(join(seed, "packs", "base", "instructions", "notes", "10-shared.md"), "Shared note.\n");
@@ -148,26 +142,22 @@ describe("CLI global workflow", () => {
 describe("read-only project workflows", () => {
   test("diff works without a Git worktree and reports reduced stale-state coverage", async () => {
     const root = await mkdtemp(join(tmpdir(), "agentsmith-no-git-"));
-    await put(join(root, ".config", "agentsmith", "config.toml"), [
-      "version = 1",
-      'harnesses = ["codex"]',
-      "",
-      "[[scopes]]",
-      'path = "."',
-      'template = "@project/base"',
-      'packs = ["@project/base"]',
-      "",
-    ].join("\n"));
+    await put(
+      join(root, ".config", "agentsmith", "config.toml"),
+      ["version = 1", 'harnesses = ["codex"]', "", "[[scopes]]", 'path = "."', 'template = "@project/base"', 'packs = ["@project/base"]', ""].join("\n"),
+    );
     await put(join(root, ".config", "agentsmith", "templates", "base", "codex.md"), "# Project\n\n<!-- agentsmith:slot note -->\n");
     await put(join(root, ".config", "agentsmith", "packs", "base", "pack.toml"), "version = 1\n");
     await put(join(root, ".config", "agentsmith", "packs", "base", "instructions", "note", "10-note.md"), "No Git required.\n");
     const env = { ...Bun.env, HOME: root, CODEX_HOME: join(root, ".codex") };
     const child = Bun.spawn(["bun", cli, "project", "diff", "--project", root], {
-      cwd: root, env, stdout: "pipe", stderr: "pipe", stdin: "ignore",
+      cwd: root,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
     });
-    const [stdout, stderr, code] = await Promise.all([
-      new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
-    ]);
+    const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
     expect(code, stderr).toBe(0);
     expect(stdout).toContain("No Git required.");
     expect(stderr).toContain("project-diff-without-git-state");

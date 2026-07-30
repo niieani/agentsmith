@@ -1,21 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import {
-  normalizeMarkdown,
-  renderMarkdown,
-  type ResolvedInclude,
-} from "../src/markdown.ts";
+import { normalizeMarkdown, renderMarkdown, type ResolvedInclude } from "../src/markdown.ts";
 import type { Contribution, Diagnostic } from "../src/types.ts";
 
 function codes(diagnostics: Diagnostic[]): string[] {
   return diagnostics.map((diagnostic) => diagnostic.code);
 }
 
-function contribution(
-  slot: string,
-  path: string,
-  content: string,
-  pack = "base",
-): Contribution {
+function contribution(slot: string, path: string, content: string, pack = "base"): Contribution {
   return { pack, slot, path, content };
 }
 
@@ -31,10 +22,7 @@ describe("slots", () => {
     const result = await renderMarkdown({
       templatePath: "templates/default.md",
       content: "# Guide\r\n\r\n<!-- agentsmith:slot tools -->\r\n<!-- agentsmith:slot empty -->\r\n",
-      contributions: [
-        contribution("tools", "packs/a/10.md", "first\n\n"),
-        contribution("tools", "packs/b/20.md", "\nsecond", "other"),
-      ],
+      contributions: [contribution("tools", "packs/a/10.md", "first\n\n"), contribution("tools", "packs/b/20.md", "\nsecond", "other")],
     });
 
     expect(result.content).toBe("# Guide\n\nfirst\n\nsecond\n");
@@ -61,10 +49,7 @@ describe("slots", () => {
   test("reports duplicate slots and contributions whose slot is absent", async () => {
     const result = await renderMarkdown({
       templatePath: "template.md",
-      content: [
-        "<!-- agentsmith:slot tools -->",
-        "<!-- agentsmith:required-slot tools -->",
-      ].join("\n"),
+      content: ["<!-- agentsmith:slot tools -->", "<!-- agentsmith:required-slot tools -->"].join("\n"),
       contributions: [contribution("missing", "packs/base/10.md", "lost")],
     });
     expect(codes(result.diagnostics)).toContain("slot-duplicate");
@@ -107,15 +92,7 @@ describe("directive recognition", () => {
   test("ignores headings and directives in tilde and backtick fences", async () => {
     const result = await renderMarkdown({
       templatePath: "template.md",
-      content: [
-        "~~~",
-        "# not structural",
-        "<!-- agentsmith:required-slot nope -->",
-        "~~~",
-        "````",
-        "<!-- agentsmith:include absent.md -->",
-        "````",
-      ].join("\n"),
+      content: ["~~~", "# not structural", "<!-- agentsmith:required-slot nope -->", "~~~", "````", "<!-- agentsmith:include absent.md -->", "````"].join("\n"),
     });
     expect(result.diagnostics).toEqual([]);
     expect(result.content).toContain("<!-- agentsmith:required-slot nope -->");
@@ -134,10 +111,7 @@ describe("includes", () => {
       resolveInclude: (id) => sources.get(id),
     });
     expect(result.content).toBe("Before\nIntro\nDetails\nAfter\n");
-    expect(result.trace.includes).toEqual([
-      "/source/partials/intro.md",
-      "/source/partials/detail.md",
-    ]);
+    expect(result.trace.includes).toEqual(["/source/partials/intro.md", "/source/partials/detail.md"]);
     expect(result.diagnostics).toEqual([]);
   });
 
@@ -161,7 +135,9 @@ describe("includes", () => {
     const failed = await renderMarkdown({
       templatePath: "template.md",
       content: "<!-- agentsmith:include broken.md -->",
-      resolveInclude: () => { throw new Error("unreadable"); },
+      resolveInclude: () => {
+        throw new Error("unreadable");
+      },
     });
     const noResolver = await renderMarkdown({
       templatePath: "template.md",
@@ -202,8 +178,7 @@ describe("includes", () => {
       resolveInclude: (id) => sources.get(id),
     });
     expect(codes(result.diagnostics)).toContain("include-cycle");
-    expect(result.diagnostics.find((item) => item.code === "include-cycle")?.message)
-      .toContain("/partials/a.md -> /partials/b.md -> /partials/a.md");
+    expect(result.diagnostics.find((item) => item.code === "include-cycle")?.message).toContain("/partials/a.md -> /partials/b.md -> /partials/a.md");
   });
 });
 
@@ -217,9 +192,7 @@ describe("partial headings", () => {
         content: "# Child\n## Grandchild\n\n```\n# code\n```",
       }),
     });
-    expect(result.content).toBe(
-      "# Root\n## Parent\n### Child\n#### Grandchild\n\n```\n# code\n```\n",
-    );
+    expect(result.content).toBe("# Root\n## Parent\n### Child\n#### Grandchild\n\n```\n# code\n```\n");
     expect(result.diagnostics).toEqual([]);
   });
 
@@ -256,9 +229,7 @@ describe("partial headings", () => {
       resolveInclude: (id) => sources.get(id),
     });
 
-    expect(result.content).toBe(
-      "## Outer\n### Nested child\nNested body\nBody tail\n",
-    );
+    expect(result.content).toBe("## Outer\n### Nested child\nNested body\nBody tail\n");
     expect(result.diagnostics).toEqual([]);
   });
 

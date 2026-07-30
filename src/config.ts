@@ -181,18 +181,14 @@ function contained(root: string, candidate: string, label: string): string {
   return candidatePath;
 }
 
-export function resolveSourceDir(
-  idOrRaw: SourceId | string,
-  kind: SourceKind,
-  sourceRoot: string,
-  projectRoot?: string,
-): string {
+export function resolveSourceDir(idOrRaw: SourceId | string, kind: SourceKind, sourceRoot: string, projectRoot?: string): string {
   const id = typeof idOrRaw === "string" ? parseSourceId(idOrRaw) : idOrRaw;
-  const ownerRoot = id.owner === "source"
-    ? resolve(sourceRoot)
-    : projectRoot === undefined
-      ? fail(`Source ID ${JSON.stringify(id.raw)} requires a project root`)
-      : projectSourceRoot(resolve(projectRoot));
+  const ownerRoot =
+    id.owner === "source"
+      ? resolve(sourceRoot)
+      : projectRoot === undefined
+        ? fail(`Source ID ${JSON.stringify(id.raw)} requires a project root`)
+        : projectSourceRoot(resolve(projectRoot));
   const result = contained(ownerRoot, join(ownerRoot, kindPath(kind), ...id.name.split("/")), `${kind} Source ID`);
   if (!existsSync(result)) fail(`missing ${kind} source ${JSON.stringify(id.raw)} at ${result}`);
   let current = ownerRoot;
@@ -320,14 +316,13 @@ export function loadProjectConfig(path: string): ProjectConfig {
       if (skill.startsWith("@project/")) resolveSourceDir(skill, "skill", "", root);
     }
   }
-  if (!paths.has(".")) fail("project configuration must declare a Repository Scope with path \".\"", absolutePath);
+  if (!paths.has(".")) fail('project configuration must declare a Repository Scope with path "."', absolutePath);
   for (const child of scopes) {
     const childParts = child.path === "." ? [] : child.path.split("/");
     for (const ancestor of scopes) {
       if (ancestor === child) continue;
       const ancestorParts = ancestor.path === "." ? [] : ancestor.path.split("/");
-      const isAncestor = ancestorParts.length < childParts.length
-        && ancestorParts.every((part, index) => childParts[index] === part);
+      const isAncestor = ancestorParts.length < childParts.length && ancestorParts.every((part, index) => childParts[index] === part);
       if (!isAncestor) continue;
       const inherited = new Set(ancestor.packs);
       const repeated = child.packs.find((pack) => inherited.has(pack));

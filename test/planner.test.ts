@@ -16,30 +16,24 @@ async function fixture(): Promise<{ root: string; source: string; machine: strin
   const skill = "agentsmith-fixture-review";
   await mkdir(project, { recursive: true });
   await put(join(source, "agentsmith.toml"), "version = 1\n");
-  await put(join(source, "profiles", "test.toml"), [
-    "version = 1",
-    'harnesses = ["codex", "claude-code"]',
-    'template = "base"',
-    'packs = ["base"]',
-    "",
-  ].join("\n"));
+  await put(
+    join(source, "profiles", "test.toml"),
+    ["version = 1", 'harnesses = ["codex", "claude-code"]', 'template = "base"', 'packs = ["base"]', ""].join("\n"),
+  );
   await put(join(source, "templates", "base", "default.md"), "# Instructions\n\n## Greeting\n\n<!-- agentsmith:required-slot greeting -->\n");
   await put(join(source, "packs", "base", "pack.toml"), `version = 1\nskills = ["${skill}"]\n`);
   await put(join(source, "packs", "base", "instructions", "greeting", "10-hello.md"), "Be kind.\n");
   await put(join(source, "packs", "base", "skill-slots", "detail", "10-detail.md"), "Check the work carefully.\n");
-  await put(join(source, "skills", skill, "SKILL.md"), `---\nname: ${skill}\ndescription: Review a fixture.\n---\n\n# Review\n\n<!-- agentsmith:required-slot detail -->\n`);
+  await put(
+    join(source, "skills", skill, "SKILL.md"),
+    `---\nname: ${skill}\ndescription: Review a fixture.\n---\n\n# Review\n\n<!-- agentsmith:required-slot detail -->\n`,
+  );
   const machine = join(root, "machine.toml");
   await put(machine, `version = 1\nsource = ${JSON.stringify(source)}\nprofile = "test"\n`);
-  await put(join(project, ".config", "agentsmith", "config.toml"), [
-    "version = 1",
-    'harnesses = ["codex", "claude-code"]',
-    "",
-    "[[scopes]]",
-    'path = "."',
-    'template = "base"',
-    'packs = ["base"]',
-    "",
-  ].join("\n"));
+  await put(
+    join(project, ".config", "agentsmith", "config.toml"),
+    ["version = 1", 'harnesses = ["codex", "claude-code"]', "", "[[scopes]]", 'path = "."', 'template = "base"', 'packs = ["base"]', ""].join("\n"),
+  );
   return { root, source, machine, project, skill };
 }
 
@@ -80,15 +74,10 @@ describe("generation planning", () => {
       join(setup.project, ".config", "agentsmith", "packs", "acme-tracker", "skill-slots", "detail", "10-acme.md"),
       "Use the project's Acme tracker.\n",
     );
-    await put(join(setup.project, ".config", "agentsmith", "config.toml"), [
-      "version = 1",
-      'harnesses = ["codex"]',
-      "",
-      "[[scopes]]",
-      'path = "."',
-      'packs = ["@project/acme-tracker"]',
-      "",
-    ].join("\n"));
+    await put(
+      join(setup.project, ".config", "agentsmith", "config.toml"),
+      ["version = 1", 'harnesses = ["codex"]', "", "[[scopes]]", 'path = "."', 'packs = ["@project/acme-tracker"]', ""].join("\n"),
+    );
 
     const plan = await buildProjectPlan(setup.project, setup.machine);
     expect(plan.diagnostics.filter((item) => item.severity === "error")).toEqual([]);
@@ -119,36 +108,40 @@ describe("generation planning", () => {
   test("detects an unmanaged skill in an intermediate ancestor root", async () => {
     const setup = await fixture();
     await mkdir(join(setup.project, "services", "api"), { recursive: true });
-    await put(join(setup.project, "services", ".agents", "skills", setup.skill, "SKILL.md"), `---\nname: ${setup.skill}\ndescription: Unmanaged ancestor.\n---\n`);
-    await put(join(setup.project, ".config", "agentsmith", "config.toml"), [
-      "version = 1",
-      'harnesses = ["codex"]',
-      "",
-      "[[scopes]]",
-      'path = "."',
-      'packs = []',
-      "",
-      "[[scopes]]",
-      'path = "services/api"',
-      'packs = ["base"]',
-      "",
-    ].join("\n"));
+    await put(
+      join(setup.project, "services", ".agents", "skills", setup.skill, "SKILL.md"),
+      `---\nname: ${setup.skill}\ndescription: Unmanaged ancestor.\n---\n`,
+    );
+    await put(
+      join(setup.project, ".config", "agentsmith", "config.toml"),
+      [
+        "version = 1",
+        'harnesses = ["codex"]',
+        "",
+        "[[scopes]]",
+        'path = "."',
+        "packs = []",
+        "",
+        "[[scopes]]",
+        'path = "services/api"',
+        'packs = ["base"]',
+        "",
+      ].join("\n"),
+    );
     const plan = await buildProjectPlan(setup.project, setup.machine);
     expect(plan.diagnostics.some((item) => item.code === "planned-unmanaged-skill-collision" && item.severity === "error")).toBeTrue();
   });
 
   test("detects an unmanaged duplicate in an undeclared descendant scope", async () => {
     const setup = await fixture();
-    await put(join(setup.project, "packages", "hidden", ".agents", "skills", setup.skill, "SKILL.md"), `---\nname: ${setup.skill}\ndescription: Descendant duplicate.\n---\n`);
-    await put(join(setup.project, ".config", "agentsmith", "config.toml"), [
-      "version = 1",
-      'harnesses = ["codex"]',
-      "",
-      "[[scopes]]",
-      'path = "."',
-      'packs = ["base"]',
-      "",
-    ].join("\n"));
+    await put(
+      join(setup.project, "packages", "hidden", ".agents", "skills", setup.skill, "SKILL.md"),
+      `---\nname: ${setup.skill}\ndescription: Descendant duplicate.\n---\n`,
+    );
+    await put(
+      join(setup.project, ".config", "agentsmith", "config.toml"),
+      ["version = 1", 'harnesses = ["codex"]', "", "[[scopes]]", 'path = "."', 'packs = ["base"]', ""].join("\n"),
+    );
     const plan = await buildProjectPlan(setup.project, setup.machine);
     expect(plan.diagnostics.some((item) => item.code === "planned-unmanaged-skill-collision" && item.path?.includes("packages/hidden"))).toBeTrue();
   });

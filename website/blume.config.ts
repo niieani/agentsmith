@@ -21,9 +21,21 @@ export default defineConfig({
     sidebar: [
       "/",
       { label: "Get started", items: ["/getting-started/install", "/getting-started/first-project", "/getting-started/global-setup"] },
-      { label: "Use cases", items: ["/use-cases/choose-your-path", "/use-cases/personal-user", "/use-cases/skill-author", "/use-cases/project-maintainer", "/use-cases/feature-cookbook"] },
+      {
+        label: "Use cases",
+        items: [
+          "/use-cases/choose-your-path",
+          "/use-cases/personal-user",
+          "/use-cases/skill-author",
+          "/use-cases/project-maintainer",
+          "/use-cases/feature-cookbook",
+        ],
+      },
       { label: "Guides", items: ["/guides/projects-and-scopes", "/guides/packs-and-templates", "/guides/skills", "/guides/safe-workflows"] },
-      { label: "Reference", items: ["/reference/configuration", "/reference/commands", "/reference/directives", "/reference/source-layout", "/reference/troubleshooting"] },
+      {
+        label: "Reference",
+        items: ["/reference/configuration", "/reference/commands", "/reference/directives", "/reference/source-layout", "/reference/troubleshooting"],
+      },
     ],
   },
 });

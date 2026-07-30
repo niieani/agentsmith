@@ -102,7 +102,7 @@ async function filesBelow(path: string): Promise<string[]> {
   for (const entry of await readdir(path, { withFileTypes: true })) {
     const child = join(path, entry.name);
     if (entry.isSymbolicLink()) throw new Error(`Symlink destination content is not allowed: ${child}`);
-    if (entry.isDirectory()) files.push(...await filesBelow(child));
+    if (entry.isDirectory()) files.push(...(await filesBelow(child)));
     else if (entry.isFile()) files.push(resolve(child));
   }
   return files;
@@ -113,10 +113,7 @@ function inside(root: string, path: string): boolean {
   return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
-export async function preflightProjectPlan(
-  plan: GenerationPlan,
-  options: { projectRoot: string; state: ProjectState },
-): Promise<void> {
+export async function preflightProjectPlan(plan: GenerationPlan, options: { projectRoot: string; state: ProjectState }): Promise<void> {
   assertUniqueDestinations(plan);
   const expected = await gitWorktree(options.projectRoot);
   const recorded = new Set(options.state.paths.map((path) => resolve(expected.root, path)));
@@ -146,10 +143,7 @@ export async function preflightProjectPlan(
   }
 }
 
-export async function preflightGlobalPlan(
-  plan: GenerationPlan,
-  options: { state: GlobalState; force?: boolean },
-): Promise<void> {
+export async function preflightGlobalPlan(plan: GenerationPlan, options: { state: GlobalState; force?: boolean }): Promise<void> {
   assertUniqueDestinations(plan);
   const plannedDeletions = new Set(plan.deletes.map((item) => resolve(item.destination)));
   for (const write of plan.writes) {
@@ -257,7 +251,12 @@ export function unifiedDiff(before: string, after: string, path = "artifact"): s
   let prefix = 0;
   while (prefix < oldLines.length && prefix < newLines.length && oldLines[prefix] === newLines[prefix]) prefix++;
   let suffix = 0;
-  while (suffix < oldLines.length - prefix && suffix < newLines.length - prefix && oldLines[oldLines.length - 1 - suffix] === newLines[newLines.length - 1 - suffix]) suffix++;
+  while (
+    suffix < oldLines.length - prefix &&
+    suffix < newLines.length - prefix &&
+    oldLines[oldLines.length - 1 - suffix] === newLines[newLines.length - 1 - suffix]
+  )
+    suffix++;
   const oldChanged = oldLines.slice(prefix, oldLines.length - suffix);
   const newChanged = newLines.slice(prefix, newLines.length - suffix);
   const oldStart = prefix + 1;

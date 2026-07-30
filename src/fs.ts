@@ -21,7 +21,7 @@ export async function walkFiles(root: string): Promise<WalkedFile[]> {
 
   async function visit(directory: string): Promise<void> {
     const entries = await readdir(directory, { withFileTypes: true });
-    entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+    entries.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
     for (const entry of entries) {
       const path = join(directory, entry.name);
       const stat = await lstat(path);

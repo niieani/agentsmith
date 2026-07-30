@@ -66,10 +66,16 @@ describe("state", () => {
 describe("preflight", () => {
   test("project writes allow tracked-clean or missing and reject dirty files", async () => {
     const root = await repository();
-    await expect(preflightProjectPlan(plan([write(join(root, "AGENTS.md"), "new\n")]), { projectRoot: root, state: { version: 1, paths: [] } })).resolves.toBeUndefined();
-    await expect(preflightProjectPlan(plan([write(join(root, "new.md"), "new\n")]), { projectRoot: root, state: { version: 1, paths: [] } })).resolves.toBeUndefined();
+    await expect(
+      preflightProjectPlan(plan([write(join(root, "AGENTS.md"), "new\n")]), { projectRoot: root, state: { version: 1, paths: [] } }),
+    ).resolves.toBeUndefined();
+    await expect(
+      preflightProjectPlan(plan([write(join(root, "new.md"), "new\n")]), { projectRoot: root, state: { version: 1, paths: [] } }),
+    ).resolves.toBeUndefined();
     await Bun.write(join(root, "AGENTS.md"), "dirty\n");
-    await expect(preflightProjectPlan(plan([write(join(root, "AGENTS.md"), "new\n")]), { projectRoot: root, state: { version: 1, paths: [] } })).rejects.toThrow("modified");
+    await expect(
+      preflightProjectPlan(plan([write(join(root, "AGENTS.md"), "new\n")]), { projectRoot: root, state: { version: 1, paths: [] } }),
+    ).rejects.toThrow("modified");
   });
 
   test("project stale deletion must be recorded and Git-clean", async () => {
@@ -114,9 +120,13 @@ describe("application", () => {
     const second = join(root, "second.md");
     await Bun.write(first, "first-old");
     await Bun.write(second, "second-old");
-    await expect(applyPlan(plan([write(first, "first-new"), write(second, "second-new")]), {
-      beforeOperation: (_operation, index) => { if (index === 1) throw new Error("injected failure"); },
-    })).rejects.toThrow("injected failure");
+    await expect(
+      applyPlan(plan([write(first, "first-new"), write(second, "second-new")]), {
+        beforeOperation: (_operation, index) => {
+          if (index === 1) throw new Error("injected failure");
+        },
+      }),
+    ).rejects.toThrow("injected failure");
     expect(await readFile(first, "utf8")).toBe("first-old");
     expect(await readFile(second, "utf8")).toBe("second-old");
   });

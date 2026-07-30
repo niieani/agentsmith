@@ -41,10 +41,13 @@ function sourceFixture(): string {
   mkdirSync(join(root, "templates/personal"), { recursive: true });
   file(join(root, "templates/personal/default.md"), "hello\n");
   mkdirSync(join(root, "packs/base"), { recursive: true });
-  file(join(root, "packs/base/pack.toml"), "version = 1\nskills = [\"review\"]\n");
+  file(join(root, "packs/base/pack.toml"), 'version = 1\nskills = ["review"]\n');
   mkdirSync(join(root, "skills/review"), { recursive: true });
   file(join(root, "skills/review/SKILL.md"), "---\nname: review\ndescription: Review\n---\n");
-  file(join(root, "profiles/studio.toml"), `version = 1\nharnesses = [\"codex\", \"claude-code\"]\ntemplate = \"personal\"\npacks = [\"base\"]\nskills_enable = [\"review\"]\nskills_disable = []\n[budgets]\neffective_instruction_bytes = 200\n`);
+  file(
+    join(root, "profiles/studio.toml"),
+    `version = 1\nharnesses = [\"codex\", \"claude-code\"]\ntemplate = \"personal\"\npacks = [\"base\"]\nskills_enable = [\"review\"]\nskills_disable = []\n[budgets]\neffective_instruction_bytes = 200\n`,
+  );
   return root;
 }
 
@@ -54,9 +57,8 @@ describe("Source IDs and paths", () => {
     expect(parseSourceId("@project/release")).toEqual({ owner: "project", name: "release", raw: "@project/release" });
   });
 
-  test.each(["", "/absolute", "../escape", "a//b", "a/./b", "a/../b", "a\\b", "@other/x", "a\0b"])(
-    "rejects invalid Source ID %p",
-    (value) => expect(() => parseSourceId(value)).toThrow(ConfigError),
+  test.each(["", "/absolute", "../escape", "a//b", "a/./b", "a/../b", "a\\b", "@other/x", "a\0b"])("rejects invalid Source ID %p", (value) =>
+    expect(() => parseSourceId(value)).toThrow(ConfigError),
   );
 
   test("resolves source ownership without fallback", () => {
@@ -93,7 +95,10 @@ describe("strict TOML loaders", () => {
     expect(loadMachineConfig(machine)).toEqual({ version: 1, source, profile: "studio" });
     expect(loadRootConfig(source).budgets.instructionLayerBytes).toBe(100);
     expect(loadProfileConfig(source, "studio")).toMatchObject({
-      harnesses: ["codex", "claude-code"], template: "personal", packs: ["base"], skillsEnable: ["review"],
+      harnesses: ["codex", "claude-code"],
+      template: "personal",
+      packs: ["base"],
+      skillsEnable: ["review"],
     });
     expect(loadPackConfig(join(source, "packs/base"))).toEqual({ version: 1, skills: ["review"] });
   });
@@ -106,14 +111,14 @@ describe("strict TOML loaders", () => {
     expect(() => loadRootConfig(source)).toThrow(/version must be/);
     file(sourceRootConfigPath(source), "version = 1\n[budgets]\nskill_markdown_bytes = 0\n");
     expect(() => loadRootConfig(source)).toThrow(/positive integer/);
-    file(join(source, "profiles/bad.toml"), "version = 1\nharnesses = [\"gemini\"]\ntemplate = \"personal\"\npacks = []\n");
+    file(join(source, "profiles/bad.toml"), 'version = 1\nharnesses = ["gemini"]\ntemplate = "personal"\npacks = []\n');
     expect(() => loadProfileConfig(source, "bad")).toThrow(/unknown harness/);
-    file(join(source, "profiles/bad.toml"), "version = 1\nharnesses = [\"codex\"]\ntemplate = \"personal\"\npacks = [\"base\", \"base\"]\n");
+    file(join(source, "profiles/bad.toml"), 'version = 1\nharnesses = ["codex"]\ntemplate = "personal"\npacks = ["base", "base"]\n');
     expect(() => loadProfileConfig(source, "bad")).toThrow(/duplicate/);
-    file(join(source, "profiles/bad.toml"), "version = 1\nharnesses = [\"codex\"]\ntemplate = \"missing\"\npacks = []\n");
+    file(join(source, "profiles/bad.toml"), 'version = 1\nharnesses = ["codex"]\ntemplate = "missing"\npacks = []\n');
     expect(() => loadProfileConfig(source, "bad")).toThrow(/missing template source/);
     const machine = join(temp(), "config.toml");
-    file(machine, "version = 1\nsource = \"missing\"\nprofile = \"studio\"\n");
+    file(machine, 'version = 1\nsource = "missing"\nprofile = "studio"\n');
     expect(() => loadMachineConfig(machine)).toThrow(/not an existing directory/);
   });
 });
@@ -125,7 +130,10 @@ describe("project configuration", () => {
     mkdirSync(join(projectSourceRoot(root), "templates/custom"), { recursive: true });
     mkdirSync(join(projectSourceRoot(root), "packs/deploy"), { recursive: true });
     const config = projectConfigPath(root);
-    file(config, `version = 1\nharnesses = [\"codex\", \"claude-code\"]\n[budgets]\ninstruction_layer_bytes = 20000\n[[scopes]]\npath = \".\"\ntemplate = \"software\"\npacks = [\"base\"]\n[[scopes]]\npath = \"apps/ios/../ios\"\ntemplate = \"@project/custom\"\npacks = [\"@project/deploy\"]\nharnesses = [\"codex\"]\n`);
+    file(
+      config,
+      `version = 1\nharnesses = [\"codex\", \"claude-code\"]\n[budgets]\ninstruction_layer_bytes = 20000\n[[scopes]]\npath = \".\"\ntemplate = \"software\"\npacks = [\"base\"]\n[[scopes]]\npath = \"apps/ios/../ios\"\ntemplate = \"@project/custom\"\npacks = [\"@project/deploy\"]\nharnesses = [\"codex\"]\n`,
+    );
     return { root, config };
   }
 

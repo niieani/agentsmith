@@ -9,7 +9,6 @@ describe("skill identity", () => {
   });
 
   test("requires directory and public name to agree", () => {
-    expect(() => parseSkillIdentity("---\nname: other\ndescription: x\n---\n", "/tmp/review", "review"))
-      .toThrow("must match source directory");
+    expect(() => parseSkillIdentity("---\nname: other\ndescription: x\n---\n", "/tmp/review", "review")).toThrow("must match source directory");
   });
 });

@@ -1,18 +1,9 @@
 import { existsSync } from "node:fs";
 import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import {
-  loadPackConfig,
-  parseSourceId,
-  resolveSourceDir,
-} from "./config.ts";
+import { loadPackConfig, parseSourceId, resolveSourceDir } from "./config.ts";
 import { walkFiles } from "./fs.ts";
-import type {
-  Contribution,
-  HarnessName,
-  PackConfig,
-  SkillIdentity,
-} from "./types.ts";
+import type { Contribution, HarnessName, PackConfig, SkillIdentity } from "./types.ts";
 import { readSkillIdentity } from "./skills.ts";
 
 export interface SourceContext {
@@ -79,13 +70,13 @@ async function contributionsBySlot(root: string, pack: string): Promise<Contribu
   if (!existsSync(root)) return [];
   if ((await lstat(root)).isSymbolicLink()) throw new Error(`Source symlinks are not supported: ${root}`);
   const entries = await (await import("node:fs/promises")).readdir(root, { withFileTypes: true });
-  entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+  entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   const contributions: Contribution[] = [];
   for (const entry of entries) {
     const path = join(root, entry.name);
     if ((await lstat(path)).isSymbolicLink()) throw new Error(`Source symlinks are not supported: ${path}`);
     if (!entry.isDirectory()) continue;
-    contributions.push(...await markdownContributions(path, pack, entry.name));
+    contributions.push(...(await markdownContributions(path, pack, entry.name)));
   }
   return contributions;
 }
@@ -102,10 +93,7 @@ export async function loadInstructionContributions(pack: LoadedPack, harness: Ha
   return [...common, ...specific];
 }
 
-export async function loadSkillContributions(
-  pack: LoadedPack,
-  harness: HarnessName,
-): Promise<Contribution[]> {
+export async function loadSkillContributions(pack: LoadedPack, harness: HarnessName): Promise<Contribution[]> {
   const root = join(pack.directory, "skill-slots");
   const common = existsSync(root)
     ? (await contributionsBySlot(root, pack.sourceId)).filter((item) => {

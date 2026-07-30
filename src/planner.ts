@@ -24,16 +24,7 @@ import {
   type SourceContext,
 } from "./source.ts";
 import { parseSkillIdentity, scanSkillRoot } from "./skills.ts";
-import type {
-  Budgets,
-  Contribution,
-  Diagnostic,
-  GenerationPlan,
-  HarnessName,
-  PlannedWrite,
-  ScopeConfig,
-  SkillIdentity,
-} from "./types.ts";
+import type { Budgets, Contribution, Diagnostic, GenerationPlan, HarnessName, PlannedWrite, ScopeConfig, SkillIdentity } from "./types.ts";
 
 const encoder = new TextEncoder();
 
@@ -136,12 +127,7 @@ function toScope(input: ScopeConfig, defaults: HarnessName[]): ScopeInput {
   };
 }
 
-async function renderContent(
-  context: PlannerContext,
-  content: string,
-  path: string,
-  contributions: Contribution[],
-) {
+async function renderContent(context: PlannerContext, content: string, path: string, contributions: Contribution[]) {
   const rendered = await renderMarkdown({
     content,
     templatePath: path,
@@ -153,20 +139,12 @@ async function renderContent(
 }
 
 async function enabledSkills(scope: ScopeInput, packs: LoadedPack[]): Promise<string[]> {
-  const candidates = stableUnion([
-    ...packs.flatMap((pack) => pack.config.skills),
-    ...scope.skillsEnable,
-  ]);
+  const candidates = stableUnion([...packs.flatMap((pack) => pack.config.skills), ...scope.skillsEnable]);
   const disabled = new Set(scope.skillsDisable);
   return candidates.filter((sourceId) => !disabled.has(sourceId));
 }
 
-async function planInstruction(
-  context: PlannerContext,
-  scope: ScopeInput,
-  harness: HarnessName,
-  packs: LoadedPack[],
-): Promise<void> {
+async function planInstruction(context: PlannerContext, scope: ScopeInput, harness: HarnessName, packs: LoadedPack[]): Promise<void> {
   const contributions = (await Promise.all(packs.map((pack) => loadInstructionContributions(pack, harness)))).flat();
   if (!scope.template) {
     if (contributions.length > 0) {
@@ -181,14 +159,17 @@ async function planInstruction(
   const template = await loadTemplate(context.sources, scope.template, harness);
   const rendered = await renderContent(context, template.content, template.path, contributions);
   const adapter = getHarnessAdapter(harness);
-  const destination = context.mode === "global"
-    ? adapter.globalInstruction()
-    : adapter.projectInstruction(context.projectRoot!, scope.path);
+  const destination = context.mode === "global" ? adapter.globalInstruction() : adapter.projectInstruction(context.projectRoot!, scope.path);
   context.diagnostics.push(...(adapter.preflightInstruction?.(destination) ?? []));
   const bytes = utf8Bytes(rendered.content);
   context.instructionSizes.push({ harness, scope: scope.path, bytes });
   if (context.budgets.instructionLayerBytes && bytes > context.budgets.instructionLayerBytes) {
-    warning(context.diagnostics, "instruction-layer-budget", `${destination} is ${bytes} bytes, exceeding the ${context.budgets.instructionLayerBytes}-byte instruction layer budget`, destination);
+    warning(
+      context.diagnostics,
+      "instruction-layer-budget",
+      `${destination} is ${bytes} bytes, exceeding the ${context.budgets.instructionLayerBytes}-byte instruction layer budget`,
+      destination,
+    );
   }
   context.writes.push({
     destination,
@@ -210,12 +191,7 @@ async function planInstruction(
   });
 }
 
-async function planSkills(
-  context: PlannerContext,
-  scope: ScopeInput,
-  harness: HarnessName,
-  packs: LoadedPack[],
-): Promise<void> {
+async function planSkills(context: PlannerContext, scope: ScopeInput, harness: HarnessName, packs: LoadedPack[]): Promise<void> {
   const sourceIds = await enabledSkills(scope, packs);
   const enabledSet = new Set(sourceIds);
   const contributions = (await Promise.all(packs.map((pack) => loadSkillContributions(pack, harness)))).flat();
@@ -225,9 +201,7 @@ async function planSkills(
     const skill = await loadSkill(context.sources, sourceId);
     const skillDir = skill.sourceDir;
     const adapter = getHarnessAdapter(harness);
-    const root = context.mode === "global"
-      ? adapter.globalSkillRoot()
-      : adapter.projectSkillRoot(context.projectRoot!, scope.path);
+    const root = context.mode === "global" ? adapter.globalSkillRoot() : adapter.projectSkillRoot(context.projectRoot!, scope.path);
     const destinationDir = join(root, skill.name);
     context.skillPlacements.push({ harness, scope: scope.path, name: skill.name, sourceId, destinationDir });
     const files = await walkFiles(skillDir);
@@ -240,7 +214,8 @@ async function planSkills(
       for (const slot of slots) ownersBySlot.set(slot, [...(ownersBySlot.get(slot) ?? []), file.absolutePath]);
     }
     for (const [slot, owners] of ownersBySlot) {
-      if (owners.length > 1) error(context.diagnostics, "skill-slot-duplicate", `Skill ${skill.name} declares slot ${slot} in multiple files: ${owners.join(", ")}`);
+      if (owners.length > 1)
+        error(context.diagnostics, "skill-slot-duplicate", `Skill ${skill.name} declares slot ${slot} in multiple files: ${owners.join(", ")}`);
       for (const contribution of contributions) {
         if (contribution.slot === slot) usedContributionPaths.add(contribution.path);
       }
@@ -252,12 +227,7 @@ async function planSkills(
       const destination = join(destinationDir, file.relativePath);
       if (file.relativePath.endsWith(".md")) {
         const fileContributions = contributions.filter((item) => slotsByFile.get(file.absolutePath)?.has(item.slot));
-        const rendered = await renderContent(
-          context,
-          new TextDecoder().decode(file.content),
-          file.absolutePath,
-          fileContributions,
-        );
+        const rendered = await renderContent(context, new TextDecoder().decode(file.content), file.absolutePath, fileContributions);
         const content = encoder.encode(rendered.content);
         if (file.relativePath === "SKILL.md") {
           try {
@@ -292,7 +262,12 @@ async function planSkills(
       }
     }
     if (context.budgets.skillMarkdownBytes && markdownBytes > context.budgets.skillMarkdownBytes) {
-      warning(context.diagnostics, "skill-markdown-budget", `${skill.name} is ${markdownBytes} Markdown bytes, exceeding the ${context.budgets.skillMarkdownBytes}-byte skill budget`, skillDir);
+      warning(
+        context.diagnostics,
+        "skill-markdown-budget",
+        `${skill.name} is ${markdownBytes} Markdown bytes, exceeding the ${context.budgets.skillMarkdownBytes}-byte skill budget`,
+        skillDir,
+      );
     }
     context.explanations.push({
       kind: "skill",
@@ -336,7 +311,11 @@ function validatePlannedSkillCollisions(context: PlannerContext): void {
       if (a.harness !== b.harness || a.name !== b.name) continue;
       const sameChain = context.mode === "global" || isAncestorScope(a.scope, b.scope) || isAncestorScope(b.scope, a.scope);
       if (sameChain) {
-        error(context.diagnostics, "skill-name-collision", `Skill ${a.name} is visible more than once for ${a.harness}: ${a.scope} (${a.sourceId}) and ${b.scope} (${b.sourceId})`);
+        error(
+          context.diagnostics,
+          "skill-name-collision",
+          `Skill ${a.name} is visible more than once for ${a.harness}: ${a.scope} (${a.sourceId}) and ${b.scope} (${b.sourceId})`,
+        );
       }
     }
   }
@@ -379,7 +358,13 @@ async function validateUnmanagedSkillCollisions(context: PlannerContext, scopes:
     for (const external of unmanaged) {
       if (planned.harness !== external.harness || planned.name !== external.name) continue;
       const visible = external.scope === "<global>" || isAncestorScope(external.scope, planned.scope) || isAncestorScope(planned.scope, external.scope);
-      if (visible) error(context.diagnostics, "planned-unmanaged-skill-collision", `Planned skill ${planned.name} at ${planned.scope} collides with visible skill ${external.sourceDir}`, external.sourceDir);
+      if (visible)
+        error(
+          context.diagnostics,
+          "planned-unmanaged-skill-collision",
+          `Planned skill ${planned.name} at ${planned.scope} collides with visible skill ${external.sourceDir}`,
+          external.sourceDir,
+        );
     }
   }
   for (let left = 0; left < unmanaged.length; left++) {
@@ -388,15 +373,13 @@ async function validateUnmanagedSkillCollisions(context: PlannerContext, scopes:
       const b = unmanaged[right]!;
       if (a.harness !== b.harness || a.name !== b.name) continue;
       const visible = a.scope === "<global>" || b.scope === "<global>" || isAncestorScope(a.scope, b.scope) || isAncestorScope(b.scope, a.scope);
-      if (visible) warning(context.diagnostics, "unmanaged-skill-collision", `Visible unmanaged skills share name ${a.name}: ${a.sourceDir} and ${b.sourceDir}`);
+      if (visible)
+        warning(context.diagnostics, "unmanaged-skill-collision", `Visible unmanaged skills share name ${a.name}: ${a.sourceDir} and ${b.sourceDir}`);
     }
   }
 }
 
-async function discoverNativeSkillRoots(
-  projectRoot: string,
-  harness: HarnessName,
-): Promise<Array<{ root: string; scope: string }>> {
+async function discoverNativeSkillRoots(projectRoot: string, harness: HarnessName): Promise<Array<{ root: string; scope: string }>> {
   const adapter = getHarnessAdapter(harness);
   const found: Array<{ root: string; scope: string }> = [];
   const excluded = new Set([".git", ".hg", ".svn", "node_modules"]);
@@ -408,7 +391,7 @@ async function discoverNativeSkillRoots(
       found.push({ root: candidate, scope });
     }
     const entries = await readdir(directory, { withFileTypes: true });
-    entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+    entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     for (const entry of entries) {
       if (!entry.isDirectory() || entry.isSymbolicLink() || excluded.has(entry.name)) continue;
       if (entry.name === ".agents" || entry.name === ".claude") continue;
@@ -428,10 +411,18 @@ function validateEffectiveInstructionBudgets(context: PlannerContext): void {
       .filter((candidate) => candidate.harness === item.harness && isAncestorScope(candidate.scope, item.scope))
       .reduce((sum, candidate) => sum + candidate.bytes, 0);
     if (context.budgets.effectiveInstructionBytes && effective > context.budgets.effectiveInstructionBytes) {
-      warning(context.diagnostics, "effective-instruction-budget", `${item.harness} effective instructions at ${item.scope} are ${effective} bytes, exceeding the ${context.budgets.effectiveInstructionBytes}-byte budget`);
+      warning(
+        context.diagnostics,
+        "effective-instruction-budget",
+        `${item.harness} effective instructions at ${item.scope} are ${effective} bytes, exceeding the ${context.budgets.effectiveInstructionBytes}-byte budget`,
+      );
     }
     if (item.harness === "codex" && context.mode === "project" && effective > 32 * 1024) {
-      warning(context.diagnostics, "codex-default-instruction-cap", `Codex effective project instructions at ${item.scope} are ${effective} bytes, exceeding its configurable default 32 KiB cap`);
+      warning(
+        context.diagnostics,
+        "codex-default-instruction-cap",
+        `Codex effective project instructions at ${item.scope} are ${effective} bytes, exceeding its configurable default 32 KiB cap`,
+      );
     }
   }
 }
@@ -451,7 +442,7 @@ function coalesceWrites(context: PlannerContext): void {
       existing.provenance = stableUnion([...existing.provenance, ...write.provenance]);
     }
   }
-  context.writes = [...byDestination.values()].sort((a, b) => a.destination < b.destination ? -1 : a.destination > b.destination ? 1 : 0);
+  context.writes = [...byDestination.values()].sort((a, b) => (a.destination < b.destination ? -1 : a.destination > b.destination ? 1 : 0));
 }
 
 async function planScopes(context: PlannerContext, scopes: ScopeInput[]): Promise<void> {
@@ -515,21 +506,20 @@ export async function buildGlobalPlan(configPath = MACHINE_CONFIG_PATH): Promise
     skillPlacements: [],
     instructionSizes: [],
   };
-  await planScopes(context, [{
-    path: "<global>",
-    template: profile.template,
-    packs: profile.packs,
-    harnesses: profile.harnesses,
-    skillsEnable: profile.skillsEnable,
-    skillsDisable: profile.skillsDisable,
-  }]);
+  await planScopes(context, [
+    {
+      path: "<global>",
+      template: profile.template,
+      packs: profile.packs,
+      harnesses: profile.harnesses,
+      skillsEnable: profile.skillsEnable,
+      skillsDisable: profile.skillsDisable,
+    },
+  ]);
   return builtPlan(context, resolvedConfig);
 }
 
-export async function buildProjectPlan(
-  projectStart = process.cwd(),
-  machineConfigPath = MACHINE_CONFIG_PATH,
-): Promise<BuiltPlan> {
+export async function buildProjectPlan(projectStart = process.cwd(), machineConfigPath = MACHINE_CONFIG_PATH): Promise<BuiltPlan> {
   const configPath = discoverProjectConfig(projectStart);
   const projectRoot = dirname(dirname(dirname(configPath)));
   const project = loadProjectConfig(configPath);
@@ -547,7 +537,10 @@ export async function buildProjectPlan(
     skillPlacements: [],
     instructionSizes: [],
   };
-  await planScopes(context, project.scopes.map((scope) => toScope(scope, project.harnesses)));
+  await planScopes(
+    context,
+    project.scopes.map((scope) => toScope(scope, project.harnesses)),
+  );
   return builtPlan(context, configPath);
 }
 

@@ -5,8 +5,7 @@ import type { Diagnostic, SkillIdentity } from "./types.ts";
 
 function scalar(value: string): string {
   const trimmed = value.trim();
-  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-      (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
     return trimmed.slice(1, -1);
   }
   return trimmed;
@@ -48,7 +47,7 @@ export async function scanSkillRoot(root: string): Promise<{ skills: SkillIdenti
   const diagnostics: Diagnostic[] = [];
   if (!existsSync(root)) return { skills, diagnostics };
   const entries = await readdir(root, { withFileTypes: true });
-  entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+  entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const sourceDir = join(root, entry.name);

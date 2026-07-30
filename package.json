@@ -9,6 +9,12 @@
   "scripts": {
     "dev": "bun run src/cli.ts",
     "build": "bun build src/cli.ts --compile --outfile dist/asmith",
+    "fmt": "biome format --write .",
+    "fmt:check": "biome format .",
+    "lint": "biome lint .",
+    "release:build": "bun run scripts/release.ts build",
+    "release:package": "bun run scripts/release.ts package",
+    "homebrew:cask": "bun run scripts/render-homebrew-cask.ts",
     "docs:dev": "cd website && blume dev",
     "docs:build": "cd website && blume build --strict",
     "docs:check": "cd website && blume check --strict",
@@ -16,7 +22,7 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "test:coverage": "bun test --coverage",
-    "check": "bun run typecheck && bun test"
+    "check": "bun run fmt:check && bun run lint && bun run typecheck && bun test && bun run build"
   },
   "dependencies": {
     "@optique/core": "1.1.1",
@@ -24,6 +30,7 @@
     "smol-toml": "1.7.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.6",
     "@types/bun": "1.3.14",
     "blume": "1.0.3",
     "typescript": "6.0.3"

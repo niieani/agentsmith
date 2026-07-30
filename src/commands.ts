@@ -4,12 +4,7 @@ import { dirname, relative, resolve, sep } from "node:path";
 import { stringify } from "smol-toml";
 import { loadMachineConfig, MACHINE_CONFIG_PATH, resolveConfiguredPath } from "./config.ts";
 import { CommandError, ensureCleanSource, gitPullFfOnly, gitWorktree } from "./git.ts";
-import {
-  assertPlanValid,
-  buildGlobalPlan,
-  buildProjectPlan,
-  type BuiltPlan,
-} from "./planner.ts";
+import { assertPlanValid, buildGlobalPlan, buildProjectPlan, type BuiltPlan } from "./planner.ts";
 import {
   applyPlan,
   globalStatePath,
@@ -36,10 +31,12 @@ export interface CommandOptions {
 }
 
 function diagnosticsText(diagnostics: Diagnostic[]): string {
-  return diagnostics.map((item) => {
-    const location = item.path ? ` (${item.path})` : "";
-    return `${item.severity.toUpperCase()} ${item.code}: ${item.message}${location}`;
-  }).join("\n");
+  return diagnostics
+    .map((item) => {
+      const location = item.path ? ` (${item.path})` : "";
+      return `${item.severity.toUpperCase()} ${item.code}: ${item.message}${location}`;
+    })
+    .join("\n");
 }
 
 function printDiagnostics(diagnostics: Diagnostic[]): void {
@@ -93,9 +90,9 @@ function projectStateWrite(statePath: string, root: string, plan: BuiltPlan): Pl
 
 function globalStateWrite(statePath: string, plan: BuiltPlan): PlannedWrite {
   const entries: Array<[string, string]> = plan.writes
-      .filter((write) => write.kind !== "state")
-      .map((write) => [resolve(write.destination), hashBytes(write.content)] as [string, string]);
-  entries.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+    .filter((write) => write.kind !== "state")
+    .map((write) => [resolve(write.destination), hashBytes(write.content)] as [string, string]);
+  entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   const artifacts = Object.fromEntries(entries);
   return {
     destination: statePath,
@@ -119,7 +116,9 @@ async function pruneEmptySkillDirectories(deletions: PlannedDelete[]): Promise<v
         await rmdir(current);
       } catch (cause) {
         if (!(cause instanceof Error) || !("code" in cause) || (cause.code !== "ENOENT" && cause.code !== "ENOTEMPTY")) {
-          console.error(`WARNING stale-directory-cleanup: could not remove empty directory ${current}: ${cause instanceof Error ? cause.message : String(cause)}`);
+          console.error(
+            `WARNING stale-directory-cleanup: could not remove empty directory ${current}: ${cause instanceof Error ? cause.message : String(cause)}`,
+          );
           break;
         }
         if (cause instanceof Error && "code" in cause && cause.code === "ENOTEMPTY") break;

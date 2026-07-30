@@ -17,11 +17,7 @@ export class CommandError extends Error {
   }
 }
 
-export async function runCommand(
-  command: string,
-  args: readonly string[],
-  options: { cwd?: string; allowFailure?: boolean } = {},
-): Promise<CommandResult> {
+export async function runCommand(command: string, args: readonly string[], options: { cwd?: string; allowFailure?: boolean } = {}): Promise<CommandResult> {
   const process = Bun.spawn([command, ...args], {
     cwd: options.cwd,
     stdin: "ignore",
@@ -29,11 +25,7 @@ export async function runCommand(
     stderr: "pipe",
     env: { ...Bun.env, GIT_TERMINAL_PROMPT: "0" },
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(process.stdout).text(),
-    new Response(process.stderr).text(),
-    process.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([new Response(process.stdout).text(), new Response(process.stderr).text(), process.exited]);
   const result = { stdout, stderr, exitCode };
   if (exitCode !== 0 && !options.allowFailure) {
     const detail = stderr.trim() || stdout.trim() || `exit status ${exitCode}`;
@@ -56,14 +48,7 @@ export async function gitWorktree(path: string): Promise<GitWorktree> {
   };
 }
 
-export type GitPathStatus =
-  | "missing"
-  | "tracked-clean"
-  | "modified"
-  | "staged"
-  | "conflicted"
-  | "untracked"
-  | "ignored";
+export type GitPathStatus = "missing" | "tracked-clean" | "modified" | "staged" | "conflicted" | "untracked" | "ignored";
 
 function repoRelative(worktreeRoot: string, path: string): string {
   const rel = relative(resolve(worktreeRoot), resolve(path));
@@ -77,11 +62,7 @@ function repoRelative(worktreeRoot: string, path: string): string {
 /** Classify a destination exactly as Git sees it, including ignored files. */
 export async function gitPathStatus(worktreeRoot: string, path: string): Promise<GitPathStatus> {
   const rel = repoRelative(worktreeRoot, path);
-  const result = await runCommand(
-    "git",
-    ["status", "--porcelain=v1", "-z", "--ignored", "--untracked-files=all", "--", rel],
-    { cwd: worktreeRoot },
-  );
+  const result = await runCommand("git", ["status", "--porcelain=v1", "-z", "--ignored", "--untracked-files=all", "--", rel], { cwd: worktreeRoot });
   const records = result.stdout.split("\0").filter(Boolean);
   if (records.length > 0) {
     const code = records[0]!.slice(0, 2);
@@ -106,11 +87,7 @@ export async function ensureCleanSource(sourceRoot: string): Promise<void> {
   if (resolve(sourceRoot) !== worktree.root) {
     throw new Error(`Source Repository must be the Git worktree root: ${sourceRoot}`);
   }
-  const status = await runCommand(
-    "git",
-    ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-    { cwd: worktree.root },
-  );
+  const status = await runCommand("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], { cwd: worktree.root });
   if (status.stdout.length > 0) {
     throw new Error("Source Repository has tracked, staged, conflicted, or nonignored untracked changes");
   }

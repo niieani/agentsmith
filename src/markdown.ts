@@ -1,19 +1,11 @@
-import type {
-  Contribution,
-  Diagnostic,
-  RenderResult,
-  RenderTrace,
-} from "./types.ts";
+import type { Contribution, Diagnostic, RenderResult, RenderTrace } from "./types.ts";
 
 export interface ResolvedInclude {
   path: string;
   content: string;
 }
 
-export type IncludeResolver = (
-  sourceId: string,
-  fromPath: string,
-) => ResolvedInclude | undefined | Promise<ResolvedInclude | undefined>;
+export type IncludeResolver = (sourceId: string, fromPath: string) => ResolvedInclude | undefined | Promise<ResolvedInclude | undefined>;
 
 export interface RenderMarkdownOptions {
   content: string;
@@ -34,10 +26,7 @@ interface RenderContext {
   includeStack: string[];
 }
 
-type Directive =
-  | { kind: "slot"; name: string }
-  | { kind: "required-slot"; name: string }
-  | { kind: "include"; name: string };
+type Directive = { kind: "slot"; name: string } | { kind: "required-slot"; name: string } | { kind: "include"; name: string };
 
 const DIRECTIVE = /^<!-- agentsmith:(slot|required-slot|include) ([^\s]+) -->$/;
 const AGENTSMITH_DIRECTIVE = /<!--\s*agentsmith:/;
@@ -54,9 +43,7 @@ export function normalizeMarkdown(content: string): string {
  * Markdown. Source lookup remains outside this module so callers can enforce
  * source-root and symlink policy.
  */
-export async function renderMarkdown(
-  options: RenderMarkdownOptions,
-): Promise<RenderResult> {
+export async function renderMarkdown(options: RenderMarkdownOptions): Promise<RenderResult> {
   const diagnostics: Diagnostic[] = [];
   const trace: RenderTrace = {
     template: options.templatePath,
@@ -70,18 +57,8 @@ export async function renderMarkdown(
     includeStack: [options.templatePath],
   };
 
-  const expanded = await expandIncludes(
-    splitLines(options.content),
-    options.templatePath,
-    context,
-    false,
-  );
-  const filled = await fillSlots(
-    expanded,
-    options.templatePath,
-    options.contributions ?? [],
-    context,
-  );
+  const expanded = await expandIncludes(splitLines(options.content), options.templatePath, context, false);
+  const filled = await fillSlots(expanded, options.templatePath, options.contributions ?? [], context);
 
   findRemainingDirectives(filled, options.templatePath, diagnostics);
 
@@ -92,13 +69,7 @@ export async function renderMarkdown(
   };
 }
 
-async function expandIncludes(
-  lines: string[],
-  path: string,
-  context: RenderContext,
-  isPartial: boolean,
-  inheritedHeading?: Heading,
-): Promise<string[]> {
+async function expandIncludes(lines: string[], path: string, context: RenderContext, isPartial: boolean, inheritedHeading?: Heading): Promise<string[]> {
   if (isPartial) validateNoSetextHeadings(lines, path, context.diagnostics);
 
   const output: string[] = [];
@@ -189,25 +160,11 @@ async function expandIncludes(
 
     context.trace.includes.push(resolved.path);
     const partialLines = splitLines(resolved.content);
-    const shift = partialHeadingShift(
-      partialLines,
-      output,
-      inheritedHeading,
-      resolved.path,
-      context,
-    );
-    const shifted = shift === undefined
-      ? partialLines
-      : shiftHeadingLines(partialLines, shift, resolved.path, context.diagnostics);
+    const shift = partialHeadingShift(partialLines, output, inheritedHeading, resolved.path, context);
+    const shifted = shift === undefined ? partialLines : shiftHeadingLines(partialLines, shift, resolved.path, context.diagnostics);
 
     context.includeStack.push(resolved.path);
-    const included = await expandIncludes(
-      shifted,
-      resolved.path,
-      context,
-      true,
-      nearestHeading(output) ?? inheritedHeading,
-    );
+    const included = await expandIncludes(shifted, resolved.path, context, true, nearestHeading(output) ?? inheritedHeading);
     context.includeStack.pop();
     output.push(...included);
   }
@@ -215,12 +172,7 @@ async function expandIncludes(
   return output;
 }
 
-async function fillSlots(
-  lines: string[],
-  path: string,
-  contributions: readonly Contribution[],
-  context: RenderContext,
-): Promise<string[]> {
+async function fillSlots(lines: string[], path: string, contributions: readonly Contribution[], context: RenderContext): Promise<string[]> {
   const declarations = new Map<string, { line: number; required: boolean }>();
   let fence: Fence | undefined;
 
@@ -328,13 +280,7 @@ async function fillSlots(
     const surrounding = nearestHeading(output);
     const renderedItems: string[][] = [];
     for (const item of items) {
-      const itemLines = await expandIncludes(
-        splitLines(item.content),
-        item.path,
-        { ...context, includeStack: [item.path] },
-        false,
-        surrounding,
-      );
+      const itemLines = await expandIncludes(splitLines(item.content), item.path, { ...context, includeStack: [item.path] }, false, surrounding);
       warnAboutSnippetHeading(itemLines, surrounding, item, context.diagnostics);
       renderedItems.push(trimBoundaryBlankLines(itemLines));
     }
@@ -390,12 +336,7 @@ function partialHeadingShift(
   return shift;
 }
 
-function shiftHeadingLines(
-  lines: string[],
-  shift: number,
-  path: string,
-  diagnostics: Diagnostic[],
-): string[] {
+function shiftHeadingLines(lines: string[], shift: number, path: string, diagnostics: Diagnostic[]): string[] {
   if (shift === 0) return lines;
   const output = [...lines];
   let fence: Fence | undefined;
@@ -428,12 +369,7 @@ function shiftHeadingLines(
   return output;
 }
 
-function warnAboutSnippetHeading(
-  lines: string[],
-  surrounding: Heading | undefined,
-  contribution: Contribution,
-  diagnostics: Diagnostic[],
-): void {
+function warnAboutSnippetHeading(lines: string[], surrounding: Heading | undefined, contribution: Contribution, diagnostics: Diagnostic[]): void {
   if (!surrounding) return;
   const first = structuralHeadings(lines)[0];
   if (first && first.level <= surrounding.level) {
@@ -446,11 +382,7 @@ function warnAboutSnippetHeading(
   }
 }
 
-function validateNoSetextHeadings(
-  lines: string[],
-  path: string,
-  diagnostics: Diagnostic[],
-): void {
+function validateNoSetextHeadings(lines: string[], path: string, diagnostics: Diagnostic[]): void {
   let fence: Fence | undefined;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index] ?? "";
@@ -511,12 +443,7 @@ function parseDirective(line: string): Directive | undefined {
   return undefined;
 }
 
-function reportMalformedDirective(
-  line: string,
-  path: string,
-  lineNumber: number,
-  diagnostics: Diagnostic[],
-): void {
+function reportMalformedDirective(line: string, path: string, lineNumber: number, diagnostics: Diagnostic[]): void {
   const isPosition = !line.startsWith("<!-- agentsmith:") || !line.endsWith(" -->");
   diagnostics.push({
     severity: "error",
@@ -528,11 +455,7 @@ function reportMalformedDirective(
   });
 }
 
-function findRemainingDirectives(
-  lines: string[],
-  path: string,
-  diagnostics: Diagnostic[],
-): void {
+function findRemainingDirectives(lines: string[], path: string, diagnostics: Diagnostic[]): void {
   let fence: Fence | undefined;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index] ?? "";
@@ -600,10 +523,7 @@ interface Fence {
   length: number;
 }
 
-function fenceTransition(
-  line: string,
-  fence: Fence | undefined,
-): { opened?: Fence; closed?: boolean } {
+function fenceTransition(line: string, fence: Fence | undefined): { opened?: Fence; closed?: boolean } {
   const candidate = /^( {0,3})(`{3,}|~{3,})(.*)$/.exec(line);
   const run = candidate?.[2];
   if (!run) return {};
