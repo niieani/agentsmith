@@ -36,7 +36,6 @@ Pack snippets are grouped by the slot they fill:
 
 ```text
 packs/bun/
-├── pack.toml
 └── instructions/
     ├── tools/
     │   └── 10-bun.md
@@ -46,6 +45,14 @@ packs/bun/
 ```
 
 Common snippets apply to every harness. Harness-specific snippets are appended after common snippets for that pack. Pack selection order comes first; paths within each pack sort lexically, so numeric filename prefixes make the intended order visible.
+
+The directory itself defines an instruction-only pack. Add `pack.toml` only when the pack should enable skills:
+
+```toml
+skills = ["bun-debug"]
+```
+
+The manifest accepts only the optional `skills` field.
 
 Skills use a parallel but consumer-agnostic layout:
 
@@ -60,22 +67,22 @@ Every enabled skill declaring `tracker` receives that snippet. The pack does not
 
 ## Source IDs
 
-Unqualified IDs resolve from the shared Source Repository:
+Unqualified IDs are the normal form:
 
 ```toml
 template = "software"
 packs = ["base", "bun"]
 ```
 
-Project-owned sources use the explicit `@project/` namespace:
+During project generation, templates, skills, and partials resolve from the project first, then the shared Source Repository. Matching packs merge additively, shared first and project second. Use a qualifier only to require one owner:
 
 ```toml
-template = "@project/custom"
-packs = ["base", "@project/deploy"]
+template = "source:software"
+packs = ["base", "project:deploy"]
 ```
 
-There is no fallback or shadowing between shared and project-owned sources.
+Missing sources are errors. `asmith project explain` shows each selected pack's canonical owner, path, and composition order.
 
 ## Additive only
 
-Packs do not depend on, conflict with, or suppress other packs in v1. Select them explicitly in the desired order. This keeps configuration explainable and makes repeated generation deterministic.
+Packs do not depend on, conflict with, or suppress other packs in v1. Select logical pack names in the desired order; matching shared and project packs compose automatically. This keeps configuration explainable and makes repeated generation deterministic.

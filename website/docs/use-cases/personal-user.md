@@ -22,17 +22,14 @@ agent-context/
 │       └── default.md
 └── packs/
     ├── base/
-    │   ├── pack.toml
     │   └── instructions/
     │       └── workflow/
     │           └── 10-base.md
     ├── ios/
-    │   ├── pack.toml
     │   └── instructions/
     │       └── tools/
     │           └── 10-xcode.md
     └── server/
-        ├── pack.toml
         └── instructions/
             └── tools/
                 └── 10-server.md
@@ -41,8 +38,6 @@ agent-context/
 Start the root config with optional size guardrails:
 
 ```toml title="agentsmith.toml"
-version = 1
-
 [budgets]
 instruction_layer_bytes = 24576
 skill_markdown_bytes = 16384
@@ -68,11 +63,7 @@ The required workflow slot prevents a profile from generating an empty working a
 
 ## 3. Put concerns into packs
 
-Each pack has a strict config:
-
-```toml title="packs/base/pack.toml"
-version = 1
-```
+An instruction-only pack is just a directory:
 
 ```md title="packs/base/instructions/workflow/10-base.md"
 - Inspect the repository before editing.
@@ -82,10 +73,6 @@ version = 1
 
 The laptop-specific pack contributes to the same template without replacing it:
 
-```toml title="packs/ios/pack.toml"
-version = 1
-```
-
 ```md title="packs/ios/instructions/tools/10-xcode.md"
 - Use the checked-in Xcode project and the repository's selected scheme.
 - Prefer Simulator for routine iteration.
@@ -93,26 +80,22 @@ version = 1
 
 The server pack can describe its own environment independently:
 
-```toml title="packs/server/pack.toml"
-version = 1
-```
-
 ```md title="packs/server/instructions/tools/10-server.md"
 - Treat background services as long-running processes.
 - Check existing listeners and logs before restarting a service.
 ```
 
+None of these packs needs `pack.toml`. That optional manifest exists only for packs that enable skills.
+
 ## 4. Select packs per machine
 
 ```toml title="profiles/laptop.toml"
-version = 1
 harnesses = ["codex", "claude-code"]
 template = "personal"
 packs = ["base", "ios"]
 ```
 
 ```toml title="profiles/workstation.toml"
-version = 1
 harnesses = ["codex", "claude-code"]
 template = "personal"
 packs = ["base", "server"]
@@ -127,7 +110,6 @@ Clone the repository to the same conventional location on each machine, then cre
 On the laptop:
 
 ```toml title="~/.agents/agentsmith/config.toml"
-version = 1
 source = "~/.agents/agentsmith/source"
 profile = "laptop"
 ```

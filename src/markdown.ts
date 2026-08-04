@@ -1,4 +1,5 @@
 import type { Contribution, Diagnostic, RenderResult, RenderTrace } from "./types.ts";
+import { parseSourceId } from "./config.ts";
 
 export interface ResolvedInclude {
   path: string;
@@ -480,8 +481,11 @@ function findRemainingDirectives(lines: string[], path: string, diagnostics: Dia
 }
 
 function validIncludeId(value: string): boolean {
-  const name = value.startsWith("@project/") ? value.slice("@project/".length) : value;
-  return validLogicalName(name) && name.endsWith(".md");
+  try {
+    return parseSourceId(value).name.endsWith(".md");
+  } catch {
+    return false;
+  }
 }
 
 function validLogicalName(value: string): boolean {

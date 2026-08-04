@@ -89,7 +89,7 @@ resolves to:
 A project-owned partial must be explicit:
 
 ```md
-<!-- agentsmith:include @project/skills/severity-guidance.md -->
+<!-- agentsmith:include project:skills/severity-guidance.md -->
 ```
 
 That resolves to:
@@ -102,21 +102,13 @@ The lookup behavior does not change when a skill file moves within its source di
 
 ## 4. Create reusable tracker packs
 
-The GitHub pack supplies the tracker contract without naming any consuming skill:
-
-```toml title="packs/github/pack.toml"
-version = 1
-```
+The manifest-free GitHub pack supplies the tracker contract without naming any consuming skill:
 
 ```md title="packs/github/skill-slots/tracker/10-github.md"
 Use `gh issue view` to read the issue body, labels, linked pull requests, and discussion. Record the repository and issue number in the result.
 ```
 
-The Linear pack supplies a different implementation of the same contract:
-
-```toml title="packs/linear/pack.toml"
-version = 1
-```
+The manifest-free Linear pack supplies a different implementation of the same contract:
 
 ```md title="packs/linear/skill-slots/tracker/10-linear.md"
 Read the Linear issue, including its team, project, status, labels, and linked documents. Record the issue identifier in the result.
@@ -158,17 +150,12 @@ Create a project-owned pack:
 .config/agentsmith/
 └── packs/
     └── acme-tracker/
-        ├── pack.toml
         └── skill-slots/
             └── tracker/
                 └── 10-acme.md
 ```
 
-The pack has no knowledge of its consumers:
-
-```toml title=".config/agentsmith/packs/acme-tracker/pack.toml"
-version = 1
-```
+The pack has no manifest and no knowledge of its consumers:
 
 Its tracker instructions are entirely owned by the project:
 
@@ -182,15 +169,15 @@ Select that pack at the project scope:
 [[scopes]]
 path = "."
 template = "software"
-packs = ["base", "@project/acme-tracker"]
+packs = ["base", "acme-tracker"]
 skills_enable = ["triage-issue", "create-issue"]
 ```
 
 Assuming the shared Source Repository contains both skills and each declares `tracker`, agentsmith embeds the same `10-acme.md` snippet into both generated skills. Neither shared skill needs to know which tracker implementation the project selected, and the project pack does not need to know which skills consume it.
 
-Pack ownership and skill ownership are independent: an `@project` pack can provide slots to shared skills, and a shared pack can provide slots to project-owned skills.
+Pack ownership and skill ownership are independent: a project pack can provide slots to shared skills, and a shared pack can provide slots to project-owned skills.
 
-If your custom tracker should be reusable across several repositories, put the same pack under the shared Source Repository's `packs/acme-tracker/` and select it as `acme-tracker` instead.
+If tracker guidance should be reusable across several repositories, add a shared `packs/acme-tracker/`. Selecting `acme-tracker` composes shared and project matches; select `source:acme-tracker` or `project:acme-tracker` only when one owner must be isolated.
 
 ## 7. Specialize by harness only when needed
 
@@ -211,7 +198,6 @@ Common snippets render first, followed by harness-specific snippets. Codex remai
 Pack auto-enablement is optional and separate from slot provision. A broad GitHub pack might choose to enable a standard skill set:
 
 ```toml title="packs/github/pack.toml"
-version = 1
 skills = ["triage-issue", "create-issue"]
 ```
 

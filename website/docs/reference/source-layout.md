@@ -36,16 +36,16 @@ partials/
 
 ## Root config
 
-`agentsmith.toml` is strict and always starts with `version = 1`. It may set warning budgets:
+`agentsmith.toml` is strict and may set warning budgets:
 
 ```toml
-version = 1
-
 [budgets]
 instruction_layer_bytes = 24576
 effective_instruction_bytes = 32768
 skill_markdown_bytes = 16384
 ```
+
+Configuration files have no schema-version field. A `version` key is rejected.
 
 ## Local machine-only source
 
@@ -53,7 +53,9 @@ All Markdown files are scanned, including Git-ignored `*.local.md`. This makes i
 
 ## Project-owned source
 
-A project can mirror `templates/`, `packs/`, `skills/`, and `partials/` beneath `.config/agentsmith/`. Reference these with `@project/...` Source IDs. There are no project profiles because project behavior is declared directly in `.config/agentsmith/config.toml`.
+A project can mirror `templates/`, `packs`, `skills`, and `partials` beneath `.config/agentsmith/`. Unqualified singular sources prefer these project-owned directories; unqualified packs compose matching Source Repository and project directories. Use `project:` only to require the project-owned source. There are no project profiles because project behavior is declared directly in `.config/agentsmith/config.toml`.
+
+A pack directory is complete without `pack.toml`. Add that manifest only when the pack should enable skills; the manifest accepts only an optional `skills` list.
 
 ## Ordering
 

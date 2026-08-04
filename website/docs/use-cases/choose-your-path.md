@@ -31,7 +31,7 @@ No consumer edits the generated artifact to customize it. They change a selected
 | belongs to a reusable concern such as Bun, GitHub, macOS, or release policy | a pack snippet |
 | is an on-demand workflow an agent should invoke | a skill |
 | is prose reused inside templates or skills | a partial |
-| is unique to one repository | an `@project/...` source |
+| is unique to one repository | an unqualified project-owned source |
 | applies only below one monorepo directory | a nested scope |
 | chooses a machine's personal context | a profile |
 

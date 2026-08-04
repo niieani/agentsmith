@@ -132,14 +132,12 @@ packs/review/instructions/codex/tools/20-codex.md
 **Problem:** two machines share personal preferences, but have different operating systems, tools, or responsibilities.
 
 ```toml title="profiles/laptop.toml"
-version = 1
 harnesses = ["codex", "claude-code"]
 template = "personal"
 packs = ["base", "macos", "ios"]
 ```
 
 ```toml title="profiles/server.toml"
-version = 1
 harnesses = ["codex"]
 template = "personal"
 packs = ["base", "linux", "operations"]
@@ -158,19 +156,18 @@ Each machine's local config selects one profile. The shared Source Repository st
 ├── config.toml
 └── packs/
     └── deployment/
-        ├── pack.toml
         └── instructions/
             └── deployment/
                 └── 10-production.md
 ```
 
-Select the explicit project-owned Source ID:
+Select the project pack by its logical name:
 
 ```toml
-packs = ["base", "@project/deployment"]
+packs = ["base", "deployment"]
 ```
 
-**Why it helps:** contributors review project context with project code, and the `@project` namespace makes ownership unambiguous.
+**Why it helps:** contributors review project context with project code. If a shared `deployment` pack also exists, both contribute; use `project:deployment` only when shared contributions are unwanted.
 
 ## Layer special guidance into one monorepo subtree
 
@@ -197,7 +194,6 @@ The nested scope emits its own instruction layer. Native harness discovery combi
 **Problem:** every project using GitHub should have an issue-triage skill, but maintainers should not need to remember a second configuration list.
 
 ```toml title="packs/github/pack.toml"
-version = 1
 skills = ["triage-issue"]
 ```
 
@@ -217,7 +213,6 @@ Declare a `tracker` slot in the shared `skills/triage-issue/SKILL.md`. A project
 
 ```text
 .config/agentsmith/packs/acme-tracker/
-├── pack.toml
 └── skill-slots/
     └── tracker/
         └── 10-acme.md
@@ -227,11 +222,11 @@ Declare a `tracker` slot in the shared `skills/triage-issue/SKILL.md`. A project
 [[scopes]]
 path = "."
 template = "software"
-packs = ["base", "@project/acme-tracker"]
+packs = ["base", "acme-tracker"]
 skills_enable = ["triage-issue", "create-issue"]
 ```
 
-The `@project/acme-tracker` pack names no consumers. agentsmith embeds `10-acme.md` into both enabled skills because both declare the `tracker` slot.
+The `acme-tracker` pack names no consumers. agentsmith embeds `10-acme.md` into both enabled skills because both declare the `tracker` slot.
 
 The same pattern works with reusable shared packs such as `github` or `linear`; pack selection chooses the integration. The generated public skill remains `triage-issue`. See the [full skill author walkthrough](/use-cases/skill-author#6-bring-your-own-tracker-instructions).
 

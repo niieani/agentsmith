@@ -23,16 +23,16 @@ describe("CLI project workflow", () => {
     const project = join(root, "project");
     const skill = "agentsmith-e2e-review";
     await mkdir(project, { recursive: true });
-    await put(join(source, "agentsmith.toml"), "version = 1\n");
+    await put(join(source, "agentsmith.toml"), "");
     await put(join(source, "templates", "base", "default.md"), "# Guide\n\n<!-- agentsmith:slot notes -->\n");
-    await put(join(source, "packs", "base", "pack.toml"), `version = 1\nskills = ["${skill}"]\n`);
+    await put(join(source, "packs", "base", "pack.toml"), `skills = ["${skill}"]\n`);
     await put(join(source, "packs", "base", "instructions", "notes", "10-note.md"), "Use the fixture.\n");
     await put(join(source, "skills", skill, "SKILL.md"), `---\nname: ${skill}\ndescription: Fixture workflow.\n---\n\nDo the fixture work.\n`);
     const machine = join(root, ".agents", "agentsmith", "config.toml");
-    await put(machine, `version = 1\nsource = ${JSON.stringify(source)}\nprofile = "unused"\n`);
+    await put(machine, `source = ${JSON.stringify(source)}\nprofile = "unused"\n`);
     await put(
       join(project, ".config", "agentsmith", "config.toml"),
-      ["version = 1", 'harnesses = ["codex", "claude-code"]', "", "[[scopes]]", 'path = "."', 'template = "base"', 'packs = ["base"]', ""].join("\n"),
+      ['harnesses = ["codex", "claude-code"]', "", "[[scopes]]", 'path = "."', 'template = "base"', 'packs = ["base"]', ""].join("\n"),
     );
     expect((await run(["git", "init"], project)).exitCode).toBe(0);
     await run(["git", "config", "user.email", "fixture@example.test"], project);
@@ -68,7 +68,6 @@ describe("CLI project workflow", () => {
     await put(
       join(project, ".config", "agentsmith", "config.toml"),
       [
-        "version = 1",
         'harnesses = ["codex", "claude-code"]',
         "",
         "[[scopes]]",
@@ -103,10 +102,9 @@ describe("CLI global workflow", () => {
     await run(["git", "config", "user.email", "fixture@example.test"], seed);
     await run(["git", "config", "user.name", "Fixture"], seed);
     await put(join(seed, ".gitignore"), "*.local.md\n");
-    await put(join(seed, "agentsmith.toml"), "version = 1\n");
-    await put(join(seed, "profiles", "test.toml"), ["version = 1", 'harnesses = ["codex"]', 'template = "base"', 'packs = ["base"]', ""].join("\n"));
+    await put(join(seed, "agentsmith.toml"), "");
+    await put(join(seed, "profiles", "test.toml"), ['harnesses = ["codex"]', 'template = "base"', 'packs = ["base"]', ""].join("\n"));
     await put(join(seed, "templates", "base", "codex.md"), "# Global\n\n<!-- agentsmith:slot notes -->\n");
-    await put(join(seed, "packs", "base", "pack.toml"), "version = 1\n");
     await put(join(seed, "packs", "base", "instructions", "notes", "10-shared.md"), "Shared note.\n");
     await run(["git", "add", "."], seed);
     expect((await run(["git", "commit", "-m", "source"], seed)).exitCode).toBe(0);
@@ -115,7 +113,7 @@ describe("CLI global workflow", () => {
     await run(["git", "symbolic-ref", "HEAD", "refs/heads/main"], remote);
     expect((await run(["git", "clone", remote, source], root)).exitCode).toBe(0);
     await put(join(source, "packs", "base", "instructions", "notes", "20-studio.local.md"), "Studio-only note.\n");
-    await put(join(root, ".agents", "agentsmith", "config.toml"), `version = 1\nsource = ${JSON.stringify(source)}\nprofile = "test"\n`);
+    await put(join(root, ".agents", "agentsmith", "config.toml"), `source = ${JSON.stringify(source)}\nprofile = "test"\n`);
     const env = { ...Bun.env, HOME: root, CODEX_HOME: join(root, ".codex") };
     const args = ["bun", cli, "global", "sync"];
     const first = Bun.spawn(args, { cwd: root, env, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
@@ -144,10 +142,9 @@ describe("read-only project workflows", () => {
     const root = await mkdtemp(join(tmpdir(), "agentsmith-no-git-"));
     await put(
       join(root, ".config", "agentsmith", "config.toml"),
-      ["version = 1", 'harnesses = ["codex"]', "", "[[scopes]]", 'path = "."', 'template = "@project/base"', 'packs = ["@project/base"]', ""].join("\n"),
+      ['harnesses = ["codex"]', "", "[[scopes]]", 'path = "."', 'template = "base"', 'packs = ["base"]', ""].join("\n"),
     );
     await put(join(root, ".config", "agentsmith", "templates", "base", "codex.md"), "# Project\n\n<!-- agentsmith:slot note -->\n");
-    await put(join(root, ".config", "agentsmith", "packs", "base", "pack.toml"), "version = 1\n");
     await put(join(root, ".config", "agentsmith", "packs", "base", "instructions", "note", "10-note.md"), "No Git required.\n");
     const env = { ...Bun.env, HOME: root, CODEX_HOME: join(root, ".codex") };
     const child = Bun.spawn(["bun", cli, "project", "diff", "--project", root], {
@@ -161,5 +158,30 @@ describe("read-only project workflows", () => {
     expect(code, stderr).toBe(0);
     expect(stdout).toContain("No Git required.");
     expect(stderr).toContain("project-diff-without-git-state");
+
+    const human = Bun.spawn(["bun", cli, "project", "explain", "--project", root], {
+      cwd: root,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [humanOut, humanErr, humanCode] = await Promise.all([new Response(human.stdout).text(), new Response(human.stderr).text(), human.exited]);
+    expect(humanCode, humanErr).toBe(0);
+    expect(humanOut).toContain(`pack project:base: ${join(root, ".config", "agentsmith", "packs", "base")} (selected as base)`);
+
+    const json = Bun.spawn(["bun", cli, "project", "explain", "--project", root, "--json"], {
+      cwd: root,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [jsonOut, jsonErr, jsonCode] = await Promise.all([new Response(json.stdout).text(), new Response(json.stderr).text(), json.exited]);
+    expect(jsonCode, jsonErr).toBe(0);
+    const explanation = JSON.parse(jsonOut) as { artifacts: Array<{ packSources?: unknown[] }> };
+    expect(explanation.artifacts[0]?.packSources).toEqual([
+      { selection: "base", sourceId: "project:base", directory: join(root, ".config", "agentsmith", "packs", "base") },
+    ]);
   });
 });

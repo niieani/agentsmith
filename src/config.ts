@@ -51,11 +51,6 @@ function exactKeys(value: TomlTable, allowed: readonly string[], label: string, 
   if (unknown.length > 0) fail(`unknown ${label} key${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}`, path);
 }
 
-function version(value: TomlTable, path: string): 1 {
-  if (value.version !== 1) fail("version must be the integer 1", path);
-  return 1;
-}
-
 function string(value: unknown, label: string, path: string): string {
   if (typeof value !== "string" || value.length === 0) fail(`${label} must be a nonempty string`, path);
   return value;
@@ -137,13 +132,17 @@ export function resolveConfiguredPath(raw: string, configPath: string): string {
 
 export function parseSourceId(raw: string): SourceId {
   if (typeof raw !== "string" || raw.length === 0) fail("Source ID must be a nonempty string");
-  if (raw.includes("\0") || raw.includes("\\") || raw.startsWith("/") || /^[A-Za-z]:/.test(raw)) {
+  if (raw.includes("\0") || raw.includes("\\") || raw.startsWith("/") || raw.startsWith("@")) {
     fail(`invalid Source ID ${JSON.stringify(raw)}`);
   }
-  const projectPrefix = "@project/";
-  const owner = raw.startsWith(projectPrefix) ? "project" : "source";
-  const name = owner === "project" ? raw.slice(projectPrefix.length) : raw;
-  if (raw.startsWith("@") && owner !== "project") fail(`invalid Source ID namespace in ${JSON.stringify(raw)}`);
+  const colon = raw.indexOf(":");
+  const qualifier = colon === -1 ? undefined : raw.slice(0, colon);
+  if (qualifier !== undefined && qualifier !== "source" && qualifier !== "project") {
+    fail(`invalid Source ID qualifier in ${JSON.stringify(raw)}`);
+  }
+  const owner = qualifier as SourceId["owner"];
+  const name = colon === -1 ? raw : raw.slice(colon + 1);
+  if (name.includes(":")) fail(`invalid Source ID ${JSON.stringify(raw)}`);
   const parts = name.split("/");
   if (parts.length === 0 || parts.some((part) => part === "" || part === "." || part === "..")) {
     fail(`invalid Source ID ${JSON.stringify(raw)}`);
@@ -161,16 +160,12 @@ export function sourceRootConfigPath(sourceRoot: string): string {
 
 export function profileConfigPath(sourceRoot: string, name: string): string {
   const id = parseSourceId(name);
-  if (id.owner !== "source") fail("profile name cannot use @project namespace");
+  if (id.owner !== undefined) fail("profile name cannot be ownership-qualified");
   return contained(sourceRoot, join(sourceRoot, "profiles", `${id.name}.toml`), "profile path");
 }
 
 export function projectConfigPath(projectRoot: string): string {
   return join(projectRoot, PROJECT_CONFIG_RELATIVE_PATH);
-}
-
-function kindPath(kind: SourceKind): string {
-  return kind === "template" ? "templates" : kind === "pack" ? "packs" : kind === "skill" ? "skills" : "partials";
 }
 
 function contained(root: string, candidate: string, label: string): string {
@@ -181,42 +176,16 @@ function contained(root: string, candidate: string, label: string): string {
   return candidatePath;
 }
 
-export function resolveSourceDir(idOrRaw: SourceId | string, kind: SourceKind, sourceRoot: string, projectRoot?: string): string {
-  const id = typeof idOrRaw === "string" ? parseSourceId(idOrRaw) : idOrRaw;
-  const ownerRoot =
-    id.owner === "source"
-      ? resolve(sourceRoot)
-      : projectRoot === undefined
-        ? fail(`Source ID ${JSON.stringify(id.raw)} requires a project root`)
-        : projectSourceRoot(resolve(projectRoot));
-  const result = contained(ownerRoot, join(ownerRoot, kindPath(kind), ...id.name.split("/")), `${kind} Source ID`);
-  if (!existsSync(result)) fail(`missing ${kind} source ${JSON.stringify(id.raw)} at ${result}`);
-  let current = ownerRoot;
-  if (lstatSync(current).isSymbolicLink()) fail(`source root is a symlink: ${current}`);
-  for (const segment of relative(ownerRoot, result).split(sep).filter(Boolean)) {
-    current = join(current, segment);
-    if (lstatSync(current).isSymbolicLink()) fail(`${kind} source ${JSON.stringify(id.raw)} traverses symlink ${current}`);
-  }
-  contained(realpathSync(ownerRoot), realpathSync(result), `${kind} Source ID`);
-  const stat = lstatSync(result);
-  if (kind === "partial") {
-    if (!stat.isFile()) fail(`partial source ${JSON.stringify(id.raw)} is not a file`);
-  } else if (!stat.isDirectory()) fail(`${kind} source ${JSON.stringify(id.raw)} is not a directory`);
-  return result;
-}
-
 export function loadMachineConfig(path: string): MachineConfig {
   const absolutePath = resolveConfiguredPath(path, join(resolve("."), ".agentsmith-cli-path"));
   const input = readToml(absolutePath);
-  exactKeys(input, ["version", "source", "profile"], "machine configuration", absolutePath);
+  exactKeys(input, ["source", "profile"], "machine configuration", absolutePath);
   const profile = string(input.profile, "profile", absolutePath);
-  parseSourceId(profile);
-  if (profile.startsWith("@project/")) fail("machine profile cannot use @project namespace", absolutePath);
+  if (parseSourceId(profile).owner !== undefined) fail("machine profile cannot be ownership-qualified", absolutePath);
   const source = resolveConfiguredPath(string(input.source, "source", absolutePath), absolutePath);
   if (!existsSync(source) || !lstatSync(source).isDirectory()) fail(`source is not an existing directory: ${source}`, absolutePath);
   if (lstatSync(source).isSymbolicLink()) fail(`source must not be a symlink: ${source}`, absolutePath);
   return {
-    version: version(input, absolutePath),
     source,
     profile,
   };
@@ -225,16 +194,15 @@ export function loadMachineConfig(path: string): MachineConfig {
 export function loadRootConfig(sourceRoot: string): RootConfig {
   const path = sourceRootConfigPath(resolve(sourceRoot));
   const input = readToml(path);
-  exactKeys(input, ["version", "budgets"], "source root configuration", path);
-  return { version: version(input, path), budgets: budgets(input.budgets, path) };
+  exactKeys(input, ["budgets"], "source root configuration", path);
+  return { budgets: budgets(input.budgets, path) };
 }
 
 export function loadProfileConfig(sourceRoot: string, name: string): ProfileConfig {
   const path = profileConfigPath(resolve(sourceRoot), name);
   const input = readToml(path);
-  exactKeys(input, ["version", "harnesses", "template", "packs", "skills_enable", "skills_disable", "budgets"], "profile", path);
+  exactKeys(input, ["harnesses", "template", "packs", "skills_enable", "skills_disable", "budgets"], "profile", path);
   const result: ProfileConfig = {
-    version: version(input, path),
     harnesses: harnesses(input.harnesses, "harnesses", path),
     template: string(input.template, "template", path),
     packs: sourceIds(input.packs, "packs", path),
@@ -242,19 +210,25 @@ export function loadProfileConfig(sourceRoot: string, name: string): ProfileConf
     skillsDisable: sourceIds(input.skills_disable, "skills_disable", path),
     budgets: budgets(input.budgets, path),
   };
-  const templateId = parseSourceId(result.template);
-  if (templateId.owner !== "source") fail("profile template must come from the Source Repository", path);
-  resolveSourceDir(templateId, "template", sourceRoot);
-  for (const pack of result.packs) resolveSourceDir(pack, "pack", sourceRoot);
-  for (const skill of [...result.skillsEnable, ...result.skillsDisable]) resolveSourceDir(skill, "skill", sourceRoot);
+  for (const sourceId of [result.template, ...result.packs, ...result.skillsEnable, ...result.skillsDisable]) {
+    if (parseSourceId(sourceId).owner === "project") fail("global profiles cannot reference project-owned sources", path);
+  }
   return result;
 }
 
 export function loadPackConfig(packDir: string): PackConfig {
   const path = join(resolve(packDir), "pack.toml");
+  let manifest: ReturnType<typeof lstatSync>;
+  try {
+    manifest = lstatSync(path);
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return { skills: [] };
+    throw new ConfigError("cannot inspect pack manifest", path, { cause });
+  }
+  if (manifest.isSymbolicLink() || !manifest.isFile()) fail("pack manifest must be a regular non-symlink file", path);
   const input = readToml(path);
-  exactKeys(input, ["version", "skills"], "pack", path);
-  return { version: version(input, path), skills: sourceIds(input.skills, "skills", path) };
+  exactKeys(input, ["skills"], "pack", path);
+  return { skills: sourceIds(input.skills, "skills", path) };
 }
 
 function projectRootFromConfig(path: string): string {
@@ -302,7 +276,7 @@ export function loadProjectConfig(path: string): ProjectConfig {
   const absolutePath = resolve(path);
   const root = projectRootFromConfig(absolutePath);
   const input = readToml(absolutePath);
-  exactKeys(input, ["version", "harnesses", "budgets", "scopes"], "project configuration", absolutePath);
+  exactKeys(input, ["harnesses", "budgets", "scopes"], "project configuration", absolutePath);
   const projectHarnesses = harnesses(input.harnesses, "harnesses", absolutePath);
   if (!Array.isArray(input.scopes)) fail("scopes must be an array of tables", absolutePath);
   const scopes = input.scopes.map((value, index) => scope(value, index, projectHarnesses, root, absolutePath));
@@ -310,11 +284,6 @@ export function loadProjectConfig(path: string): ProjectConfig {
   for (const item of scopes) {
     if (paths.has(item.path)) fail(`duplicate normalized scope path ${JSON.stringify(item.path)}`, absolutePath);
     paths.add(item.path);
-    if (item.template?.startsWith("@project/")) resolveSourceDir(item.template, "template", "", root);
-    for (const pack of item.packs) if (pack.startsWith("@project/")) resolveSourceDir(pack, "pack", "", root);
-    for (const skill of [...item.skillsEnable, ...item.skillsDisable]) {
-      if (skill.startsWith("@project/")) resolveSourceDir(skill, "skill", "", root);
-    }
   }
   if (!paths.has(".")) fail('project configuration must declare a Repository Scope with path "."', absolutePath);
   for (const child of scopes) {
@@ -331,7 +300,7 @@ export function loadProjectConfig(path: string): ProjectConfig {
       }
     }
   }
-  return { version: version(input, absolutePath), harnesses: projectHarnesses, budgets: budgets(input.budgets, absolutePath), scopes };
+  return { harnesses: projectHarnesses, budgets: budgets(input.budgets, absolutePath), scopes };
 }
 
 export function discoverProjectConfig(start: string): string {

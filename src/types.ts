@@ -8,18 +8,15 @@ export interface Budgets {
 }
 
 export interface MachineConfig {
-  version: 1;
   source: string;
   profile: string;
 }
 
 export interface RootConfig {
-  version: 1;
   budgets: Budgets;
 }
 
 export interface ProfileConfig {
-  version: 1;
   harnesses: HarnessName[];
   template: string;
   packs: string[];
@@ -29,7 +26,6 @@ export interface ProfileConfig {
 }
 
 export interface PackConfig {
-  version: 1;
   skills: string[];
 }
 
@@ -43,7 +39,6 @@ export interface ScopeConfig {
 }
 
 export interface ProjectConfig {
-  version: 1;
   harnesses: HarnessName[];
   budgets: Budgets;
   scopes: ScopeConfig[];
@@ -59,7 +54,7 @@ export interface Diagnostic {
 }
 
 export interface SourceId {
-  owner: "source" | "project";
+  owner?: "source" | "project";
   name: string;
   raw: string;
 }

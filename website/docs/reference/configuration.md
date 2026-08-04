@@ -3,21 +3,19 @@ title: Configuration reference
 description: Strict TOML schemas for machines, profiles, packs, and projects.
 ---
 
-Every agentsmith TOML document requires `version = 1`. Unknown keys, wrong types, duplicate selected packs, unknown harnesses, and missing sources are errors.
+Every agentsmith TOML document is strict. Configuration files have no schema-version field: `version` and all other unknown keys are errors. Wrong types, duplicate selected packs, unknown harnesses, and missing sources are also errors.
 
 ## Machine config
 
 Default path: `~/.agents/agentsmith/config.toml`.
 
 ```toml
-version = 1
 source = "~/.agents/agentsmith/source"
 profile = "laptop"
 ```
 
 | Key | Required | Meaning |
 | --- | --- | --- |
-| `version` | Yes | Schema version; currently `1`. |
 | `source` | Yes | Source Repository path. |
 | `profile` | Yes | Profile filename without `.toml`. |
 
@@ -26,8 +24,6 @@ profile = "laptop"
 Path: `<source>/agentsmith.toml`.
 
 ```toml
-version = 1
-
 [budgets]
 instruction_layer_bytes = 24576
 effective_instruction_bytes = 32768
@@ -41,7 +37,6 @@ All budget values are optional positive UTF-8 byte thresholds. They warn rather 
 Path: `<source>/profiles/<name>.toml`.
 
 ```toml
-version = 1
 harnesses = ["codex", "claude-code"]
 template = "personal"
 packs = ["base", "personal", "macos"]
@@ -56,21 +51,19 @@ Profile budgets override matching Source Repository defaults.
 
 ## Pack
 
-Path: `<source>/packs/<name>/pack.toml` or `.config/agentsmith/packs/<name>/pack.toml`.
+Path, when needed: `<source>/packs/<name>/pack.toml` or `.config/agentsmith/packs/<name>/pack.toml`.
 
 ```toml
-version = 1
 skills = ["to-issues", "address-review"]
 ```
 
-`skills` is ordered and optional.
+A pack directory needs no manifest when it only contributes instructions or skill slots. Add `pack.toml` only to enable skills. When present, it accepts only the optional, ordered `skills` field; omitting `skills` is equivalent to an empty list.
 
 ## Project config
 
 Path: `<project>/.config/agentsmith/config.toml`.
 
 ```toml
-version = 1
 harnesses = ["codex", "claude-code"]
 
 [budgets]
@@ -94,7 +87,11 @@ skills_enable = ["simulator-debug"]
 skills_disable = []
 ```
 
-Top-level project keys are `version`, `harnesses`, `budgets`, and `scopes`. Scope keys are `path`, `template`, `packs`, `harnesses`, `skills_enable`, and `skills_disable`.
+Top-level project keys are `harnesses`, `budgets`, and `scopes`. Scope keys are `path`, `template`, `packs`, `harnesses`, `skills_enable`, and `skills_disable`.
+
+## Source IDs
+
+Source IDs are slash-separated logical names, not filesystem paths. Unqualified names are preferred. In project mode, templates, skills, and partials resolve project-first with Source Repository fallback; packs compose Source Repository and project matches in that order. `source:` and `project:` restrict resolution to one owner. Global profiles resolve only Source Repository sources and reject `project:` references. A name missing from every eligible owner is an error.
 
 ## Harness destinations
 

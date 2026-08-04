@@ -54,7 +54,7 @@ Scans reject symlinks. Markdown conventions include every `.md` file, including 
 
 ## 3. Source IDs
 
-An unqualified Source ID resolves only from the Source Repository:
+An unqualified Source ID is the default:
 
 ```toml
 template = "software"
@@ -62,26 +62,25 @@ packs = ["base", "bun", "github"]
 skills_enable = ["to-issues"]
 ```
 
-A Source ID beginning with `@project/` resolves only from project-owned source:
+During project generation, templates, skills, and partials resolve from project-owned source first, then fall back to the Source Repository. Packs compose both matches in Source Repository then project order. Ownership qualifiers restrict lookup when needed:
 
 ```toml
-template = "@project/custom"
-packs = ["base", "@project/deploy"]
-skills_enable = ["@project/release"]
+template = "source:software"
+packs = ["base", "project:deploy"]
+skills_enable = ["project:release"]
 ```
 
 Source IDs use forward-slash logical segments, not arbitrary paths. Empty segments, `.`, `..`, absolute paths, backslashes, NUL, and root escape are invalid.
 
-For skills, Source ID and public Skill Name are separate. `@project/release` resolves a source directory; the emitted name comes from that source's `SKILL.md` front matter and must equal the source directory basename.
+Global generation resolves only from the Source Repository and rejects `project:` references. Missing names are errors. For skills, Source ID and public Skill Name are separate. `project:release` resolves a source directory; the emitted name comes from that source's `SKILL.md` front matter and must equal the source directory basename.
 
 ## 4. Configuration schema
 
-Every TOML document is strict and contains `version = 1`. Unknown keys, wrong types, duplicate selected packs, unknown harnesses, and missing referenced sources are errors.
+Every TOML document is strict. Configuration files have no schema-version field; `version` and all other unknown keys are errors. Wrong types, duplicate selected packs, unknown harnesses, and missing referenced sources are also errors.
 
 ### 4.1 Machine configuration
 
 ```toml
-version = 1
 source = "~/.agents/agentsmith/source"
 profile = "studio"
 ```
@@ -89,8 +88,6 @@ profile = "studio"
 ### 4.2 Source Repository root
 
 ```toml
-version = 1
-
 [budgets]
 instruction_layer_bytes = 24576
 effective_instruction_bytes = 32768
@@ -104,7 +101,6 @@ All budget keys are optional positive UTF-8 byte thresholds.
 `profiles/studio.toml`:
 
 ```toml
-version = 1
 harnesses = ["codex", "claude-code"]
 template = "personal"
 packs = ["base", "personal", "macos", "server"]
@@ -119,19 +115,17 @@ Profile budgets override matching Source Repository defaults.
 
 ### 4.4 Pack
 
-`packs/github/pack.toml`:
+Pack directories are valid without a manifest. Add `pack.toml` only when the pack enables skills:
 
 ```toml
-version = 1
 skills = ["to-issues", "address-review"]
 ```
 
-`skills` is ordered and optional. v1 has no pack dependencies, conflicts, conditions, or implicit pack inclusion.
+When present, `pack.toml` accepts only the optional, ordered `skills` field. Omitting it normalizes to an empty list. v1 has no pack dependencies, conflicts, conditions, or implicit pack inclusion.
 
 ### 4.5 Project configuration
 
 ```toml
-version = 1
 harnesses = ["codex", "claude-code"]
 
 [budgets]
@@ -206,7 +200,7 @@ Recognized directives must begin at column zero, occupy the complete line, and o
 <!-- agentsmith:slot tools -->
 <!-- agentsmith:required-slot verification -->
 <!-- agentsmith:include grilling/core.md -->
-<!-- agentsmith:include @project/domain/terms.md -->
+<!-- agentsmith:include project:domain/terms.md -->
 ```
 
 Names use logical Source ID syntax. Unknown or malformed `agentsmith:` directives are errors. Directives remaining in generated output are errors.
@@ -231,7 +225,7 @@ Reusable skill snippets for slot `tracker` are discovered in this order:
 1. `packs/github/skill-slots/tracker/*.md`
 2. `packs/github/skill-slots/harnesses/<harness>/tracker/*.md`
 
-Skill-slot contributions are keyed only by slot name, never by consuming skill name. The same snippet may therefore be rendered into multiple enabled skills. Skill sources and contributing packs may have different owners: for example, an `@project/tracker` pack may fill `tracker` slots in shared skills.
+Skill-slot contributions are keyed only by slot name, never by consuming skill name. The same snippet may therefore be rendered into multiple enabled skills. Skill sources and contributing packs may have different owners: for example, a project-owned `tracker` pack may fill `tracker` slots in shared skills.
 
 A `skills/<skill>/<slot>/` directory inside a pack is invalid because it couples the provider to a consumer. Planning fails with a migration diagnostic directing the author to `skill-slots/<slot>/`.
 
@@ -239,10 +233,10 @@ Across packs, the Scope Pack Selection order is primary.
 
 ### 6.2 Includes
 
-- Includes resolve only beneath the selected source root's `partials/` directory.
-- Unqualified includes resolve from the Source Repository.
-- `@project/...` includes resolve from project partials.
-- No fallback or shadowing occurs between roots.
+- Includes resolve only beneath an eligible owner's `partials/` directory.
+- Unqualified project includes resolve project-first, then fall back to the Source Repository.
+- `source:` and `project:` includes restrict lookup to one owner.
+- Global includes resolve only from the Source Repository.
 - Missing files, cycles, root escape, and symlinks are errors.
 - Includes expand recursively before slot filling.
 
@@ -262,7 +256,7 @@ For one scope, enabled skill Source IDs are the stable ordered union of:
 2. `skills_enable` entries;
 3. minus `skills_disable` entries.
 
-Repeated enablement of the same Source ID is idempotent. Exclusion affects only skills introduced by that scope; it cannot hide inherited skills.
+Selections resolving to the same canonical Source ID are idempotent. A qualified exclusion matches one owner; an unqualified exclusion matches either owner with the same logical name. Exclusion affects only skills introduced by that scope; it cannot hide inherited skills.
 
 Every skill source is a directory containing `SKILL.md`. All Markdown files pass through include and slot rendering. Non-Markdown files copy unchanged, including executable mode. A common skill source is rendered for each harness, with optional harness-specific pack snippets.
 

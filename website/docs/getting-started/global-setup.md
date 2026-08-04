@@ -10,7 +10,6 @@ Global mode is for personal agent context that follows you across machines. Each
 Create `~/.agents/agentsmith/config.toml`:
 
 ```toml
-version = 1
 source = "~/.agents/agentsmith/source"
 profile = "laptop"
 ```
@@ -22,7 +21,6 @@ profile = "laptop"
 In the Source Repository, create `profiles/laptop.toml`:
 
 ```toml
-version = 1
 harnesses = ["codex", "claude-code"]
 template = "personal"
 packs = ["base", "personal", "macos"]

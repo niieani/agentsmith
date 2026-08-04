@@ -54,7 +54,6 @@ bun run src/cli.ts --help
 Create `~/.agents/agentsmith/config.toml`:
 
 ```toml
-version = 1
 source = "~/.agents/agentsmith/source"
 profile = "laptop"
 ```
@@ -62,7 +61,6 @@ profile = "laptop"
 The selected Source Repository contains `agentsmith.toml`, profiles, template families, packs, skills, and partials. A minimal profile looks like:
 
 ```toml
-version = 1
 harnesses = ["codex", "claude-code"]
 template = "personal"
 packs = ["base", "macos"]
@@ -83,7 +81,6 @@ asmith global sync
 Create `.config/agentsmith/config.toml` in the project root:
 
 ```toml
-version = 1
 harnesses = ["codex", "claude-code"]
 
 [[scopes]]

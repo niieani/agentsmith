@@ -101,8 +101,12 @@ A pack owned by one project and available only while assembling that project's a
 _Avoid_: Local pack, repo pack
 
 **Source ID**:
-The qualified identity of a pack, template, partial, or skill source. It identifies ownership without determining the public identity of a generated artifact.
+The logical name of a pack, template, partial, or skill source, optionally qualified by ownership. It does not determine the public identity of a generated artifact.
 _Avoid_: Path, artifact name
+
+**Source Resolution**:
+The selection of owned sources for one Source ID. Singular sources choose one owner; additive pack resolution may select both Source Repository and Project Pack sources.
+_Avoid_: Path lookup, fallback search, shadowing
 
 **Local Source**:
 Machine-owned source material that participates in assembly without belonging to version control.

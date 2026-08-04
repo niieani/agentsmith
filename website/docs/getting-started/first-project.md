@@ -10,7 +10,6 @@ Project generation combines reusable sources with configuration committed to a p
 At the repository root, create `.config/agentsmith/config.toml`:
 
 ```toml
-version = 1
 harnesses = ["codex", "claude-code"]
 
 [[scopes]]
@@ -44,5 +43,5 @@ git commit -m "chore: generate agent context"
 agentsmith only overwrites project outputs that Git reports as tracked and clean. Review and commit newly created outputs before regenerating them.
 
 :::warning
-Project generation needs a machine config because global Source IDs such as `software` and `base` resolve from the configured Source Repository. Use `@project/...` IDs for sources that live only in this repository.
+Project-only sources work without machine configuration. A machine config is needed only when an unqualified name must fall back to the Source Repository or a `source:` reference is selected. When a machine config exists, project planning loads it so matching Source Repository packs cannot be omitted silently; that config must therefore be valid.
 :::

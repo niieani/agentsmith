@@ -9,13 +9,14 @@ import {
   loadRootConfig,
   MACHINE_CONFIG_PATH,
   resolveConfiguredPath,
+  parseSourceId,
 } from "./config.ts";
 import { walkFiles } from "./fs.ts";
 import { getHarnessAdapter } from "./harness.ts";
 import { renderMarkdown } from "./markdown.ts";
 import {
   loadInstructionContributions,
-  loadPack,
+  loadPacks,
   loadSkill,
   loadSkillContributions,
   loadTemplate,
@@ -51,6 +52,12 @@ interface SkillPlacement {
   name: string;
   sourceId: string;
   destinationDir: string;
+}
+
+interface EnabledSkill {
+  identity: SkillIdentity;
+  enabledBy: string[];
+  explicitlyEnabled: boolean;
 }
 
 interface PlannerContext {
@@ -138,10 +145,34 @@ async function renderContent(context: PlannerContext, content: string, path: str
   return rendered;
 }
 
-async function enabledSkills(scope: ScopeInput, packs: LoadedPack[]): Promise<string[]> {
-  const candidates = stableUnion([...packs.flatMap((pack) => pack.config.skills), ...scope.skillsEnable]);
-  const disabled = new Set(scope.skillsDisable);
-  return candidates.filter((sourceId) => !disabled.has(sourceId));
+async function resolveEnabledSkills(
+  context: PlannerContext,
+  scope: ScopeInput,
+  packs: LoadedPack[],
+): Promise<{ skills: EnabledSkill[]; activeExclusions: Set<string> }> {
+  await Promise.all(scope.skillsDisable.map((selection) => loadSkill(context.sources, selection)));
+  const candidates: Array<{ selection: string; enabledBy?: string }> = [
+    ...packs.flatMap((pack) => pack.config.skills.map((selection) => ({ selection, enabledBy: pack.sourceId }))),
+    ...scope.skillsEnable.map((selection) => ({ selection })),
+  ];
+  const resolved = new Map<string, EnabledSkill>();
+  for (const candidate of candidates) {
+    const identity = await loadSkill(context.sources, candidate.selection);
+    const current = resolved.get(identity.sourceId) ?? { identity, enabledBy: [], explicitlyEnabled: false };
+    if (candidate.enabledBy) current.enabledBy = stableUnion([...current.enabledBy, candidate.enabledBy]);
+    else current.explicitlyEnabled = true;
+    resolved.set(identity.sourceId, current);
+  }
+
+  const exclusions = scope.skillsDisable.map((selection) => ({ selection, id: parseSourceId(selection) }));
+  const activeExclusions = new Set<string>();
+  const skills = [...resolved.values()].filter((skill) => {
+    const canonical = parseSourceId(skill.identity.sourceId);
+    const matches = exclusions.filter(({ id }) => id.name === canonical.name && (id.owner === undefined || id.owner === canonical.owner));
+    for (const match of matches) activeExclusions.add(match.selection);
+    return matches.length === 0;
+  });
+  return { skills, activeExclusions };
 }
 
 async function planInstruction(context: PlannerContext, scope: ScopeInput, harness: HarnessName, packs: LoadedPack[]): Promise<void> {
@@ -185,20 +216,23 @@ async function planInstruction(context: PlannerContext, scope: ScopeInput, harne
     scope: scope.path,
     destination,
     template: template.path,
-    packs: scope.packs,
+    templateSelection: template.selection,
+    templateSourceId: template.sourceId,
+    packs: packs.map((pack) => pack.sourceId),
+    packSources: packs.map((pack) => ({ selection: pack.selection, sourceId: pack.sourceId, directory: pack.directory })),
     trace: rendered.trace,
     bytes,
   });
 }
 
 async function planSkills(context: PlannerContext, scope: ScopeInput, harness: HarnessName, packs: LoadedPack[]): Promise<void> {
-  const sourceIds = await enabledSkills(scope, packs);
-  const enabledSet = new Set(sourceIds);
+  const { skills, activeExclusions } = await resolveEnabledSkills(context, scope, packs);
   const contributions = (await Promise.all(packs.map((pack) => loadSkillContributions(pack, harness)))).flat();
   const usedContributionPaths = new Set<string>();
 
-  for (const sourceId of sourceIds) {
-    const skill = await loadSkill(context.sources, sourceId);
+  for (const enabled of skills) {
+    const skill = enabled.identity;
+    const sourceId = skill.sourceId;
     const skillDir = skill.sourceDir;
     const adapter = getHarnessAdapter(harness);
     const root = context.mode === "global" ? adapter.globalSkillRoot() : adapter.projectSkillRoot(context.projectRoot!, scope.path);
@@ -276,9 +310,10 @@ async function planSkills(context: PlannerContext, scope: ScopeInput, harness: H
       sourceId,
       name: skill.name,
       destination: destinationDir,
-      enabledBy: packs.filter((pack) => pack.config.skills.includes(sourceId)).map((pack) => pack.sourceId),
-      explicitlyEnabled: scope.skillsEnable.includes(sourceId),
+      enabledBy: enabled.enabledBy,
+      explicitlyEnabled: enabled.explicitlyEnabled,
       scopeExclusions: scope.skillsDisable,
+      packSources: packs.map((pack) => ({ selection: pack.selection, sourceId: pack.sourceId, directory: pack.directory })),
       markdownBytes,
       supportBytes,
       files: fileExplanations,
@@ -296,7 +331,7 @@ async function planSkills(context: PlannerContext, scope: ScopeInput, harness: H
   }
 
   for (const excluded of scope.skillsDisable) {
-    if (!enabledSet.has(excluded) && !packs.some((pack) => pack.config.skills.includes(excluded))) {
+    if (!activeExclusions.has(excluded)) {
       warning(context.diagnostics, "skill-exclusion-inactive", `Scope ${scope.path} excludes ${excluded}, but that scope does not enable it`);
     }
   }
@@ -447,8 +482,22 @@ function coalesceWrites(context: PlannerContext): void {
 
 async function planScopes(context: PlannerContext, scopes: ScopeInput[]): Promise<void> {
   const sorted = [...scopes].sort((a, b) => scopeDepth(a.path) - scopeDepth(b.path) || (a.path < b.path ? -1 : 1));
-  for (const scope of sorted) {
-    const packs = scope.packs.map((sourceId) => loadPack(context.sources, sourceId));
+  const loadedScopes = sorted.map((scope) => ({ scope, packs: loadPacks(context.sources, scope.packs) }));
+  for (let ancestorIndex = 0; ancestorIndex < loadedScopes.length; ancestorIndex += 1) {
+    const ancestor = loadedScopes[ancestorIndex]!;
+    const inherited = new Set(ancestor.packs.map((pack) => pack.sourceId));
+    for (let childIndex = ancestorIndex + 1; childIndex < loadedScopes.length; childIndex += 1) {
+      const child = loadedScopes[childIndex]!;
+      if (!isAncestorScope(ancestor.scope.path, child.scope.path)) continue;
+      const repeated = child.packs.find((pack) => inherited.has(pack.sourceId));
+      if (repeated) {
+        throw new Error(
+          `scope ${JSON.stringify(child.scope.path)} repeats inherited pack source ${repeated.sourceId} from scope ${JSON.stringify(ancestor.scope.path)}`,
+        );
+      }
+    }
+  }
+  for (const { scope, packs } of loadedScopes) {
     for (const pack of packs) {
       const coupledSkillRoot = join(pack.directory, "skills");
       if (existsSync(coupledSkillRoot)) {

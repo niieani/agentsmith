@@ -23,7 +23,6 @@ acme/
 Create `.config/agentsmith/config.toml`:
 
 ```toml
-version = 1
 harnesses = ["codex", "claude-code"]
 
 [budgets]
@@ -34,12 +33,12 @@ skill_markdown_bytes = 16000
 [[scopes]]
 path = "."
 template = "software"
-packs = ["base", "github", "@project/repository"]
+packs = ["base", "github", "repository"]
 
 [[scopes]]
 path = "services/api"
 template = "service"
-packs = ["bun", "@project/api"]
+packs = ["bun", "api"]
 skills_enable = ["service-debug"]
 
 [[scopes]]
@@ -54,7 +53,7 @@ The root scope is required. Nested pack lists are deltas: they add to inherited 
 
 ## 2. Keep universal concerns reusable
 
-The unqualified templates and packs come from the maintainer's configured Source Repository:
+Reusable matches come from the maintainer's configured Source Repository:
 
 - `base` supplies general engineering workflow;
 - `github` supplies issue and review behavior;
@@ -65,26 +64,20 @@ This content can be improved once and reused by many repositories.
 
 ## 3. Keep repository-specific policy in the repository
 
-Project-owned sources live below `.config/agentsmith/` and use `@project/...` IDs:
+Project-owned sources live below `.config/agentsmith/`. Their unqualified names resolve automatically:
 
 ```text
 .config/agentsmith/
 ├── config.toml
 └── packs/
     ├── repository/
-    │   ├── pack.toml
     │   └── instructions/
     │       └── repository/
     │           └── 10-layout.md
     └── api/
-        ├── pack.toml
         └── instructions/
             └── verification/
                 └── 10-integration-tests.md
-```
-
-```toml title=".config/agentsmith/packs/repository/pack.toml"
-version = 1
 ```
 
 ```md title=".config/agentsmith/packs/repository/instructions/repository/10-layout.md"
@@ -93,15 +86,11 @@ version = 1
 - Architectural decisions live under `docs/adr/`.
 ```
 
-```toml title=".config/agentsmith/packs/api/pack.toml"
-version = 1
-```
-
 ```md title=".config/agentsmith/packs/api/instructions/verification/10-integration-tests.md"
 Run `bun test test/integration` after changing request handling, persistence, or authentication.
 ```
 
-Checking these sources into the repository gives every maintainer the same project-specific inputs. The explicit namespace prevents a local `repository` pack from silently shadowing a shared one.
+These instruction-only pack directories need no `pack.toml`. Checking the sources into the repository gives every maintainer the same project-specific inputs. If a maintainer also has a shared pack with the same name, agentsmith composes shared contributions first and project contributions second; `project:repository` selects only the project pack when that distinction is intentional.
 
 ## 4. Preview the effective result
 
@@ -182,7 +171,7 @@ Lint catches invalid composition and turns budget warnings into failures. A none
 - **Repository and subtree scopes** follow native harness inheritance.
 - **Harness subsets** avoid generating irrelevant nested artifacts.
 - **Shared packs** reuse ecosystem knowledge across repositories.
-- **`@project` packs** keep local architecture and commands with the code.
+- **Project packs** keep local architecture and commands with the code.
 - **Effective-size budgets** guard the whole inherited context chain.
 - **Explain and diff** support review at provenance and byte levels.
 - **Git-aware generation** protects hand edits and stale artifacts.

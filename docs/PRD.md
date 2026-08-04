@@ -118,8 +118,9 @@ Adapters own native paths, discovery rules, instruction shadowing checks, and sk
 - The machine configuration selects one Source Repository and active profile.
 - The Source Repository owns reusable profiles, template families, packs, skills, and partials.
 - A project owns its configuration and may mirror templates, packs, skills, and partials under its agentsmith configuration directory.
-- Unqualified Source IDs resolve only in the Source Repository.
-- `@project/...` Source IDs resolve only in the current project.
+- Unqualified templates, skills, and partials resolve project-first during project generation, then fall back to the Source Repository.
+- Unqualified packs compose Source Repository and project matches in that order.
+- `source:` and `project:` qualifiers restrict resolution to one owner.
 - Source qualification never changes a skill's public name.
 
 ### Composition

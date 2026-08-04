@@ -207,7 +207,16 @@ function explainHuman(plan: BuiltPlan): string {
     lines.push(`${artifact.harness} ${artifact.scope}: ${label}`);
     lines.push(`  destination: ${artifact.destination}`);
     if (artifact.template) lines.push(`  template: ${artifact.template}`);
+    if (artifact.templateSourceId) {
+      lines.push(`  template source: ${artifact.templateSourceId} (selected as ${artifact.templateSelection ?? "(unknown)"})`);
+    }
     if (Array.isArray(artifact.packs)) lines.push(`  packs: ${artifact.packs.join(", ") || "(none)"}`);
+    if (Array.isArray(artifact.packSources)) {
+      for (const value of artifact.packSources) {
+        const pack = value as { selection?: string; sourceId?: string; directory?: string };
+        lines.push(`  pack ${pack.sourceId ?? "(unknown)"}: ${pack.directory ?? "(unknown)"} (selected as ${pack.selection ?? "(unknown)"})`);
+      }
+    }
     if (artifact.sourceId) lines.push(`  source: ${artifact.sourceId}`);
     if (typeof artifact.bytes === "number") lines.push(`  bytes: ${artifact.bytes}`);
     if (typeof artifact.markdownBytes === "number") lines.push(`  markdown bytes: ${artifact.markdownBytes}`);

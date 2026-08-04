@@ -13,12 +13,13 @@ For a scope, enabled skills are the ordered union of:
 2. `skills_enable` entries on the profile or scope;
 3. minus `skills_disable` entries at that same scope.
 
-A pack enables skills in `pack.toml`:
+A pack that enables skills declares them in its optional `pack.toml`:
 
 ```toml
-version = 1
 skills = ["to-issues", "address-review"]
 ```
+
+Instruction-only packs and packs that only contribute skill slots need no manifest.
 
 A scope can adjust the result:
 
@@ -50,16 +51,22 @@ All includes use the same source-root lookup as directives in `SKILL.md`:
 <!-- agentsmith:include skills/severity-guidance.md -->
 ```
 
-An unqualified include resolves to:
+During project generation, an unqualified include first checks:
+
+```text
+<project>/.config/agentsmith/partials/skills/severity-guidance.md
+```
+
+then falls back to:
 
 ```text
 <shared-source-repository>/partials/skills/severity-guidance.md
 ```
 
-A project-owned include must use the explicit namespace:
+A qualifier can require the project-owned include:
 
 ```md
-<!-- agentsmith:include @project/skills/severity-guidance.md -->
+<!-- agentsmith:include project:skills/severity-guidance.md -->
 ```
 
 It resolves to:

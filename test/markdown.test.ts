@@ -155,7 +155,7 @@ describe("includes", () => {
       content: [
         "<!-- agentsmith:include ../secret.md -->",
         "<!-- agentsmith:include /absolute.md -->",
-        "<!-- agentsmith:include @project/a//b.md -->",
+        "<!-- agentsmith:include project:a//b.md -->",
         "<!-- agentsmith:include no-extension -->",
       ].join("\n"),
       resolveInclude: () => {

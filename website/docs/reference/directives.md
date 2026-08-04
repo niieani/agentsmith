@@ -9,7 +9,7 @@ Directives are standalone HTML comments. They must start at column zero, occupy 
 <!-- agentsmith:slot tools -->
 <!-- agentsmith:required-slot verification -->
 <!-- agentsmith:include grilling/core.md -->
-<!-- agentsmith:include @project/domain/terms.md -->
+<!-- agentsmith:include project:domain/terms.md -->
 ```
 
 ## Slots
@@ -24,8 +24,8 @@ Instruction templates receive snippets from `instructions/<slot>/`. Skills recei
 
 Includes resolve only below a source root's `partials/` directory:
 
-- unqualified names resolve from shared `partials/`;
-- `@project/...` resolves from project-owned `partials/`;
+- unqualified names resolve from project-owned `partials/` first during project generation, then shared `partials/`;
+- `source:` and `project:` restrict lookup to one owner;
 - missing files, cycles, symlinks, and root escapes are errors.
 
 Include names are logical Source IDs, not paths relative to the Markdown file containing the directive. The same lookup applies in templates, `SKILL.md`, and Markdown skill support files.
@@ -40,10 +40,10 @@ resolves to:
 <shared-source-repository>/partials/skills/severity-guidance.md
 ```
 
-The project-owned form:
+The explicitly project-owned form:
 
 ```md
-<!-- agentsmith:include @project/skills/severity-guidance.md -->
+<!-- agentsmith:include project:skills/severity-guidance.md -->
 ```
 
 resolves to:
