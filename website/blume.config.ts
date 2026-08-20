@@ -8,7 +8,7 @@ export default defineConfig({
     site: "https://niieani.github.io",
     base: "/agentsmith",
   },
-  theme: { accent: "emerald", radius: "md", mode: "system" },
+  theme: { accent: "green", radius: "md", mode: "system" },
   search: { provider: "orama" },
   markdown: {
     imageZoom: true,

@@ -34,6 +34,14 @@ Install from npm with Node 24 or newer:
 npm install --global asmith
 ```
 
+Or run it without installing globally using your package manager:
+
+```sh
+npx asmith@latest --version
+bunx asmith@latest --version
+pnpx asmith@latest --version
+```
+
 Install the signed and notarized macOS ARM64 release with Homebrew:
 
 ```sh

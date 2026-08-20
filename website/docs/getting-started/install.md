@@ -12,6 +12,18 @@ npm install --global asmith
 asmith --version
 ```
 
+### Run without installing globally
+
+Use any common package runner:
+
+```sh
+npx asmith@latest --version
+bunx asmith@latest --version
+pnpx asmith@latest --version
+```
+
+Replace `--version` with any command, such as `global lint` or `project diff`.
+
 ## Homebrew
 
 On Apple Silicon macOS, install the signed and notarized release:
@@ -55,7 +67,7 @@ asmith --version
 
 Choose another user-owned binary directory if `~/.local/bin` is not on your `PATH`.
 
-## Run without installing
+## Run from source
 
 During development, invoke the TypeScript entry point directly:
 
