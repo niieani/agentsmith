@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmod, lstat, mkdir, readFile, readdir, rename, rm, stat } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import { parse, stringify } from "smol-toml";
@@ -29,8 +29,8 @@ export function globalStatePath(home = homedir()): string {
 }
 
 export async function loadProjectState(path: string): Promise<ProjectState> {
-  if (!(await Bun.file(path).exists())) return { version: 1, paths: [] };
-  const value = parse(await Bun.file(path).text()) as Record<string, unknown>;
+  if (!(await exists(path))) return { version: 1, paths: [] };
+  const value = parse(await readFile(path, "utf8")) as Record<string, unknown>;
   if (value.version !== 1 || !Array.isArray(value.paths) || value.paths.some((item) => typeof item !== "string")) {
     throw new Error(`Invalid project state: ${path}`);
   }
@@ -42,8 +42,8 @@ export async function saveProjectState(path: string, state: ProjectState): Promi
 }
 
 export async function loadGlobalState(path = globalStatePath()): Promise<GlobalState> {
-  if (!(await Bun.file(path).exists())) return { version: 1, artifacts: {} };
-  const value = parse(await Bun.file(path).text()) as Record<string, unknown>;
+  if (!(await exists(path))) return { version: 1, artifacts: {} };
+  const value = parse(await readFile(path, "utf8")) as Record<string, unknown>;
   const artifacts = value.artifacts;
   if (value.version !== 1 || artifacts === null || typeof artifacts !== "object" || Array.isArray(artifacts)) {
     throw new Error(`Invalid global state: ${path}`);
@@ -194,7 +194,7 @@ async function atomicWrite(destination: string, content: Uint8Array, mode?: numb
   await mkdir(dirname(destination), { recursive: true });
   const temporary = join(dirname(destination), `.agentsmith-${crypto.randomUUID()}.tmp`);
   try {
-    await Bun.write(temporary, content);
+    await writeFile(temporary, content);
     if (mode !== undefined) await chmod(temporary, mode);
     await rename(temporary, destination);
   } catch (error) {

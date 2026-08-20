@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+import { access } from "node:fs/promises";
 import { resolve, relative, sep } from "node:path";
 
 export interface CommandResult {
@@ -7,25 +9,33 @@ export interface CommandResult {
 }
 
 export class CommandError extends Error {
-  constructor(
-    message: string,
-    readonly command: readonly string[],
-    readonly result: CommandResult,
-  ) {
+  readonly command: readonly string[];
+  readonly result: CommandResult;
+
+  constructor(message: string, command: readonly string[], result: CommandResult) {
     super(message);
     this.name = "CommandError";
+    this.command = command;
+    this.result = result;
   }
 }
 
 export async function runCommand(command: string, args: readonly string[], options: { cwd?: string; allowFailure?: boolean } = {}): Promise<CommandResult> {
-  const process = Bun.spawn([command, ...args], {
+  const child = spawn(command, args, {
     cwd: options.cwd,
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-    env: { ...Bun.env, GIT_TERMINAL_PROMPT: "0" },
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
   });
-  const [stdout, stderr, exitCode] = await Promise.all([new Response(process.stdout).text(), new Response(process.stderr).text(), process.exited]);
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  const [stdout, stderr, exitCode] = await Promise.all([
+    Array.fromAsync(child.stdout).then((chunks) => chunks.join("")),
+    Array.fromAsync(child.stderr).then((chunks) => chunks.join("")),
+    new Promise<number>((resolveExit, reject) => {
+      child.once("error", reject);
+      child.once("close", (code) => resolveExit(code ?? 1));
+    }),
+  ]);
   const result = { stdout, stderr, exitCode };
   if (exitCode !== 0 && !options.allowFailure) {
     const detail = stderr.trim() || stdout.trim() || `exit status ${exitCode}`;
@@ -78,7 +88,12 @@ export async function gitPathStatus(worktreeRoot: string, path: string): Promise
     allowFailure: true,
   });
   if (tracked.exitCode === 0) return "tracked-clean";
-  return (await Bun.file(path).exists()) ? "untracked" : "missing";
+  return (await access(path).then(
+    () => true,
+    () => false,
+  ))
+    ? "untracked"
+    : "missing";
 }
 
 /** Reject source changes that could be overwritten or make a pull unsafe. Ignored files are allowed. */

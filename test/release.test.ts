@@ -17,15 +17,17 @@ describe("release metadata", () => {
     expect(releaseConfig.packages["."]["package-name"]).toBe(manifest.name);
   });
 
-  test("reports the package version from the CLI", async () => {
-    const child = Bun.spawn(["bun", "run", "src/cli.ts", "--version"], {
-      cwd: projectRoot,
-      stdout: "pipe",
-      stderr: "pipe",
+  for (const runtime of ["bun", "node"]) {
+    test(`reports the package version from the CLI under ${runtime}`, async () => {
+      const child = Bun.spawn([runtime, "src/cli.ts", "--version"], {
+        cwd: projectRoot,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      expect(stdout.trim()).toBe(manifest.version);
     });
-    const [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-    expect(stdout.trim()).toBe(manifest.version);
-  });
+  }
 });

@@ -138,50 +138,52 @@ describe("CLI global workflow", () => {
 });
 
 describe("read-only project workflows", () => {
-  test("diff works without a Git worktree and reports reduced stale-state coverage", async () => {
-    const root = await mkdtemp(join(tmpdir(), "agentsmith-no-git-"));
-    await put(
-      join(root, ".config", "agentsmith", "config.toml"),
-      ['harnesses = ["codex"]', "", "[[scopes]]", 'path = "."', 'template = "base"', 'packs = ["base"]', ""].join("\n"),
-    );
-    await put(join(root, ".config", "agentsmith", "templates", "base", "codex.md"), "# Project\n\n<!-- agentsmith:slot note -->\n");
-    await put(join(root, ".config", "agentsmith", "packs", "base", "instructions", "note", "10-note.md"), "No Git required.\n");
-    const env = { ...Bun.env, HOME: root, CODEX_HOME: join(root, ".codex") };
-    const child = Bun.spawn(["bun", cli, "project", "diff", "--project", root], {
-      cwd: root,
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "ignore",
-    });
-    const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-    expect(code, stderr).toBe(0);
-    expect(stdout).toContain("No Git required.");
-    expect(stderr).toContain("project-diff-without-git-state");
+  for (const runtime of ["bun", "node"]) {
+    test(`diff works under ${runtime} without a Git worktree and reports reduced stale-state coverage`, async () => {
+      const root = await mkdtemp(join(tmpdir(), "agentsmith-no-git-"));
+      await put(
+        join(root, ".config", "agentsmith", "config.toml"),
+        ['harnesses = ["codex"]', "", "[[scopes]]", 'path = "."', 'template = "base"', 'packs = ["base"]', ""].join("\n"),
+      );
+      await put(join(root, ".config", "agentsmith", "templates", "base", "codex.md"), "# Project\n\n<!-- agentsmith:slot note -->\n");
+      await put(join(root, ".config", "agentsmith", "packs", "base", "instructions", "note", "10-note.md"), "No Git required.\n");
+      const env = { ...Bun.env, HOME: root, CODEX_HOME: join(root, ".codex") };
+      const child = Bun.spawn([runtime, cli, "project", "diff", "--project", root], {
+        cwd: root,
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+      const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+      expect(code, stderr).toBe(0);
+      expect(stdout).toContain("No Git required.");
+      expect(stderr).toContain("project-diff-without-git-state");
 
-    const human = Bun.spawn(["bun", cli, "project", "explain", "--project", root], {
-      cwd: root,
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "ignore",
-    });
-    const [humanOut, humanErr, humanCode] = await Promise.all([new Response(human.stdout).text(), new Response(human.stderr).text(), human.exited]);
-    expect(humanCode, humanErr).toBe(0);
-    expect(humanOut).toContain(`pack project:base: ${join(root, ".config", "agentsmith", "packs", "base")} (selected as base)`);
+      const human = Bun.spawn([runtime, cli, "project", "explain", "--project", root], {
+        cwd: root,
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+      const [humanOut, humanErr, humanCode] = await Promise.all([new Response(human.stdout).text(), new Response(human.stderr).text(), human.exited]);
+      expect(humanCode, humanErr).toBe(0);
+      expect(humanOut).toContain(`pack project:base: ${join(root, ".config", "agentsmith", "packs", "base")} (selected as base)`);
 
-    const json = Bun.spawn(["bun", cli, "project", "explain", "--project", root, "--json"], {
-      cwd: root,
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "ignore",
+      const json = Bun.spawn([runtime, cli, "project", "explain", "--project", root, "--json"], {
+        cwd: root,
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+      const [jsonOut, jsonErr, jsonCode] = await Promise.all([new Response(json.stdout).text(), new Response(json.stderr).text(), json.exited]);
+      expect(jsonCode, jsonErr).toBe(0);
+      const explanation = JSON.parse(jsonOut) as { artifacts: Array<{ packSources?: unknown[] }> };
+      expect(explanation.artifacts[0]?.packSources).toEqual([
+        { selection: "base", sourceId: "project:base", directory: join(root, ".config", "agentsmith", "packs", "base") },
+      ]);
     });
-    const [jsonOut, jsonErr, jsonCode] = await Promise.all([new Response(json.stdout).text(), new Response(json.stderr).text(), json.exited]);
-    expect(jsonCode, jsonErr).toBe(0);
-    const explanation = JSON.parse(jsonOut) as { artifacts: Array<{ packSources?: unknown[] }> };
-    expect(explanation.artifacts[0]?.packSources).toEqual([
-      { selection: "base", sourceId: "project:base", directory: join(root, ".config", "agentsmith", "packs", "base") },
-    ]);
-  });
+  }
 });
