@@ -44,7 +44,7 @@ const version = argument("--version");
 if (!version || !semver.test(version)) fail("--version must be a semantic version without a leading v");
 
 const manifest = (await Bun.file(join(projectRoot, "package.json")).json()) as { name?: unknown; version?: unknown };
-if (manifest.name !== "agentsmith") fail("package.json name must be agentsmith");
+if (manifest.name !== "asmith") fail("package.json name must be asmith");
 if (manifest.version !== version) fail(`Release version ${version} does not match package.json version ${String(manifest.version)}`);
 
 const targetConfig = targets[target];
