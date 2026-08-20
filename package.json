@@ -1,6 +1,6 @@
 {
   "name": "asmith",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Compose agent instructions and skills into native, scope-aware artifacts for Codex and Claude Code",
   "keywords": [
     "agents",
