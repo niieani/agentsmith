@@ -1,7 +1,16 @@
 ---
 title: Install agentsmith
-description: Install the asmith command from Homebrew, a release archive, or source.
+description: Install the asmith command from npm, Homebrew, a release archive, or source.
 ---
+
+## npm
+
+With Node 24 or newer installed:
+
+```sh
+npm install --global asmith
+asmith --version
+```
 
 ## Homebrew
 
@@ -27,7 +36,7 @@ asmith --version
 
 ## Build from source
 
-Building from source requires [Bun](https://bun.sh/) 1.3 or newer and Git.
+Building and testing from source requires [Bun](https://bun.sh/) 1.3 or newer, Node 24 or newer, and Git.
 
 ```sh
 git clone https://github.com/niieani/agentsmith.git
@@ -51,10 +60,11 @@ Choose another user-owned binary directory if `~/.local/bin` is not on your `PAT
 During development, invoke the TypeScript entry point directly:
 
 ```sh
+node src/cli.ts --help
 bun run src/cli.ts --help
 ```
 
-The documentation uses `asmith` in examples; substitute `bun run src/cli.ts` when running from source.
+The documentation uses `asmith` in examples; substitute either source command when running from the repository.
 
 ## Shell completions
 

@@ -18,7 +18,7 @@ See the [end-user documentation](website/docs/index.mdx), [product requirements]
 
 ## Development
 
-Requirements: Bun 1.3 or newer.
+Requirements: Bun 1.3 and Node 24 or newer.
 
 ```sh
 bun install
@@ -27,6 +27,12 @@ bun run build
 ```
 
 ## Install
+
+Install from npm with Node 24 or newer:
+
+```sh
+npm install --global asmith
+```
 
 Install the signed and notarized macOS ARM64 release with Homebrew:
 
@@ -46,6 +52,7 @@ bun run docs:dev
 Run from source:
 
 ```sh
+node src/cli.ts --help
 bun run src/cli.ts --help
 ```
 

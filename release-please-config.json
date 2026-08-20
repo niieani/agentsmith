@@ -5,7 +5,7 @@
   "packages": {
     ".": {
       "release-type": "node",
-      "package-name": "agentsmith",
+      "package-name": "asmith",
       "changelog-path": "CHANGELOG.md"
     }
   }

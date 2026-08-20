@@ -1,14 +1,37 @@
 {
-  "name": "agentsmith",
+  "name": "asmith",
   "version": "0.2.0",
-  "private": true,
+  "description": "Compose agent instructions and skills into native, scope-aware artifacts for Codex and Claude Code",
+  "keywords": [
+    "agents",
+    "claude-code",
+    "codex",
+    "cli",
+    "instructions",
+    "skills"
+  ],
+  "homepage": "https://niieani.github.io/agentsmith/",
+  "bugs": {
+    "url": "https://github.com/niieani/agentsmith/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/niieani/agentsmith.git"
+  },
+  "author": "Bazyli Brzoska <npm@invent.life> (https://github.com/niieani)",
+  "license": "MIT",
   "type": "module",
+  "files": [
+    "dist/npm/asmith.js"
+  ],
   "bin": {
-    "asmith": "dist/asmith"
+    "asmith": "dist/npm/asmith.js"
   },
   "scripts": {
     "dev": "bun run src/cli.ts",
     "build": "bun build src/cli.ts --compile --outfile dist/asmith",
+    "npm:build": "bun build src/cli.ts --target=node --packages=external --outfile dist/npm/asmith.js",
+    "prepack": "bun run npm:build",
     "fmt": "biome format --write .",
     "fmt:check": "biome format .",
     "lint": "biome lint .",
@@ -39,5 +62,8 @@
   "engines": {
     "bun": ">=1.3.0",
     "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
