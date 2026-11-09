@@ -1,0 +1,6 @@
+harnesses = ["codex"]
+
+[[scopes]]
+path = "."
+template = "software"
+packs = ["repository"]
