@@ -4,7 +4,13 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - AGENTS.md
+      - '.config/agentsmith/**'
   pull_request:
+    paths-ignore:
+      - AGENTS.md
+      - '.config/agentsmith/**'
 
 permissions:
   contents: read
