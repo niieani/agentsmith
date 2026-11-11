@@ -64,7 +64,10 @@ const globalCommands = or(
       action: constant("adopt"),
       config: configOption,
       slot: optional(option("--slot", string({ metavar: "NAME" }))),
+      skill: optional(option("--skill", string({ metavar: "NAME" }))),
       pack: optional(option("--pack", string({ metavar: "NAME" }))),
+      push: option("--push"),
+      noCommit: option("--no-commit"),
       dryRun: option("--dry-run"),
     }),
   ),
@@ -111,7 +114,18 @@ const globalCommands = or(
 
 const projectCommands = or(
   command("add", object({ action: constant("add"), project: projectOption, scope: optional(option("--scope", string({ metavar: "PATH" }))), ...addOptions })),
-  command("generate", object({ action: constant("generate"), project: projectOption })),
+  command("generate", object({ action: constant("generate"), project: projectOption, onModified: onModifiedOption })),
+  command(
+    "adopt",
+    object({
+      action: constant("adopt"),
+      project: projectOption,
+      scope: optional(option("--scope", string({ metavar: "PATH" }))),
+      skill: option("--skill", string({ metavar: "NAME" })),
+      pack: optional(option("--pack", string({ metavar: "NAME" }))),
+      dryRun: option("--dry-run"),
+    }),
+  ),
   command("diff", object({ action: constant("diff"), project: projectOption })),
   command(
     "lint",

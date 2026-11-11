@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -11,6 +11,7 @@ import {
   loadProfileConfig,
   loadProjectConfig,
   loadRootConfig,
+  matchesAllow,
   parseSourceId,
   projectConfigPath,
   projectSourceRoot,
@@ -78,6 +79,20 @@ describe("machine config home", () => {
     expect(readMachineHome(join(sandbox, "absent.toml"))).toBeUndefined();
     file(machine, "not toml [");
     expect(readMachineHome(machine)).toBeUndefined();
+  });
+});
+
+describe("exclusive_allow globs", () => {
+  test("match whole skill directory names", () => {
+    expect(matchesAllow("npx-tool", ["npx-*"])).toBeTrue();
+    expect(matchesAllow("my-npx-tool", ["npx-*"])).toBeFalse();
+    expect(matchesAllow("tool-a", ["tool-?"])).toBeTrue();
+    expect(matchesAllow("tool-ab", ["tool-?"])).toBeFalse();
+    expect(matchesAllow("tool-b", ["tool-[ab]"])).toBeTrue();
+    expect(matchesAllow("tool-c", ["tool-[!ab]"])).toBeTrue();
+    expect(matchesAllow("a.b", ["a.b"])).toBeTrue();
+    expect(matchesAllow("axb", ["a.b"])).toBeFalse();
+    expect(matchesAllow("anything", [])).toBeFalse();
   });
 });
 
@@ -255,6 +270,20 @@ describe("profile extends", () => {
     return source;
   }
 
+  test("merges exclusive mode through extends: nearest exclusive wins, allow lists form an ordered union", () => {
+    const source = chainFixture();
+    file(
+      join(source, "profiles/mac.toml"),
+      `exclusive = true\nexclusive_allow = ["npx-*", "shared"]\n${readFileSync(join(source, "profiles/mac.toml"), "utf8")}`,
+    );
+    file(join(source, "profiles/studio.toml"), `exclusive_allow = ["shared", "tool-[ab]"]\n${readFileSync(join(source, "profiles/studio.toml"), "utf8")}`);
+    expect(loadProfileConfig(source, "studio")).toMatchObject({ exclusive: true, exclusiveAllow: ["npx-*", "shared", "tool-[ab]"] });
+    file(join(source, "profiles/desk.toml"), `exclusive = false\n${readFileSync(join(source, "profiles/desk.toml"), "utf8")}`);
+    expect(loadProfileConfig(source, "desk")).toMatchObject({ exclusive: false, exclusiveAllow: ["npx-*", "shared", "tool-[ab]"] });
+    file(join(source, "profiles/desk.toml"), `exclusive_allow = ["[oops"]\n${readFileSync(join(source, "profiles/desk.toml"), "utf8")}`);
+    expect(() => loadProfileConfig(source, "desk")).toThrow("is not a valid glob");
+  });
+
   test("merges a chain root ancestor first", () => {
     const source = chainFixture();
     expect(loadProfileConfig(source, "studio")).toEqual({
@@ -265,6 +294,8 @@ describe("profile extends", () => {
       skillsDisable: ["publish"],
       harnessSkills: {},
       budgets: { instructionLayerBytes: 10, effectiveInstructionBytes: 30 },
+      exclusive: false,
+      exclusiveAllow: [],
       chain: ["mac", "studio"],
       packProfiles: { base: "mac", macos: "mac", server: "studio" },
     });
@@ -367,8 +398,20 @@ describe("project configuration", () => {
       harnesses: ["codex", "claude"],
       budgets: { instructionLayerBytes: 20000, effectiveInstructionBytes: undefined, skillMarkdownBytes: undefined },
       claudeImportAgentsMd: true,
+      exclusive: false,
+      exclusiveAllow: [],
       scopes: [
-        { path: ".", template: "software", packs: ["base"], harnesses: undefined, skillsEnable: [], skillsDisable: [], harnessSkills: {} },
+        {
+          path: ".",
+          template: "software",
+          packs: ["base"],
+          harnesses: undefined,
+          skillsEnable: [],
+          skillsDisable: [],
+          harnessSkills: {},
+          exclusive: undefined,
+          exclusiveAllow: [],
+        },
         {
           path: "apps/ios",
           template: "project:custom",
@@ -377,9 +420,31 @@ describe("project configuration", () => {
           skillsEnable: [],
           skillsDisable: [],
           harnessSkills: {},
+          exclusive: undefined,
+          exclusiveAllow: [],
         },
       ],
     });
+  });
+
+  test("parses exclusive mode at the top level and per scope", () => {
+    const { config } = projectFixture();
+    file(
+      config,
+      'harnesses = ["codex"]\nexclusive = true\nexclusive_allow = ["vendor-*"]\n[[scopes]]\npath = "."\npacks = []\n[[scopes]]\npath = "apps/ios"\npacks = []\nexclusive = false\nexclusive_allow = ["ios-?"]\n',
+    );
+    expect(loadProjectConfig(config)).toMatchObject({
+      exclusive: true,
+      exclusiveAllow: ["vendor-*"],
+      scopes: [
+        { path: ".", exclusive: undefined, exclusiveAllow: [] },
+        { path: "apps/ios", exclusive: false, exclusiveAllow: ["ios-?"] },
+      ],
+    });
+    file(config, 'harnesses = ["codex"]\nexclusive_allow = ["a/b"]\n[[scopes]]\npath = "."\npacks = []\n');
+    expect(() => loadProjectConfig(config)).toThrow("must match a skill directory name, not a path");
+    file(config, 'harnesses = ["codex"]\nexclusive = "yes"\n[[scopes]]\npath = "."\npacks = []\n');
+    expect(() => loadProjectConfig(config)).toThrow("exclusive must be a boolean");
   });
 
   test("discovers config from a descendant or file", () => {

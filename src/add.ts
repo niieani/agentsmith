@@ -229,7 +229,7 @@ export function resolveSlot(
   return { receivers: declaring };
 }
 
-interface AddTarget {
+export interface AddTarget {
   mode: "global" | "project";
   plan: BuiltPlan;
   /** Root that owns the pack: the Source Repository or the project. */
@@ -250,7 +250,7 @@ function requireSelectedHarness(harness: HarnessName | undefined, selected: read
   }
 }
 
-async function globalTarget(options: AddOptions): Promise<AddTarget> {
+export async function globalTarget(options: Pick<AddOptions, "config" | "harness" | "pack">, command = "global add"): Promise<AddTarget> {
   const configOption = options.config ?? MACHINE_CONFIG_PATH;
   const configPath = resolveConfiguredPath(configOption, resolve(process.cwd(), "config.toml"));
   const machine = await classify("config", () => loadMachineConfig(configPath));
@@ -258,7 +258,7 @@ async function globalTarget(options: AddOptions): Promise<AddTarget> {
   const scopeLabel = `profile ${machine.profile}`;
   requireSelectedHarness(options.harness, profile.harnesses, scopeLabel);
   if (options.pack !== undefined && parseSourceId(options.pack).owner === "project") {
-    throw new AgentsmithError("config", "global add cannot target a project pack");
+    throw new AgentsmithError("config", `${command} cannot target a project pack`);
   }
   const packName = choosePack(profile.packs, options.pack, `selected by ${scopeLabel}`);
   const packDirectory = join(machine.source, "packs", ...packName.split("/"));
@@ -286,10 +286,13 @@ function normalizeScope(value: string): string {
   return normalized === "" ? "." : normalized;
 }
 
-async function projectTarget(options: AddOptions): Promise<AddTarget> {
-  if (options.push) throw new AgentsmithError("config", "--push is only supported by global add");
-  if (options.noCommit) throw new AgentsmithError("config", "--no-commit is only supported by global add; project add never commits");
-  if (options.local) throw new AgentsmithError("config", "--local is only supported by global add");
+export async function projectTarget(
+  options: Pick<AddOptions, "config" | "harness" | "pack" | "project" | "scope" | "push" | "noCommit" | "local">,
+  command = "add",
+): Promise<AddTarget> {
+  if (options.push) throw new AgentsmithError("config", `--push is only supported by global ${command}`);
+  if (options.noCommit) throw new AgentsmithError("config", `--no-commit is only supported by global ${command}; project ${command} never commits`);
+  if (options.local) throw new AgentsmithError("config", `--local is only supported by global ${command}`);
   const start = options.project ?? process.cwd();
   const configPath = await classify("config", () => discoverProjectConfig(start));
   const project = await classify("config", () => loadProjectConfig(configPath));
@@ -322,7 +325,7 @@ async function projectTarget(options: AddOptions): Promise<AddTarget> {
     return id.owner !== "source" && existsSync(join(packsRoot, ...id.name.split("/")));
   });
   if (options.pack !== undefined && parseSourceId(options.pack).owner === "source") {
-    throw new AgentsmithError("config", "project add writes only to project packs");
+    throw new AgentsmithError("config", `project ${command} writes only to project packs`);
   }
   const packName = choosePack(owned, options.pack, `owned by the project and selected by ${scopeLabel}`);
   return {
@@ -439,7 +442,11 @@ export async function addSnippet(mode: "global" | "project", options: AddOptions
   // An uncommitted file in the Source Repository blocks every later global sync, so a shared global snippet is
   // committed unless the user opts out.
   if (target.mode === "global" && !options.local && !options.noCommit) {
-    await commitSnippet(target.sourceRoot, path, created, { push: options.push === true });
+    await commitSourcePaths(target.sourceRoot, [path], {
+      message: `Add snippet ${relative(target.sourceRoot, path).split(sep).join("/")}`,
+      push: options.push === true,
+      rollback: () => removeSnippet(path, created),
+    });
   } else if (target.mode === "global" && options.noCommit) {
     console.log(`  not committed: commit and push it in ${target.sourceRoot} before the next global sync, which refuses a dirty Source Repository`);
   }
@@ -456,20 +463,29 @@ export async function addSnippet(mode: "global" | "project", options: AddOptions
   console.log(`Added ${path}.`);
 }
 
-async function commitSnippet(sourceRoot: string, path: string, created: readonly string[], options: { push: boolean }): Promise<void> {
-  const relativePath = relative(sourceRoot, path).split(sep).join("/");
+/**
+ * Commit only `paths` in the Source Repository, then push with `push`. A failed commit unstages the paths and runs
+ * `rollback`; a failed push keeps the commit and says how to push it.
+ */
+export async function commitSourcePaths(
+  sourceRoot: string,
+  paths: readonly string[],
+  options: { message: string; push: boolean; rollback: () => Promise<void> },
+): Promise<void> {
+  const relativePaths = paths.map((path) => relative(sourceRoot, path).split(sep).join("/"));
+  const label = relativePaths.join(", ");
   try {
-    await runCommand("git", ["add", "--", relativePath], { cwd: sourceRoot });
-    await runCommand("git", ["commit", "-q", "-m", `Add snippet ${relativePath}`, "--", relativePath], { cwd: sourceRoot });
+    await runCommand("git", ["add", "--", ...relativePaths], { cwd: sourceRoot });
+    await runCommand("git", ["commit", "-q", "-m", options.message, "--", ...relativePaths], { cwd: sourceRoot });
   } catch (cause) {
-    await runCommand("git", ["reset", "-q", "--", relativePath], { cwd: sourceRoot, allowFailure: true }).catch(() => undefined);
-    await removeSnippet(path, created);
-    throw new AgentsmithError("failure", `Could not commit ${relativePath}; removed it:\n${errorMessage(cause)}`, { cause });
+    await runCommand("git", ["reset", "-q", "--", ...relativePaths], { cwd: sourceRoot, allowFailure: true }).catch(() => undefined);
+    await options.rollback();
+    throw new AgentsmithError("failure", `Could not commit ${label}; reverted it:\n${errorMessage(cause)}`, { cause });
   }
   const commit = await gitHeadCommit(sourceRoot);
   if (!options.push) {
     console.log(
-      `  committed ${commit ?? relativePath}, not pushed: push it with \`git -C ${sourceRoot} push\` (or use --push); once another machine pushes, the next global sync cannot fast-forward`,
+      `  committed ${commit ?? label}, not pushed: push it with \`git -C ${sourceRoot} push\` (or use --push); once another machine pushes, the next global sync cannot fast-forward`,
     );
     return;
   }
@@ -478,9 +494,9 @@ async function commitSnippet(sourceRoot: string, path: string, created: readonly
   } catch (cause) {
     throw new AgentsmithError(
       "failure",
-      `Committed ${relativePath} as ${commit ?? "a local commit"} but the push failed; the commit is kept. Push it with \`git -C ${sourceRoot} push\`, then run \`asmith global generate\`.\n${errorMessage(cause)}`,
+      `Committed ${label} as ${commit ?? "a local commit"} but the push failed; the commit is kept. Push it with \`git -C ${sourceRoot} push\`, then run \`asmith global generate\`.\n${errorMessage(cause)}`,
       { cause },
     );
   }
-  console.log(`  committed ${commit ?? relativePath} and pushed`);
+  console.log(`  committed ${commit ?? label} and pushed`);
 }

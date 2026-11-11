@@ -188,6 +188,18 @@ _Avoid_: Source ID, skill path
 A skill selected for generation in a scope, for one or more harnesses, by a pack or skill list and not excluded by the active configuration.
 _Avoid_: Installed skill, active skill
 
+**Unmanaged Skill**:
+A skill directory in a Skill Root that agentsmith did not write. Exclusive Mode reports it; Skill Adoption turns it into a managed skill.
+_Avoid_: Foreign skill, external skill
+
+**Exclusive Mode**:
+An opt-in profile or project setting under which every Unmanaged Skill visible to a selected harness, other than allowed names, fails generation or is moved to backups.
+_Avoid_: Strict mode, owned mode
+
+**Skill Adoption**:
+Copying an Unmanaged Skill into the Source Repository or project source and enabling it in a pack, so generation reproduces it.
+_Avoid_: Skill import
+
 **Skill Exclusion**:
 A scope-local decision not to generate a skill that the same scope would otherwise enable.
 _Avoid_: Inherited override, disabled pack

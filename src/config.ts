@@ -117,6 +117,45 @@ function harnessSkills(value: unknown, label: string, selected: readonly Harness
   return result;
 }
 
+/** Skill directory name globs: `*` and `?` match within the name, `[...]` matches one listed character. */
+function globs(value: unknown, label: string, path: string): string[] {
+  const values = unique(stringList(value, label, path), label, path);
+  for (const glob of values) {
+    if (glob.includes("/") || glob.includes("\\") || glob.includes("\0"))
+      fail(`${label} entry ${JSON.stringify(glob)} must match a skill directory name, not a path`, path);
+    try {
+      globPattern(glob);
+    } catch {
+      fail(`${label} entry ${JSON.stringify(glob)} is not a valid glob`, path);
+    }
+  }
+  return values;
+}
+
+/** Compile a skill directory name glob to an anchored regular expression. */
+export function globPattern(glob: string): RegExp {
+  let source = "";
+  for (let index = 0; index < glob.length; index++) {
+    const char = glob[index]!;
+    if (char === "*") source += ".*";
+    else if (char === "?") source += ".";
+    else if (char === "[") {
+      const end = glob.indexOf("]", index + 2);
+      if (end < 0) throw new Error(`unterminated [ in ${glob}`);
+      let body = glob.slice(index + 1, end);
+      if (body.startsWith("!")) body = `^${body.slice(1)}`;
+      source += `[${body.replaceAll("\\", "\\\\")}]`;
+      index = end;
+    } else source += char.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${source}$`, "s");
+}
+
+/** Whether a skill directory name matches any `exclusive_allow` glob. */
+export function matchesAllow(name: string, allow: readonly string[]): boolean {
+  return allow.some((glob) => globPattern(glob).test(name));
+}
+
 function boolean(value: unknown, label: string, path: string, fallback: boolean): boolean {
   if (value === undefined) return fallback;
   if (typeof value !== "boolean") fail(`${label} must be a boolean`, path);
@@ -268,11 +307,18 @@ interface ProfileLayer {
   skillsDisable: string[];
   harnessSkills: HarnessSkills;
   budgets: Budgets;
+  exclusive?: boolean;
+  exclusiveAllow: string[];
 }
 
 function loadProfileLayer(name: string, path: string): ProfileLayer {
   const input = readToml(path);
-  exactKeys(input, ["extends", "harnesses", "template", "packs", "skills_enable", "skills_disable", "harness_skills", "budgets"], "profile", path);
+  exactKeys(
+    input,
+    ["extends", "harnesses", "template", "packs", "skills_enable", "skills_disable", "harness_skills", "budgets", "exclusive", "exclusive_allow"],
+    "profile",
+    path,
+  );
   const parent = input.extends === undefined ? undefined : string(input.extends, "extends", path);
   if (parent !== undefined && parseSourceId(parent).owner !== undefined) fail("extends cannot name an ownership-qualified profile", path);
   const layer: ProfileLayer = {
@@ -287,6 +333,8 @@ function loadProfileLayer(name: string, path: string): ProfileLayer {
     // Harness selection may be inherited, so it is checked after the chain is merged.
     harnessSkills: harnessSkills(input.harness_skills, "harness_skills", undefined, path),
     budgets: budgets(input.budgets, path),
+    exclusive: input.exclusive === undefined ? undefined : boolean(input.exclusive, "exclusive", path, false),
+    exclusiveAllow: globs(input.exclusive_allow, "exclusive_allow", path),
   };
   const harnessSelections = Object.values(layer.harnessSkills).flatMap((item) => [...item.enable, ...item.disable]);
   for (const sourceId of [
@@ -382,6 +430,8 @@ export function loadProfileConfig(sourceRoot: string, name: string): ProfileConf
     skillsDisable: orderedUnion(layers.map((layer) => layer.skillsDisable)),
     harnessSkills: mergedHarnessSkills,
     budgets: mergedBudgets,
+    exclusive: nearest((layer) => layer.exclusive) ?? false,
+    exclusiveAllow: orderedUnion(layers.map((layer) => layer.exclusiveAllow)),
     chain: layers.map((layer) => layer.name),
     packProfiles: Object.fromEntries(packProfiles),
   };
@@ -425,7 +475,12 @@ function normalizeScopePath(raw: string, root: string, configPath: string): stri
 
 function scope(value: unknown, index: number, projectHarnesses: HarnessName[], root: string, path: string): ScopeConfig {
   const input = table(value, `scopes[${index}]`, path);
-  exactKeys(input, ["path", "template", "packs", "harnesses", "skills_enable", "skills_disable", "harness_skills"], `scopes[${index}]`, path);
+  exactKeys(
+    input,
+    ["path", "template", "packs", "harnesses", "skills_enable", "skills_disable", "harness_skills", "exclusive", "exclusive_allow"],
+    `scopes[${index}]`,
+    path,
+  );
   const scopeHarnesses = input.harnesses === undefined ? undefined : harnesses(input.harnesses, `scopes[${index}].harnesses`, path);
   if (scopeHarnesses !== undefined) {
     const defaults = new Set(projectHarnesses);
@@ -441,6 +496,8 @@ function scope(value: unknown, index: number, projectHarnesses: HarnessName[], r
     skillsEnable: sourceIds(input.skills_enable, `scopes[${index}].skills_enable`, path),
     skillsDisable: sourceIds(input.skills_disable, `scopes[${index}].skills_disable`, path),
     harnessSkills: harnessSkills(input.harness_skills, `scopes[${index}].harness_skills`, scopeHarnesses ?? projectHarnesses, path),
+    exclusive: input.exclusive === undefined ? undefined : boolean(input.exclusive, `scopes[${index}].exclusive`, path, false),
+    exclusiveAllow: globs(input.exclusive_allow, `scopes[${index}].exclusive_allow`, path),
   };
 }
 
@@ -448,7 +505,7 @@ export function loadProjectConfig(path: string): ProjectConfig {
   const absolutePath = resolve(path);
   const root = projectRootFromConfig(absolutePath);
   const input = readToml(absolutePath);
-  exactKeys(input, ["harnesses", "claude_import_agents_md", "budgets", "scopes"], "project configuration", absolutePath);
+  exactKeys(input, ["harnesses", "claude_import_agents_md", "budgets", "exclusive", "exclusive_allow", "scopes"], "project configuration", absolutePath);
   const projectHarnesses = harnesses(input.harnesses, "harnesses", absolutePath);
   if (!Array.isArray(input.scopes)) fail("scopes must be an array of tables", absolutePath);
   const scopes = input.scopes.map((value, index) => scope(value, index, projectHarnesses, root, absolutePath));
@@ -476,6 +533,8 @@ export function loadProjectConfig(path: string): ProjectConfig {
     harnesses: projectHarnesses,
     budgets: budgets(input.budgets, absolutePath),
     claudeImportAgentsMd: boolean(input.claude_import_agents_md, "claude_import_agents_md", absolutePath, true),
+    exclusive: boolean(input.exclusive, "exclusive", absolutePath, false),
+    exclusiveAllow: globs(input.exclusive_allow, "exclusive_allow", absolutePath),
     scopes,
   };
 }

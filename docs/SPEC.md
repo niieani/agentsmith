@@ -133,6 +133,8 @@ A profile may set `extends = "<profile name>"` to inherit from one parent profil
 - `harnesses`, `template`: the nearest profile that sets the value wins.
 - `budgets`: per key, child wins; the merged result then overrides Source Repository defaults.
 
+Profiles accept `exclusive` (boolean, default `false`; the nearest profile that sets it wins) and `exclusive_allow` (a list of skill directory name globs; ordered union through the chain). See section 7.3.
+
 An `extends` cycle or a missing parent profile is an error. `global explain` reports the resolved chain (`profile.chain`, root first) and the profile that contributed each pack (`profile.packs`).
 
 ### 4.4 Pack
@@ -180,6 +182,8 @@ packs = ["service"]
 ```
 
 The project root is the directory containing `.config/agentsmith/config.toml`. Scope paths are unique, normalized, existing project-relative directories that may not escape the project. A harness override must be a nonempty subset of the project defaults. `claude_import_agents_md` is an optional boolean, default `true` (section 5.3).
+
+`exclusive` and `exclusive_allow` are accepted at the top level and in each scope. A scope's `exclusive` overrides the top-level value (default `false`); its `exclusive_allow` is appended to the top-level list. See section 7.3.
 
 Omitting `template` means the scope emits no Instruction Layer. Omitting skill lists does not by itself prevent packs from enabling skills. A Skill Root is created only when at least one skill is introduced at that scope.
 
@@ -350,6 +354,23 @@ Visibility is evaluated per harness over every Skill Root that harness reads. Co
 - Plugin, admin, bundled, and otherwise undiscoverable external skills are out of scope.
 - When machine configuration is available, project checks include generated personal skills. Hermetic checks state that only project scopes were analyzed.
 
+### 7.3 Exclusive mode
+
+For each scope with exclusive mode on (the Global Scope with a profile's `exclusive`, or a project scope), every entry of every Skill Root read by a harness the scope selects, at that scope, is examined. Hidden entries (names starting with `.`) and non-directory entries other than symlinks are skipped. An entry is an unmanaged skill unless the plan writes a skill there, a recorded artifact (global state, or project state) lies inside it, or its name matches an `exclusive_allow` glob. Globs match the whole name; `*` matches any characters, `?` one character, `[set]` and `[!set]` one character; a glob containing `/` or `\` is a configuration error.
+
+Unmanaged skills in exclusive scopes are excluded from the planned-versus-unmanaged collision error (section 7.2). Instead `lint`, `generate`, and `sync` fail with `artifact-modified` (exit 5), listing every path. With `--on-modified=backup` (`global sync`, `global generate`, `project generate`), each one is moved to `<backup root>/<UTC timestamp>/<original absolute path>` after preflight and before application, and restored if application fails. The global backup root is `<home>/.agents/agentsmith/backups`; the project backup root is `<Git directory>/agentsmith/backups`. Global moves are recorded as `unmanaged` backups and `unmanaged-skill-backup` warnings in `status.json`; project moves are printed as warnings. `--force` does not affect unmanaged skills.
+
+`global adopt --skill NAME [--pack NAME] [--push | --no-commit] [--dry-run]` turns an unmanaged global skill into a managed one:
+
+1. `NAME` is one directory name (`[A-Za-z0-9][A-Za-z0-9._-]*`). `--pack` follows the single-candidate rule of section 8.2.3. With `--push`, the Source Repository must be clean and is fast-forwarded first.
+2. Candidates are the existing entries named `NAME` in the global Skill Roots read by the profile's harnesses that are not planned or recorded, whether or not exclusive mode is on. None is an error; candidates with more than one real path are an error.
+3. `skills/NAME` must not exist in the Source Repository. The candidate's `SKILL.md` must parse with `name` equal to `NAME`, and the directory may not contain symlinks.
+4. Files are copied with their modes to `skills/NAME/`, and `NAME` is appended to `packs/<pack>/pack.toml` `skills`, keeping the manifest's formatting where possible. The rebuilt plan must lint and generate the skill; otherwise both changes are reverted and the command exits 2.
+5. Unless `--no-commit`, only those paths are committed (`Adopt skill NAME`), and pushed with `--push`, with the commit and push failure rules of section 8.2.3. A pack manifest with uncommitted changes is rejected unless `--no-commit`.
+6. Every candidate is moved to the backup root, then the global generate path runs and records `status.json`. A regeneration failure keeps the adopted source and reports the underlying exit code.
+
+`project adopt --skill NAME [--scope PATH] [--pack NAME] [--dry-run]` applies the same steps to the selected scope's Skill Roots, copies into `.config/agentsmith/skills/NAME/`, appends to a project-owned pack selected by the scope, never commits, leaves in place a candidate that Git reports tracked and clean (it is regenerated over), and runs the project generate path.
+
 ## 8. Planning, state, and writes
 
 All mutating commands create a Generation Plan containing writes and stale deletions. The tool renders, validates, checks collisions, evaluates budgets, and preflights every destination before changing the filesystem.
@@ -472,13 +493,15 @@ asmith global lint [--config PATH] [--warnings-as-errors]
 asmith global explain [--config PATH] [--json]
 asmith global status [--config PATH] [--json] [--max-age DURATION]
 asmith global adopt [--config PATH] [--slot NAME] [--pack NAME] [--dry-run]
+asmith global adopt --skill NAME [--config PATH] [--pack NAME] [--push | --no-commit] [--dry-run]
 asmith global add SLOT [TEXT] [--file PATH] [--skill-slot] [--harness NAME] [--pack NAME] [--placement gap|first|last] [--name NAME] [--local] [--push | --no-commit] [--skip-generate] [--dry-run] [--config PATH]
 asmith global init GIT_URL --profile NAME [--source PATH] [--config PATH] [--schedule] [--interval DURATION] [--yes]
 asmith global schedule install [--interval DURATION] [--config PATH]
 asmith global schedule uninstall
 asmith global schedule status
 
-asmith project generate [--project PATH]
+asmith project generate [--project PATH] [--on-modified fail|backup]
+asmith project adopt --skill NAME [--project PATH] [--scope PATH] [--pack NAME] [--dry-run]
 asmith project diff [--project PATH]
 asmith project lint [--project PATH] [--warnings-as-errors]
 asmith project explain [--project PATH] [--json]
@@ -496,7 +519,7 @@ Exit status:
 | 2 | `config` | Configuration, usage, planning validation, or `lint --warnings-as-errors` |
 | 3 | `source-dirty` | Source Repository has disallowed changes |
 | 4 | `source-pull` | `git pull --ff-only` or the `global init` clone failed |
-| 5 | `artifact-modified` | Modified or unrecorded global artifact, unowned global content in a transition, refused adoption, or `global init` not confirmed |
+| 5 | `artifact-modified` | Modified or unrecorded global artifact, unowned global content in a transition, an exclusive-mode unmanaged skill, refused adoption, or `global init` not confirmed |
 | 6 | `status-stale` | `global status`: no recorded run, or older than `--max-age` |
 
 Warnings alone succeed unless `--warnings-as-errors` is active. `global status` exits with the recorded exit code when the last run failed, otherwise 6 when stale, otherwise 0. `--max-age` takes one or more `<number><unit>` terms with units `s`, `m`, `h`, `d`, `w`.

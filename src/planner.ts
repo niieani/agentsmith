@@ -8,6 +8,7 @@ import {
   loadProjectConfig,
   loadRootConfig,
   MACHINE_CONFIG_PATH,
+  matchesAllow,
   resolveConfiguredPath,
   parseSourceId,
 } from "./config.ts";
@@ -34,6 +35,7 @@ import {
   type HarnessName,
   type HarnessSkills,
   type PlannedWrite,
+  type ProjectConfig,
   type ScopeConfig,
   type SkillIdentity,
 } from "./types.ts";
@@ -50,6 +52,24 @@ export interface BuiltPlan extends GenerationPlan {
   plannedPaths: string[];
   /** Every artifact that can receive snippets, with the slots it declares. */
   slotTargets: SlotTarget[];
+  /**
+   * Exclusive mode: skill directories in a Skill Root read by a selected harness of an exclusive scope that this plan
+   * does not write and `exclusive_allow` does not match. Callers drop those holding recorded artifacts.
+   */
+  unmanagedSkills: UnmanagedSkill[];
+}
+
+/** A skill directory that exclusive mode reports because agentsmith does not manage it. */
+export interface UnmanagedSkill {
+  /** Absolute skill directory path. */
+  path: string;
+  /** Skill directory name, which `exclusive_allow` globs match. */
+  name: string;
+  /** Skill Root holding it. */
+  root: string;
+  scope: string;
+  /** Selected harnesses that read the root. */
+  harnesses: HarnessName[];
 }
 
 /** One planned artifact able to receive pack snippets, and the slots it declares. */
@@ -75,6 +95,8 @@ interface ScopeInput {
   skillsEnable: string[];
   skillsDisable: string[];
   harnessSkills: HarnessSkills;
+  exclusive: boolean;
+  exclusiveAllow: string[];
 }
 
 interface SkillPlacement {
@@ -109,6 +131,7 @@ interface PlannerContext {
   explanations: unknown[];
   skillPlacements: SkillPlacement[];
   slotTargets: SlotTarget[];
+  unmanagedSkills: UnmanagedSkill[];
   instructionSizes: Array<{ harness: HarnessName; scope: string; bytes: number }>;
 }
 
@@ -163,15 +186,17 @@ function scopeDepth(path: string): number {
   return path === "." ? 0 : path.split("/").length;
 }
 
-function toScope(input: ScopeConfig, defaults: HarnessName[]): ScopeInput {
+function toScope(input: ScopeConfig, project: ProjectConfig): ScopeInput {
   return {
     path: input.path,
     template: input.template,
     packs: input.packs,
-    harnesses: input.harnesses ?? defaults,
+    harnesses: input.harnesses ?? project.harnesses,
     skillsEnable: input.skillsEnable,
     skillsDisable: input.skillsDisable,
     harnessSkills: input.harnessSkills,
+    exclusive: input.exclusive ?? project.exclusive,
+    exclusiveAllow: stableUnion([...project.exclusiveAllow, ...input.exclusiveAllow]),
   };
 }
 
@@ -569,6 +594,38 @@ function validatePlannedSkillCollisions(context: PlannerContext): void {
   }
 }
 
+/** Names of the entries in a Skill Root that can be skills: directories and symlinks, skipping hidden ones such as `.system`. */
+export async function skillDirectoryNames(root: string): Promise<string[]> {
+  if (!existsSync(root)) return [];
+  const entries = await readdir(root, { withFileTypes: true });
+  return entries
+    .filter((entry) => !entry.name.startsWith(".") && (entry.isDirectory() || entry.isSymbolicLink()))
+    .map((entry) => entry.name)
+    .sort();
+}
+
+/** Exclusive mode: every skill directory a selected harness reads in an exclusive scope that this plan does not write. */
+async function findExclusiveUnmanagedSkills(context: PlannerContext, scopes: ScopeInput[]): Promise<void> {
+  const planned = new Set(context.skillPlacements.map((item) => resolve(item.destinationDir)));
+  const found = new Map<string, UnmanagedSkill>();
+  for (const scope of scopes) {
+    if (!scope.exclusive) continue;
+    const location = skillLocation(context, scope);
+    for (const harness of scope.harnesses) {
+      for (const root of skillReadRoots(harness, location)) {
+        for (const name of await skillDirectoryNames(root)) {
+          const path = join(root, name);
+          if (planned.has(path) || matchesAllow(name, scope.exclusiveAllow)) continue;
+          const entry = found.get(path) ?? { path, name, root, scope: scope.path, harnesses: [] };
+          if (!entry.harnesses.includes(harness)) entry.harnesses.push(harness);
+          found.set(path, entry);
+        }
+      }
+    }
+  }
+  context.unmanagedSkills = [...found.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+}
+
 async function validateUnmanagedSkillCollisions(context: PlannerContext, scopes: ScopeInput[]): Promise<void> {
   const plannedDirs = new Set(context.skillPlacements.map((item) => resolve(item.destinationDir)));
   const roots = new Map<string, { scope: string; harnesses: HarnessName[] }>();
@@ -605,8 +662,11 @@ async function validateUnmanagedSkillCollisions(context: PlannerContext, scopes:
       if (!plannedDirs.has(resolve(skill.sourceDir))) unmanaged.push({ ...skill, ...metadata });
     }
   }
+  // In exclusive mode an unmanaged skill is reported (and can be backed up) on its own, instead of failing planning.
+  const exclusive = new Set(context.unmanagedSkills.map((item) => item.path));
   for (const planned of context.skillPlacements) {
     for (const external of unmanaged) {
+      if (exclusive.has(resolve(external.sourceDir))) continue;
       if (planned.name !== external.name || sharedHarnesses(planned.harnesses, external.harnesses).length === 0) continue;
       const visible = external.scope === "<global>" || isAncestorScope(external.scope, planned.scope) || isAncestorScope(planned.scope, external.scope);
       if (visible)
@@ -736,6 +796,7 @@ async function planScopes(context: PlannerContext, scopes: ScopeInput[]): Promis
     await planSkills(context, scope, packs);
   }
   validatePlannedSkillCollisions(context);
+  await findExclusiveUnmanagedSkills(context, sorted);
   await validateUnmanagedSkillCollisions(context, sorted);
   validateEffectiveInstructionBudgets(context);
   coalesceWrites(context);
@@ -767,6 +828,7 @@ function builtPlan(context: PlannerContext, configPath: string, profile?: Profil
     },
     plannedPaths: context.writes.filter((write) => write.kind !== "state").map((write) => write.destination),
     slotTargets: context.slotTargets,
+    unmanagedSkills: context.unmanagedSkills,
   };
 }
 
@@ -787,6 +849,7 @@ export async function buildGlobalPlan(configPath = MACHINE_CONFIG_PATH): Promise
     explanations: [],
     skillPlacements: [],
     slotTargets: [],
+    unmanagedSkills: [],
     instructionSizes: [],
   };
   await planScopes(context, [
@@ -798,6 +861,8 @@ export async function buildGlobalPlan(configPath = MACHINE_CONFIG_PATH): Promise
       skillsEnable: profile.skillsEnable,
       skillsDisable: profile.skillsDisable,
       harnessSkills: profile.harnessSkills,
+      exclusive: profile.exclusive,
+      exclusiveAllow: profile.exclusiveAllow,
     },
   ]);
   return builtPlan(context, resolvedConfig, {
@@ -828,11 +893,12 @@ export async function buildProjectPlan(projectStart = process.cwd(), machineConf
     explanations: [],
     skillPlacements: [],
     slotTargets: [],
+    unmanagedSkills: [],
     instructionSizes: [],
   };
   await planScopes(
     context,
-    project.scopes.map((scope) => toScope(scope, project.harnesses)),
+    project.scopes.map((scope) => toScope(scope, project)),
   );
   return builtPlan(context, configPath);
 }

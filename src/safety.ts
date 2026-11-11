@@ -258,11 +258,14 @@ export async function preflightGlobalPlan(plan: GenerationPlan, options: GlobalP
   return conflicts;
 }
 
+/** Why a path was moved aside: a conflicting artifact, or a skill exclusive mode does not allow. */
+export type BackupReason = GlobalConflictReason | "unmanaged";
+
 export interface ArtifactBackup {
   /** The artifact path that was moved aside: a file, or a whole skill directory. */
   path: string;
   backup: string;
-  reason: GlobalConflictReason;
+  reason: BackupReason;
 }
 
 /** `20261110T120000Z` for a backup suffix. */
@@ -288,6 +291,37 @@ function owningSkillDirectory(path: string, knownFiles: ReadonlySet<string>): st
 /** Where whole skill directories are moved, outside every skill root so no harness loads them. */
 export function globalBackupRoot(home?: string): string {
   return join(home ?? homedir(), ".agents", "agentsmith", "backups");
+}
+
+/** Where a project's backups go: beside its state, under the worktree's Git directory, so Git never sees them. */
+export function projectBackupRoot(worktree: GitWorktree): string {
+  return join(worktree.gitDir, "agentsmith", "backups");
+}
+
+/**
+ * Move whole directories, such as unmanaged skills, to `<backupRoot>/<UTC timestamp>/<original absolute path>`,
+ * outside every skill root. Already moved directories are put back if a later move fails.
+ */
+export async function quarantinePaths(
+  paths: readonly string[],
+  options: { backupRoot: string; date?: Date; reason?: BackupReason },
+): Promise<ArtifactBackup[]> {
+  const stamp = backupTimestamp(options.date);
+  const backups: ArtifactBackup[] = [];
+  try {
+    for (const path of paths) {
+      if (!(await exists(path))) continue;
+      const base = join(options.backupRoot, stamp, resolve(path).slice(1));
+      let backup = base;
+      for (let attempt = 1; await exists(backup); attempt++) backup = `${base}-${attempt}`;
+      await moveAside(path, backup);
+      backups.push({ path, backup, reason: options.reason ?? "unmanaged" });
+    }
+  } catch (error) {
+    await restoreBackups(backups);
+    throw error;
+  }
+  return backups;
 }
 
 async function moveAside(path: string, backup: string): Promise<void> {

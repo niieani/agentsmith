@@ -106,4 +106,23 @@ This produces flat, self-contained skills tailored to the selected packs and har
 
 agentsmith fails when two visible sources would emit the same public skill name or when a planned skill collides with an unmanaged visible skill. Visibility covers every root a harness reads: for Codex, `.agents/skills` and `.codex/skills` both count. Use `asmith project explain` to see where a skill was enabled and `lint` to detect collisions before writing.
 
+## Exclusive mode
+
+By default agentsmith leaves skills it did not write alone. To make sure every skill your agents load comes from the Source Repository, turn on exclusive mode in the profile:
+
+```toml title="profiles/laptop.toml"
+exclusive = true
+exclusive_allow = ["find-skills"]
+```
+
+Now `asmith global lint` and every sync report any other skill in `~/.agents/skills`, `~/.codex/skills`, or `~/.claude/skills`, depending on the selected harnesses. Bring one under management with:
+
+```sh
+asmith global adopt --skill pdf-tools
+```
+
+This copies the skill to `skills/pdf-tools/` in the Source Repository, enables it in the profile's pack, commits, and regenerates it in place. Skills installed by another tool that you want to keep separate belong in `exclusive_allow`. An unattended `global sync --on-modified=backup` moves anything else to `~/.agents/agentsmith/backups/` and records it in `status.json`.
+
+Projects opt in the same way with `exclusive = true` in `.config/agentsmith/config.toml`, per scope if needed, and adopt with `asmith project adopt --skill NAME`. See [exclusive mode](/reference/configuration#exclusive-mode).
+
 For a complete source-to-output example, continue with [Create a composable skill](/use-cases/skill-author).
