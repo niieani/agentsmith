@@ -186,7 +186,7 @@ Choosing the tracker pack and specializing for a harness are separate decisions.
 ```text
 packs/github/skill-slots/
 └── harnesses/
-    └── claude-code/
+    └── claude/
         └── tracker/
             └── 20-claude.md
 ```

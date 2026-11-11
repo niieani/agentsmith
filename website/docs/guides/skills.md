@@ -83,7 +83,7 @@ A skill can declare slots, and selected packs can provide reusable content for t
 
 ```text
 packs/github/skill-slots/tracker/10-github.md
-packs/github/skill-slots/harnesses/claude-code/tracker/20-claude.md
+packs/github/skill-slots/harnesses/claude/tracker/20-claude.md
 ```
 
 Contributions are keyed by slot name, not skill name. The same `tracker` snippet is inserted into every enabled skill that declares a `tracker` slot. A project-owned pack can therefore supply one project's tracker instructions to any number of shared skills without knowing their names.

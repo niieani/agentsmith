@@ -21,7 +21,7 @@ templates/
   software/
     default.md
     codex.md
-    claude-code.md
+    claude.md
 packs/
   github/
     pack.toml
@@ -35,7 +35,7 @@ packs/
       tracker/
         10-github.md
       harnesses/
-        claude-code/
+        claude/
           tracker/
             20-claude.md
 skills/
@@ -101,7 +101,7 @@ All budget keys are optional positive UTF-8 byte thresholds.
 `profiles/studio.toml`:
 
 ```toml
-harnesses = ["codex", "claude-code"]
+harnesses = ["codex", "claude"]
 template = "personal"
 packs = ["base", "personal", "macos", "server"]
 skills_enable = ["review-worktree"]
@@ -126,7 +126,7 @@ When present, `pack.toml` accepts only the optional, ordered `skills` field. Omi
 ### 4.5 Project configuration
 
 ```toml
-harnesses = ["codex", "claude-code"]
+harnesses = ["codex", "claude"]
 
 [budgets]
 instruction_layer_bytes = 20000

@@ -53,7 +53,7 @@ const codex: HarnessAdapter = {
 };
 
 const claudeCode: HarnessAdapter = {
-  name: "claude-code",
+  name: "claude",
   instructionName: "CLAUDE.md",
   projectSkillDirectory: join(".claude", "skills"),
   globalInstruction(home = homedir()): string {
@@ -72,7 +72,7 @@ const claudeCode: HarnessAdapter = {
 
 export const HARNESS_ADAPTERS: Record<HarnessName, HarnessAdapter> = {
   codex,
-  "claude-code": claudeCode,
+  claude: claudeCode,
 };
 
 export function getHarnessAdapter(name: HarnessName): HarnessAdapter {

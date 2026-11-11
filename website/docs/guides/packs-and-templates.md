@@ -13,7 +13,7 @@ A template family can specialize by harness:
 templates/software/
 ├── default.md
 ├── codex.md
-└── claude-code.md
+└── claude.md
 ```
 
 For each harness, agentsmith chooses `<harness>.md` when present and otherwise uses `default.md`.

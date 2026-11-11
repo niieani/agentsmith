@@ -113,7 +113,7 @@ agentsmith rebases `# Evidence` to `### Evidence` and preserves the relative chi
 templates/software/
 ├── default.md
 ├── codex.md
-└── claude-code.md
+└── claude.md
 ```
 
 Use only `default.md` while the structure is shared. Add a harness-specific file when the whole structure genuinely differs; it wins over the fallback for that harness.
@@ -132,7 +132,7 @@ packs/review/instructions/codex/tools/20-codex.md
 **Problem:** two machines share personal preferences, but have different operating systems, tools, or responsibilities.
 
 ```toml title="profiles/laptop.toml"
-harnesses = ["codex", "claude-code"]
+harnesses = ["codex", "claude"]
 template = "personal"
 packs = ["base", "macos", "ios"]
 ```

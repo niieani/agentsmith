@@ -37,7 +37,7 @@ All budget values are optional positive UTF-8 byte thresholds. They warn rather 
 Path: `<source>/profiles/<name>.toml`.
 
 ```toml
-harnesses = ["codex", "claude-code"]
+harnesses = ["codex", "claude"]
 template = "personal"
 packs = ["base", "personal", "macos"]
 skills_enable = ["review-worktree"]
@@ -64,7 +64,7 @@ A pack directory needs no manifest when it only contributes instructions or skil
 Path: `<project>/.config/agentsmith/config.toml`.
 
 ```toml
-harnesses = ["codex", "claude-code"]
+harnesses = ["codex", "claude"]
 
 [budgets]
 instruction_layer_bytes = 20000
@@ -95,9 +95,15 @@ Source IDs are slash-separated logical names, not filesystem paths. Unqualified 
 
 ## Harness destinations
 
+Harness names are `codex` and `claude`.
+
 | Harness | Global instructions | Project instructions | Global skills | Project skills |
 | --- | --- | --- | --- | --- |
-| Codex | `$CODEX_HOME/AGENTS.md` (normally `~/.codex/AGENTS.md`) | `<scope>/AGENTS.md` | `~/.agents/skills` | `<scope>/.agents/skills` |
-| Claude Code | `~/.claude/CLAUDE.md` | `<scope>/CLAUDE.md` | `~/.claude/skills` | `<scope>/.claude/skills` |
+| `codex` | `$CODEX_HOME/AGENTS.md` (normally `~/.codex/AGENTS.md`) | `<scope>/AGENTS.md` | `~/.agents/skills` | `<scope>/.agents/skills` |
+| `claude` | `~/.claude/CLAUDE.md` | `<scope>/CLAUDE.md` | `~/.claude/skills` | `<scope>/.claude/skills` |
 
 An existing `AGENTS.override.md` at a generated Codex layer is a preflight error because it would shadow `AGENTS.md`.
+
+### Migrating from `claude-code`
+
+The `claude-code` harness was renamed `claude`. Update `harnesses` values, rename `templates/<family>/claude-code.md` to `claude.md`, and rename `instructions/claude-code/` and `skill-slots/harnesses/claude-code/` pack directories to `claude/`. agentsmith reports an error for each leftover use of the old name instead of silently ignoring it.

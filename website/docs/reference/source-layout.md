@@ -13,7 +13,7 @@ templates/
   software/
     default.md
     codex.md
-    claude-code.md
+    claude.md
 packs/
   github/
     pack.toml
@@ -70,7 +70,7 @@ packs/github/skill-slots/
 ├── tracker/
 │   └── 10-github.md
 └── harnesses/
-    └── claude-code/
+    └── claude/
         └── tracker/
             └── 20-claude.md
 ```

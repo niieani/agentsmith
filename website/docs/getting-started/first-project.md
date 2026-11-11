@@ -10,7 +10,7 @@ Project generation combines reusable sources with configuration committed to a p
 At the repository root, create `.config/agentsmith/config.toml`:
 
 ```toml
-harnesses = ["codex", "claude-code"]
+harnesses = ["codex", "claude"]
 
 [[scopes]]
 path = "."

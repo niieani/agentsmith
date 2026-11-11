@@ -76,7 +76,7 @@ profile = "laptop"
 The selected Source Repository contains `agentsmith.toml`, profiles, template families, packs, skills, and partials. A minimal profile looks like:
 
 ```toml
-harnesses = ["codex", "claude-code"]
+harnesses = ["codex", "claude"]
 template = "personal"
 packs = ["base", "macos"]
 ```
@@ -96,7 +96,7 @@ asmith global sync
 Create `.config/agentsmith/config.toml` in the project root:
 
 ```toml
-harnesses = ["codex", "claude-code"]
+harnesses = ["codex", "claude"]
 
 [[scopes]]
 path = "."

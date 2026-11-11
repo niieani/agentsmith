@@ -10,8 +10,8 @@ describe("harness adapters", () => {
     expect(adapter.projectInstruction("/repo", "apps/api")).toBe(join("/repo", "apps/api", "AGENTS.md"));
   });
 
-  test("maps Claude Code destinations", () => {
-    const adapter = getHarnessAdapter("claude-code");
+  test("maps Claude destinations", () => {
+    const adapter = getHarnessAdapter("claude");
     expect(adapter.globalInstruction("/home/me")).toBe("/home/me/.claude/CLAUDE.md");
     expect(adapter.projectSkillRoot("/repo", ".")).toBe(join("/repo", ".claude", "skills"));
   });

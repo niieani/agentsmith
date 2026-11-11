@@ -3,7 +3,7 @@ import { lstat, readFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { loadPackConfig, parseSourceId, projectSourceRoot, type SourceKind } from "./config.ts";
 import { walkFiles } from "./fs.ts";
-import type { Contribution, HarnessName, PackConfig, SkillIdentity, SourceId } from "./types.ts";
+import { HARNESS_NAMES, RENAMED_HARNESSES, type Contribution, type HarnessName, type PackConfig, type SkillIdentity, type SourceId } from "./types.ts";
 import { readSkillIdentity } from "./skills.ts";
 
 export interface SourceContext {
@@ -131,6 +131,10 @@ function resolveSingularSource(context: SourceContext, sourceId: string, kind: E
 
 export async function loadTemplate(context: SourceContext, family: string, harness: HarnessName): Promise<LoadedTemplate> {
   const resolved = resolveSingularSource(context, family, "template");
+  for (const [legacy, renamed] of Object.entries(RENAMED_HARNESSES)) {
+    const legacyPath = join(resolved.directory, `${legacy}.md`);
+    if (existsSync(legacyPath)) throw new Error(`Template ${legacyPath} uses the removed harness name ${JSON.stringify(legacy)}; rename it to ${renamed}.md`);
+  }
   const harnessPath = join(resolved.directory, `${harness}.md`);
   const defaultPath = join(resolved.directory, "default.md");
   const path = existsSync(harnessPath) ? harnessPath : defaultPath;
@@ -190,14 +194,22 @@ async function contributionsBySlot(root: string, pack: string): Promise<Contribu
   return contributions;
 }
 
+function rejectLegacyHarnessDirectory(root: string): void {
+  for (const [legacy, renamed] of Object.entries(RENAMED_HARNESSES)) {
+    const legacyPath = join(root, legacy);
+    if (existsSync(legacyPath)) throw new Error(`${legacyPath} uses the removed harness name ${JSON.stringify(legacy)}; rename the directory to ${renamed}`);
+  }
+}
+
 export async function loadInstructionContributions(pack: LoadedPack, harness: HarnessName): Promise<Contribution[]> {
   const commonRoot = join(pack.directory, "instructions");
   const common = existsSync(commonRoot)
     ? (await contributionsBySlot(commonRoot, pack.sourceId)).filter((item) => {
         const first = item.path.slice(commonRoot.length + 1).split(/[\\/]/)[0];
-        return first !== "codex" && first !== "claude-code";
+        return !(HARNESS_NAMES as readonly string[]).includes(first ?? "");
       })
     : [];
+  rejectLegacyHarnessDirectory(commonRoot);
   const specific = await contributionsBySlot(join(commonRoot, harness), pack.sourceId);
   return [...common, ...specific];
 }
@@ -210,6 +222,7 @@ export async function loadSkillContributions(pack: LoadedPack, harness: HarnessN
         return first !== "harnesses";
       })
     : [];
+  rejectLegacyHarnessDirectory(join(root, "harnesses"));
   const specific = await contributionsBySlot(join(root, "harnesses", harness), pack.sourceId);
   return [...common, ...specific];
 }

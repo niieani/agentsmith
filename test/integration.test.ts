@@ -32,7 +32,7 @@ describe("CLI project workflow", () => {
     await put(machine, `source = ${JSON.stringify(source)}\nprofile = "unused"\n`);
     await put(
       join(project, ".config", "agentsmith", "config.toml"),
-      ['harnesses = ["codex", "claude-code"]', "", "[[scopes]]", 'path = "."', 'template = "base"', 'packs = ["base"]', ""].join("\n"),
+      ['harnesses = ["codex", "claude"]', "", "[[scopes]]", 'path = "."', 'template = "base"', 'packs = ["base"]', ""].join("\n"),
     );
     expect((await run(["git", "init"], project)).exitCode).toBe(0);
     await run(["git", "config", "user.email", "fixture@example.test"], project);
@@ -67,16 +67,9 @@ describe("CLI project workflow", () => {
 
     await put(
       join(project, ".config", "agentsmith", "config.toml"),
-      [
-        'harnesses = ["codex", "claude-code"]',
-        "",
-        "[[scopes]]",
-        'path = "."',
-        'template = "base"',
-        'packs = ["base"]',
-        `skills_disable = ["${skill}"]`,
-        "",
-      ].join("\n"),
+      ['harnesses = ["codex", "claude"]', "", "[[scopes]]", 'path = "."', 'template = "base"', 'packs = ["base"]', `skills_disable = ["${skill}"]`, ""].join(
+        "\n",
+      ),
     );
     const disabled = Bun.spawn(args, { cwd: project, env, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
     const [disabledError, disabledCode] = await Promise.all([new Response(disabled.stderr).text(), disabled.exited]);

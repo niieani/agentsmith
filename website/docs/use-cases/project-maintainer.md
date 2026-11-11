@@ -23,7 +23,7 @@ acme/
 Create `.config/agentsmith/config.toml`:
 
 ```toml
-harnesses = ["codex", "claude-code"]
+harnesses = ["codex", "claude"]
 
 [budgets]
 instruction_layer_bytes = 20000

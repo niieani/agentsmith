@@ -46,7 +46,7 @@ function sourceFixture(): string {
   file(join(root, "skills/review/SKILL.md"), "---\nname: review\ndescription: Review\n---\n");
   file(
     join(root, "profiles/studio.toml"),
-    `harnesses = [\"codex\", \"claude-code\"]\ntemplate = \"personal\"\npacks = [\"base\"]\nskills_enable = [\"review\"]\nskills_disable = []\n[budgets]\neffective_instruction_bytes = 200\n`,
+    `harnesses = [\"codex\", \"claude\"]\ntemplate = \"personal\"\npacks = [\"base\"]\nskills_enable = [\"review\"]\nskills_disable = []\n[budgets]\neffective_instruction_bytes = 200\n`,
   );
   return root;
 }
@@ -171,7 +171,7 @@ describe("strict TOML loaders", () => {
     expect(loadMachineConfig(machine)).toEqual({ source, profile: "studio" });
     expect(loadRootConfig(source).budgets.instructionLayerBytes).toBe(100);
     expect(loadProfileConfig(source, "studio")).toMatchObject({
-      harnesses: ["codex", "claude-code"],
+      harnesses: ["codex", "claude"],
       template: "personal",
       packs: ["base"],
       skillsEnable: ["review"],
@@ -206,7 +206,7 @@ describe("project configuration", () => {
     const config = projectConfigPath(root);
     file(
       config,
-      `harnesses = [\"codex\", \"claude-code\"]\n[budgets]\ninstruction_layer_bytes = 20000\n[[scopes]]\npath = \".\"\ntemplate = \"software\"\npacks = [\"base\"]\n[[scopes]]\npath = \"apps/ios/../ios\"\ntemplate = \"project:custom\"\npacks = [\"project:deploy\"]\nharnesses = [\"codex\"]\n`,
+      `harnesses = [\"codex\", \"claude\"]\n[budgets]\ninstruction_layer_bytes = 20000\n[[scopes]]\npath = \".\"\ntemplate = \"software\"\npacks = [\"base\"]\n[[scopes]]\npath = \"apps/ios/../ios\"\ntemplate = \"project:custom\"\npacks = [\"project:deploy\"]\nharnesses = [\"codex\"]\n`,
     );
     return { root, config };
   }
@@ -214,7 +214,7 @@ describe("project configuration", () => {
   test("normalizes scopes, fills optional lists, and parses owned source IDs", () => {
     const { config } = projectFixture();
     expect(loadProjectConfig(config)).toEqual({
-      harnesses: ["codex", "claude-code"],
+      harnesses: ["codex", "claude"],
       budgets: { instructionLayerBytes: 20000, effectiveInstructionBytes: undefined, skillMarkdownBytes: undefined },
       scopes: [
         { path: ".", template: "software", packs: ["base"], harnesses: undefined, skillsEnable: [], skillsDisable: [] },
@@ -237,8 +237,10 @@ describe("project configuration", () => {
     expect(() => loadProjectConfig(config)).toThrow(/duplicate normalized scope/);
     file(config, `harnesses = ["codex"]\n[[scopes]]\npath = "apps/ios"\npacks = []\n`);
     expect(() => loadProjectConfig(config)).toThrow(/Repository Scope/);
-    file(config, `harnesses = [\"codex\"]\n[[scopes]]\npath = \".\"\npacks = []\nharnesses = [\"claude-code\"]\n`);
+    file(config, `harnesses = [\"codex\"]\n[[scopes]]\npath = \".\"\npacks = []\nharnesses = [\"claude\"]\n`);
     expect(() => loadProjectConfig(config)).toThrow(/subset/);
+    file(config, `harnesses = ["claude-code"]\n[[scopes]]\npath = "."\npacks = []\n`);
+    expect(() => loadProjectConfig(config)).toThrow(/"claude-code", which was renamed to "claude"/);
     file(config, `harnesses = [\"codex\"]\n[[scopes]]\npath = \"..\"\npacks = []\n`);
     expect(() => loadProjectConfig(config)).toThrow(/escapes/);
     file(config, `harnesses = [\"codex\"]\n[[scopes]]\npath = \".\"\npacks = [\"base\"]\n[[scopes]]\npath = \"apps/ios\"\npacks = [\"base\"]\n`);

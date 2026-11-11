@@ -5,6 +5,7 @@ import { parse } from "smol-toml";
 
 import {
   HARNESS_NAMES,
+  RENAMED_HARNESSES,
   type Budgets,
   type HarnessName,
   type MachineConfig,
@@ -83,7 +84,16 @@ function harnesses(value: unknown, label: string, path: string, required = true)
   const values = unique(stringList(value, label, path, required), label, path);
   if (required && values.length === 0) fail(`${label} must not be empty`, path);
   const allowed = new Set<string>(HARNESS_NAMES);
-  for (const value of values) if (!allowed.has(value)) fail(`${label} contains unknown harness ${JSON.stringify(value)}`, path);
+  for (const value of values) {
+    if (allowed.has(value)) continue;
+    const renamed = RENAMED_HARNESSES[value];
+    fail(
+      renamed === undefined
+        ? `${label} contains unknown harness ${JSON.stringify(value)}`
+        : `${label} contains harness ${JSON.stringify(value)}, which was renamed to ${JSON.stringify(renamed)}`,
+      path,
+    );
+  }
   return values as HarnessName[];
 }
 

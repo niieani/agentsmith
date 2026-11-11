@@ -90,13 +90,13 @@ None of these packs needs `pack.toml`. That optional manifest exists only for pa
 ## 4. Select packs per machine
 
 ```toml title="profiles/laptop.toml"
-harnesses = ["codex", "claude-code"]
+harnesses = ["codex", "claude"]
 template = "personal"
 packs = ["base", "ios"]
 ```
 
 ```toml title="profiles/workstation.toml"
-harnesses = ["codex", "claude-code"]
+harnesses = ["codex", "claude"]
 template = "personal"
 packs = ["base", "server"]
 ```

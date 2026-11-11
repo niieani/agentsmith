@@ -22,7 +22,7 @@ async function fixture(): Promise<{ root: string; source: string; machine: strin
   const skill = "agentsmith-fixture-review";
   await mkdir(project, { recursive: true });
   await put(join(source, "agentsmith.toml"), "");
-  await put(join(source, "profiles", "test.toml"), ['harnesses = ["codex", "claude-code"]', 'template = "base"', 'packs = ["base"]', ""].join("\n"));
+  await put(join(source, "profiles", "test.toml"), ['harnesses = ["codex", "claude"]', 'template = "base"', 'packs = ["base"]', ""].join("\n"));
   await put(join(source, "templates", "base", "default.md"), "# Instructions\n\n## Greeting\n\n<!-- agentsmith:required-slot greeting -->\n");
   await put(join(source, "packs", "base", "pack.toml"), `skills = ["${skill}"]\n`);
   await put(join(source, "packs", "base", "instructions", "greeting", "10-hello.md"), "Be kind.\n");
@@ -35,7 +35,7 @@ async function fixture(): Promise<{ root: string; source: string; machine: strin
   await put(machine, `source = ${JSON.stringify(source)}\nprofile = "test"\n`);
   await put(
     join(project, ".config", "agentsmith", "config.toml"),
-    ['harnesses = ["codex", "claude-code"]', "", "[[scopes]]", 'path = "."', 'template = "base"', 'packs = ["base"]', ""].join("\n"),
+    ['harnesses = ["codex", "claude"]', "", "[[scopes]]", 'path = "."', 'template = "base"', 'packs = ["base"]', ""].join("\n"),
   );
   return { root, source, machine, project, skill };
 }
@@ -229,6 +229,29 @@ describe("generation planning", () => {
 
     const plan = await buildGlobalPlan(setup.machine);
     expect(plan.diagnostics.some((item) => item.code === "skill-contribution-layout" && item.severity === "error")).toBeTrue();
+  });
+
+  test("applies claude-specific template and contributions", async () => {
+    const setup = await fixture();
+    await put(join(setup.source, "templates", "base", "claude.md"), "# Claude\n\n<!-- agentsmith:required-slot greeting -->\n");
+    await put(join(setup.source, "packs", "base", "instructions", "claude", "greeting", "20-claude.md"), "Claude only.\n");
+    const plan = await buildGlobalPlan(setup.machine);
+    const claude = plan.writes.find((write) => write.destination.endsWith("/.claude/CLAUDE.md"))!;
+    const codex = plan.writes.find((write) => write.destination.endsWith("/.codex/AGENTS.md"))!;
+    expect(new TextDecoder().decode(claude.content)).toContain("Claude only.");
+    expect(new TextDecoder().decode(codex.content)).not.toContain("Claude only.");
+  });
+
+  test("rejects sources that still use the removed claude-code harness name", async () => {
+    for (const legacy of [
+      ["templates", "base", "claude-code.md"],
+      ["packs", "base", "instructions", "claude-code", "greeting", "20-legacy.md"],
+      ["packs", "base", "skill-slots", "harnesses", "claude-code", "detail", "20-legacy.md"],
+    ]) {
+      const setup = await fixture();
+      await put(join(setup.source, ...legacy), "Legacy.\n");
+      await expect(buildGlobalPlan(setup.machine)).rejects.toThrow(/removed harness name "claude-code"/);
+    }
   });
 
   test("detects an unmanaged skill in an intermediate ancestor root", async () => {

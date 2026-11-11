@@ -21,7 +21,7 @@ profile = "laptop"
 In the Source Repository, create `profiles/laptop.toml`:
 
 ```toml
-harnesses = ["codex", "claude-code"]
+harnesses = ["codex", "claude"]
 template = "personal"
 packs = ["base", "personal", "macos"]
 skills_enable = ["review-worktree"]

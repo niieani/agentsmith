@@ -1,4 +1,7 @@
-export const HARNESS_NAMES = ["codex", "claude-code"] as const;
+/** Harness names removed in a breaking change, mapped to their replacement. */
+export const RENAMED_HARNESSES: Readonly<Record<string, string>> = { "claude-code": "claude" };
+
+export const HARNESS_NAMES = ["codex", "claude"] as const;
 export type HarnessName = (typeof HARNESS_NAMES)[number];
 
 export interface Budgets {

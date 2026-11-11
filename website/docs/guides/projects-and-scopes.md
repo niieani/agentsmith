@@ -18,7 +18,7 @@ repository scope (.)
 Work under `apps/ios` sees both the repository layer and the iOS layer. A scope's `packs` are additive deltas; do not repeat packs already selected by an ancestor.
 
 ```toml
-harnesses = ["codex", "claude-code"]
+harnesses = ["codex", "claude"]
 
 [[scopes]]
 path = "."
