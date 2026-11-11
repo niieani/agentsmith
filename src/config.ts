@@ -276,6 +276,17 @@ function machineHome(value: unknown, configPath: string): string {
 }
 
 /**
+ * The sandbox home a machine config selects, for commands that must never fall back to the real home by mistake:
+ * undefined only when the config does not exist or sets no `home`; an unreadable config or invalid `home` throws.
+ */
+export function requireMachineHome(configPath: string): string | undefined {
+  const absolutePath = resolveConfiguredPath(configPath, join(resolve("."), ".agentsmith-cli-path"));
+  if (!existsSync(absolutePath)) return undefined;
+  const input = readToml(absolutePath);
+  return input.home === undefined ? undefined : machineHome(input.home, absolutePath);
+}
+
+/**
  * The sandbox home a machine config selects, read leniently so run status and cleanup still find agentsmith's state
  * when the rest of the config is invalid. Undefined when the config is missing, unreadable, or sets no valid home.
  */

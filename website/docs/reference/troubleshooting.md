@@ -36,6 +36,15 @@ With `exclusive = true`, `lint`, `generate`, and `sync` exit 5 and list every sk
 
 `adopt --skill` reports `Several different unmanaged skills are named NAME` when two roots hold different directories with that name. Delete the copy you do not want, then adopt again.
 
+## Clean refuses a modified artifact
+
+`asmith global clean` and `asmith project clean` exit 5 and remove nothing when an artifact changed since agentsmith generated it. Keep the change somewhere first, or choose:
+
+- `--on-modified=backup` keeps a backup (`<name>.agentsmith-<timestamp>`, or the skill directory under the backups folder) and then removes the artifact.
+- `--force` removes it without a backup.
+
+For a project, `git diff` shows what changed in tracked files. After `project clean --yes`, commit the deletions it leaves, or run `project generate` to recreate the files.
+
 ## Template declares a reserved slot
 
 `prepend` and `append` are added implicitly at the very top and bottom of every instruction artifact. Rename a template slot that uses either name.

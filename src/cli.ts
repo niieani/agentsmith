@@ -93,6 +93,16 @@ const globalCommands = or(
       command("status", object({ action: constant("schedule-status") })),
     ),
   ),
+  command(
+    "clean",
+    object({
+      action: constant("clean"),
+      config: configOption,
+      yes: option("-y", "--yes"),
+      force: option("--force"),
+      onModified: onModifiedOption,
+    }),
+  ),
   command("diff", object({ action: constant("diff"), config: configOption })),
   command(
     "lint",
@@ -124,6 +134,17 @@ const projectCommands = or(
       skill: option("--skill", string({ metavar: "NAME" })),
       pack: optional(option("--pack", string({ metavar: "NAME" }))),
       dryRun: option("--dry-run"),
+    }),
+  ),
+  command(
+    "clean",
+    object({
+      action: constant("clean"),
+      project: projectOption,
+      scope: optional(option("--scope", string({ metavar: "PATH" }))),
+      yes: option("-y", "--yes"),
+      force: option("--force"),
+      onModified: onModifiedOption,
     }),
   ),
   command("diff", object({ action: constant("diff"), project: projectOption })),

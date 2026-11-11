@@ -14,6 +14,7 @@ description: Every asmith command, option, and intended workflow.
 | `asmith global sync [--config PATH] [--force] [--on-modified fail\|backup]` | Require clean source, run `git pull --ff-only`, then generate. |
 | `asmith global generate [--config PATH] [--force] [--on-modified fail\|backup]` | Generate from the current local source without pulling. |
 | `asmith global diff [--config PATH]` | Show prospective writes and stale deletions. |
+| `asmith global clean [--config PATH] [-y\|--yes] [--force] [--on-modified fail\|backup]` | List, or with `--yes` remove, every global artifact and agentsmith's global state. See [cleaning up](#cleaning-up). |
 | `asmith global lint [--config PATH] [--warnings-as-errors]` | Validate without writing. |
 | `asmith global explain [--config PATH] [--json]` | Show artifacts, provenance, sizes, slots, and includes. |
 | `asmith global status [--config PATH] [--json] [--max-age DURATION]` | Show the last recorded `sync` or `generate` run; exit nonzero when it failed or is too old. |
@@ -136,6 +137,24 @@ asmith project adopt --skill release-notes --pack local
 
 `--dry-run` prints what would be copied and enabled without writing.
 
+### Cleaning up
+
+`asmith global clean` and `asmith project clean` remove what agentsmith generated. Without `-y`/`--yes` they only print every path they would remove:
+
+```sh
+asmith global clean          # dry run
+asmith global clean --yes
+asmith project clean --scope apps/web --yes
+```
+
+- Only artifacts recorded in agentsmith's state are removed. Files agentsmith never wrote are never touched.
+- An artifact changed since agentsmith generated it is refused: nothing is removed and the command exits 5. `--on-modified=backup` backs it up first, the same way `global generate` does, then removes it. `--force` removes it without a backup. A project artifact counts as unchanged when it matches what the current configuration generates, or when Git reports it tracked and clean.
+- After the artifacts, `global clean` removes `state.toml`, `status.json`, and `blobs/` under `~/.agents/agentsmith/`, and `project clean` removes the project state under the Git directory. With `--scope`, `project clean` removes only the artifacts of that scope (not of deeper scopes) and keeps the state of the others.
+- Directories left empty are removed; directories that hold other files stay.
+- The machine config, the Source Repository clone, backups, logs, and the schedule stay. Remove the schedule with `asmith global schedule uninstall`.
+
+In a project, removed files that Git tracks show up as deletions for you to commit. A later `project generate` recreates them; Git treats a tracked file deleted only in the worktree as missing, so this works before or after you commit the deletion.
+
 ### Adding snippets
 
 `asmith global add SLOT [TEXT]` and `asmith project add SLOT [TEXT]` write a new snippet into a pack slot, check it, and regenerate:
@@ -167,6 +186,7 @@ A global snippet that is not `--local` is committed by default, only the new fil
 | `asmith project generate [--project PATH] [--on-modified fail\|backup]` | Safely generate project artifacts. `backup` moves [exclusive mode](/reference/configuration#exclusive-mode) unmanaged skills aside. |
 | `asmith project adopt --skill NAME [--project PATH] [--scope PATH] [--pack NAME] [--dry-run]` | Copy an unmanaged project skill into the project's source tree. See [adopting unmanaged skills](#adopting-unmanaged-skills). |
 | `asmith project diff [--project PATH]` | Show prospective project changes without writing. |
+| `asmith project clean [--project PATH] [--scope PATH] [-y\|--yes] [--force] [--on-modified fail\|backup]` | List, or with `--yes` remove, the project's generated artifacts and agentsmith's project state. |
 | `asmith project lint [--project PATH] [--warnings-as-errors]` | Validate project composition. |
 | `asmith project explain [--project PATH] [--json]` | Explain the project plan and provenance. |
 | `asmith project add SLOT [TEXT] [--project PATH] [--scope PATH] [--file PATH] [--skill-slot] [--harness NAME] [--pack NAME] [--placement gap\|first\|last] [--name NAME] [--skip-generate] [--dry-run]` | Write a new snippet into a project pack slot, lint, and regenerate. See [adding snippets](#adding-snippets). |
@@ -182,7 +202,7 @@ Starting from `--project` or the current directory, agentsmith searches ancestor
 | 2 | `config` | Configuration, usage, or validation error, including `lint --warnings-as-errors` with warnings. |
 | 3 | `source-dirty` | `global sync` or `global add --push` found tracked, staged, conflicted, or nonignored untracked changes in the Source Repository. |
 | 4 | `source-pull` | `git pull --ff-only` (`global sync`, `global add --push`) or the `global init` clone failed: no upstream, authentication, network, or a branch that cannot fast-forward. |
-| 5 | `artifact-modified` | A global artifact was modified or unrecorded, exclusive mode found an unmanaged skill, `global adopt` refused an edit, or `global init` needs confirmation to replace existing files. |
+| 5 | `artifact-modified` | A global artifact was modified or unrecorded, exclusive mode found an unmanaged skill, `clean` found a modified artifact, `global adopt` refused an edit, or `global init` needs confirmation to replace existing files. |
 | 6 | `status-stale` | `global status` found no recorded run, or one older than `--max-age`. |
 
 Warnings succeed unless `--warnings-as-errors` is set.

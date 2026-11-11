@@ -91,7 +91,7 @@ profile = "studio"
 home = "~/sandbox/home"   # optional
 ```
 
-`source` and `home` resolve relative to the configuration file; `~` and `~/` expand to the real home directory. `home`, when set, must be an existing directory and is canonicalized (symlinked ancestors resolved). It replaces `$HOME` for every agentsmith destination and every piece of agentsmith state: global Instruction Layers and Skill Roots, the Codex home (`<home>/.codex`; `CODEX_HOME` is ignored), `state.toml`, `status.json`, `blobs/`, `backups/`, and `logs/` under `<home>/.agents/agentsmith/`. Project plans that read the machine configuration use the same home for global collision checks. Git and other subprocesses inherit the real environment, including `$HOME`. Commands that only need state (`global status`, run status recording, `global schedule status`) read `home` leniently, so they still find the sandbox when the rest of the configuration is invalid; an unreadable `home` falls back to the real home.
+`source` and `home` resolve relative to the configuration file; `~` and `~/` expand to the real home directory. `home`, when set, must be an existing directory and is canonicalized (symlinked ancestors resolved). It replaces `$HOME` for every agentsmith destination and every piece of agentsmith state: global Instruction Layers and Skill Roots, the Codex home (`<home>/.codex`; `CODEX_HOME` is ignored), `state.toml`, `status.json`, `blobs/`, `backups/`, and `logs/` under `<home>/.agents/agentsmith/`. Project plans that read the machine configuration use the same home for global collision checks. Git and other subprocesses inherit the real environment, including `$HOME`. Commands that only need state (`global status`, run status recording, `global schedule status`) read `home` leniently, so they still find the sandbox when the rest of the configuration is invalid; an unreadable `home` falls back to the real home. `global clean` instead fails with a configuration error when the configuration exists but is unreadable or its `home` is invalid, so it never cleans the real home by mistake.
 
 ### 4.2 Source Repository root
 
@@ -379,7 +379,7 @@ All mutating commands create a Generation Plan containing writes and stale delet
 
 Project generation requires every destination to belong to the same Git worktree as the project configuration. Nested independent repositories in one plan are unsupported.
 
-- Missing destinations are allowed.
+- Missing destinations are allowed. A tracked file deleted in the worktree but not in the index counts as missing.
 - Existing tracked-clean destinations may be replaced.
 - Modified, staged, conflicted, untracked, or ignored destinations fail the entire plan.
 - There is no force option.
@@ -422,6 +422,16 @@ Adopted text is written to snippets in `<source>/packs/<pack>/instructions/<harn
 - A global snippet that is not `--local` is committed by default: only the new path, with no pull and no clean-source requirement. The commit is not pushed, and the output says so. `--no-commit` (global only, incompatible with `--push`) skips the commit.
 - `--push` is global only and incompatible with `--local` and `--no-commit`. It runs `git pull --ff-only` after the clean-source check, chooses the number on the pulled tree, writes and lints, commits only the new path, runs `git push`, then regenerates. A failed commit removes the file. A failed push exits 1, keeps the commit, and skips regeneration.
 - `--dry-run` validates and prints the path, number, and content without writing, pulling, or regenerating.
+
+### 8.2.4 Clean
+
+`global clean [--config PATH]` and `project clean [--project PATH] [--scope PATH]` accept `-y`/`--yes`, `--force`, and `--on-modified=fail|backup`. Without `--yes` they validate and print every path that would be removed, and write nothing.
+
+- Global candidates are the recorded artifacts in global state that exist. One is unchanged when it is a regular file whose SHA-256 equals the recorded hash. Project candidates are the recorded project paths that exist, limited with `--scope` to paths whose deepest containing declared scope is that scope. One is unchanged when it is a regular file whose bytes equal the current project plan's write for that path, or when Git reports it `tracked-clean`; if the project plan cannot be built, only Git is consulted (with a warning).
+- Any changed candidate fails the command with `artifact-modified` (exit 5) before anything is removed, in dry runs too, unless `--on-modified=backup` or `--force`. With `backup`, changed global artifacts are backed up as in section 8.2 (an instruction file beside itself, a skill file's whole skill directory under the backup root) and changed project artifacts are moved to `<Git directory>/agentsmith/backups/<UTC timestamp>/<original absolute path>`; then they are removed. With `--force` they are removed without a backup.
+- Then the mode's state is removed: global `state.toml`, `status.json`, and `blobs/`; project state, unless `--scope` leaves other recorded paths, in which case state is rewritten without the removed paths.
+- Each now-empty parent directory of a removed path is removed, up to but excluding the home (global; the sandbox home when set), the worktree root (project artifacts), or the Git directory (project state).
+- The machine configuration, Source Repository, backups, logs, and the installed schedule are not touched. Removed tracked project files remain Git worktree deletions.
 
 ### 8.3 Application
 
@@ -489,6 +499,7 @@ Budgets warn and never truncate. `lint --warnings-as-errors` turns warnings into
 asmith global sync [--config PATH] [--force] [--on-modified fail|backup]
 asmith global generate [--config PATH] [--force] [--on-modified fail|backup]
 asmith global diff [--config PATH]
+asmith global clean [--config PATH] [-y|--yes] [--force] [--on-modified fail|backup]
 asmith global lint [--config PATH] [--warnings-as-errors]
 asmith global explain [--config PATH] [--json]
 asmith global status [--config PATH] [--json] [--max-age DURATION]
@@ -503,6 +514,7 @@ asmith global schedule status
 asmith project generate [--project PATH] [--on-modified fail|backup]
 asmith project adopt --skill NAME [--project PATH] [--scope PATH] [--pack NAME] [--dry-run]
 asmith project diff [--project PATH]
+asmith project clean [--project PATH] [--scope PATH] [-y|--yes] [--force] [--on-modified fail|backup]
 asmith project lint [--project PATH] [--warnings-as-errors]
 asmith project explain [--project PATH] [--json]
 asmith project add SLOT [TEXT] [--project PATH] [--scope PATH] [--file PATH] [--skill-slot] [--harness NAME] [--pack NAME] [--placement gap|first|last] [--name NAME] [--skip-generate] [--dry-run]
@@ -519,7 +531,7 @@ Exit status:
 | 2 | `config` | Configuration, usage, planning validation, or `lint --warnings-as-errors` |
 | 3 | `source-dirty` | Source Repository has disallowed changes |
 | 4 | `source-pull` | `git pull --ff-only` or the `global init` clone failed |
-| 5 | `artifact-modified` | Modified or unrecorded global artifact, unowned global content in a transition, an exclusive-mode unmanaged skill, refused adoption, or `global init` not confirmed |
+| 5 | `artifact-modified` | Modified or unrecorded global artifact, unowned global content in a transition, an exclusive-mode unmanaged skill, a modified artifact during `clean`, refused adoption, or `global init` not confirmed |
 | 6 | `status-stale` | `global status`: no recorded run, or older than `--max-age` |
 
 Warnings alone succeed unless `--warnings-as-errors` is active. `global status` exits with the recorded exit code when the last run failed, otherwise 6 when stale, otherwise 0. `--max-age` takes one or more `<number><unit>` terms with units `s`, `m`, `h`, `d`, `w`.

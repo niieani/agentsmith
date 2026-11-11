@@ -91,6 +91,9 @@ export async function gitPathStatus(worktreeRoot: string, path: string): Promise
     if (code === "??") return "untracked";
     if (code === "DD" || code === "AU" || code === "UD" || code === "UA" || code === "DU" || code === "AA" || code === "UU") return "conflicted";
     if (code[0] !== " ") return "staged";
+    // A tracked file deleted only in the worktree (for example by `project clean`) holds no local content: Git still
+    // has it in the index and HEAD, so recreating it loses nothing.
+    if (code === " D") return "missing";
     if (code[1] !== " ") return "modified";
   }
 

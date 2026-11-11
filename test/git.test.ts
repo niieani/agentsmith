@@ -42,6 +42,12 @@ describe("Git boundary", () => {
     await Bun.write(join(root, "ignored.md"), "local\n");
     expect(await gitPathStatus(root, join(root, "ignored.md"))).toBe("ignored");
     expect(await gitPathStatus(root, join(root, "missing.md"))).toBe("missing");
+    // An unstaged deletion of a tracked file is missing; a staged one is not.
+    await runCommand("git", ["reset", "-q", "--hard"], { cwd: root });
+    await rm(join(root, "tracked.md"));
+    expect(await gitPathStatus(root, join(root, "tracked.md"))).toBe("missing");
+    await runCommand("git", ["rm", "-q", "--cached", "tracked.md"], { cwd: root });
+    expect(await gitPathStatus(root, join(root, "tracked.md"))).toBe("staged");
   });
 
   test("clean-source validation permits ignored local files only", async () => {

@@ -6,6 +6,7 @@ import { loadMachineConfig, MACHINE_CONFIG_PATH, readMachineHome, resolveConfigu
 import { addSnippet, type Placement } from "./add.ts";
 import { adoptGlobal } from "./adopt.ts";
 import { adoptSkill } from "./adopt-skill.ts";
+import { cleanGlobal, cleanProject } from "./clean.ts";
 import { AgentsmithError, classify, errorCode, errorMessage, exitCodeFor } from "./errors.ts";
 import { CommandError, ensureCleanSource, gitHeadCommit, gitPullFfOnly, gitWorktree } from "./git.ts";
 import { assertPlanValid, buildGlobalPlan, buildProjectPlan, type BuiltPlan, type UnmanagedSkill } from "./planner.ts";
@@ -467,7 +468,8 @@ export type CommandAction =
   | "init"
   | "schedule-install"
   | "schedule-uninstall"
-  | "schedule-status";
+  | "schedule-status"
+  | "clean";
 
 const GLOBAL_ONLY_ACTIONS: ReadonlySet<CommandAction> = new Set(["status", "init", "schedule-install", "schedule-uninstall", "schedule-status"]);
 
@@ -510,6 +512,10 @@ export async function executeCommand(mode: "global" | "project", action: Command
     return 0;
   }
   if (action === "schedule-status") return printScheduleStatus();
+  if (action === "clean") {
+    await (mode === "global" ? cleanGlobal(options) : cleanProject(options));
+    return 0;
+  }
   const plan = await classify("config", () => planFor(mode, options));
   if (action === "generate") {
     await generateProject(plan, { onModified: options.onModified });

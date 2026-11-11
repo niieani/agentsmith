@@ -63,6 +63,18 @@ asmith global status --config ~/sandbox/config.toml
 
 Everything agentsmith writes, including its state, status, backups, and logs, lands under `~/sandbox/home`. Git keeps your real home, so `global sync` and `global add --push` use your usual identity and keys. Pass `--config` to every command that should act on the sandbox; without it, commands act on your real home. See [sandbox home](/reference/configuration#sandbox-home).
 
+## Removing agentsmith's output
+
+To stop using agentsmith on a machine or in a project, preview and then remove what it generated:
+
+```sh
+asmith global clean
+asmith global schedule uninstall
+asmith global clean --yes
+```
+
+`clean` removes only files agentsmith recorded and still recognizes, plus its own state. A file you edited stops the command; keep a backup with `--on-modified=backup` or discard the edit with `--force`. Your machine config, the Source Repository, and earlier backups stay, so `asmith global generate` brings everything back. In a project, `asmith project clean --yes` leaves the removed files as Git deletions for you to commit. See [cleaning up](/reference/commands#cleaning-up).
+
 ## Keeping local additions
 
 If you add machine-specific text at the top or bottom of a generated global `AGENTS.md` or `CLAUDE.md`, keep it with:
