@@ -11,6 +11,8 @@ agentsmith serves several people who touch agent context in different ways. You 
 | Skill author | `SKILL.md`, support files, partials, and skill slot contracts | `asmith global lint` or `asmith project lint` | [Skill author walkthrough](/use-cases/skill-author) |
 | Project maintainer | Checked-in project config, local packs, repository and subtree context | `asmith project diff` and `asmith project generate` | [Project maintainer walkthrough](/use-cases/project-maintainer) |
 
+If you run agents on several machines, start with the personal user walkthrough: it builds one shared base profile, then sets up each machine with a single [`global init --schedule`](/getting-started/global-setup#quick-start-global-init) line so it stays in sync unattended.
+
 ## The handoff between roles
 
 The roles meet through named sources:

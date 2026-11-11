@@ -23,7 +23,7 @@ acme/
 Create `.config/agentsmith/config.toml`:
 
 ```toml
-harnesses = ["codex", "claude"]
+harnesses = ["generic", "codex", "claude"]
 
 [budgets]
 instruction_layer_bytes = 20000
@@ -50,6 +50,8 @@ skills_enable = ["simulator-debug"]
 ```
 
 The root scope is required. Nested pack lists are deltas: they add to inherited context and must not repeat `base` or `github`.
+
+`generic` and `codex` share each scope's `AGENTS.md`; `claude` gets `CLAUDE.md`. See [what each harness gets](/guides/projects-and-scopes#what-each-harness-gets).
 
 ## 2. Keep universal concerns reusable
 
@@ -137,7 +139,9 @@ An agent working in `services/api` sees:
 3. `services/api/AGENTS.md` or `services/api/CLAUDE.md`;
 4. visible global, repository, and API skill roots.
 
-An agent working in `apps/ios` gets the root layer plus the iOS Codex layer. No nested Claude file is generated because that scope restricts its harnesses to Codex.
+An agent working in `apps/ios` gets the root layer plus the iOS Codex layer. No nested Claude file is generated because that scope restricts its harnesses to Codex, and `simulator-debug` goes to `apps/ios/.codex/skills` because that scope does not select `generic`. The API's `service-debug` goes to `services/api/.agents/skills`, which Codex also reads, and `services/api/.claude/skills`.
+
+When a scope's `CLAUDE.md` would be identical to its `AGENTS.md`, agentsmith writes it as the one-line import `@AGENTS.md`.
 
 ## 7. Review a source update
 

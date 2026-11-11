@@ -12,11 +12,14 @@ A template family can specialize by harness:
 ```text
 templates/software/
 ├── default.md
+├── generic.md
 ├── codex.md
 └── claude.md
 ```
 
-For each harness, agentsmith chooses `<harness>.md` when present and otherwise uses `default.md`.
+For each harness, agentsmith chooses `<harness>.md` when present and otherwise uses `default.md`. `CLAUDE.md` follows that rule with `claude.md`.
+
+`generic` and `codex` share one project `AGENTS.md`, so it is rendered once: from `codex.md` when `codex` is selected, otherwise `generic.md`, otherwise `default.md`. See [shared `AGENTS.md`](/reference/configuration#shared-agentsmd).
 
 ```md
 # Working agreement
@@ -44,7 +47,9 @@ packs/bun/
             └── 20-codex.md
 ```
 
-Common snippets apply to every harness. Harness-specific snippets are appended after common snippets for that pack. Pack selection order comes first; paths within each pack sort lexically, so numeric filename prefixes make the intended order visible.
+Common snippets apply to every harness. Harness-specific snippets live in `instructions/<harness>/`, where the harness is `generic`, `codex`, or `claude`, and are appended after common snippets for that pack. The shared `AGENTS.md` takes common snippets, then `generic/` snippets when `generic` is selected, then `codex/` snippets when `codex` is selected. Pack selection order comes first; paths within each pack sort lexically, so numeric filename prefixes make the intended order visible.
+
+Every instruction file also has two reserved slots, `prepend` and `append`, that templates never declare. Snippets in `instructions/prepend/` go at the very top of the file and `instructions/append/` at the very bottom, verbatim. [`global adopt`](/guides/safe-workflows#keeping-local-additions) uses them to keep text added around generated content. See [reserved edge slots](/reference/directives#reserved-edge-slots).
 
 The directory itself defines an instruction-only pack. Add `pack.toml` only when the pack should enable skills:
 
