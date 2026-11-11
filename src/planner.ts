@@ -11,7 +11,7 @@ import {
   resolveConfiguredPath,
   parseSourceId,
 } from "./config.ts";
-import { walkFiles } from "./fs.ts";
+import { canonicalRoot, walkFiles } from "./fs.ts";
 import { getHarnessAdapter, placeSkill, skillReadRoots, skillWriteRoot, type SkillLocation } from "./harness.ts";
 import { renderMarkdown } from "./markdown.ts";
 import {
@@ -767,7 +767,7 @@ export async function buildGlobalPlan(configPath = MACHINE_CONFIG_PATH): Promise
 
 export async function buildProjectPlan(projectStart = process.cwd(), machineConfigPath = MACHINE_CONFIG_PATH): Promise<BuiltPlan> {
   const configPath = discoverProjectConfig(projectStart);
-  const projectRoot = dirname(dirname(dirname(configPath)));
+  const projectRoot = canonicalRoot(dirname(dirname(dirname(configPath))));
   const project = loadProjectConfig(configPath);
   let sourceRoot: string | undefined;
   const resolvedMachine = resolveConfiguredPath(machineConfigPath, join(process.cwd(), "config.toml"));

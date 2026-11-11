@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { canonicalHome, canonicalRoot } from "./fs.ts";
 import { HARNESS_NAMES, type Diagnostic, type HarnessName } from "./types.ts";
 
 /**
@@ -39,8 +39,11 @@ export function scopeDirectory(projectRoot: string, scopePath: string): string {
 }
 
 function codexHome(home: string | undefined): string {
-  const actualHome = home ?? homedir();
-  return home === undefined && process.env.CODEX_HOME ? resolve(process.env.CODEX_HOME.replace(/^~(?=$|\/)/, actualHome)) : join(actualHome, ".codex");
+  const actualHome = home ?? canonicalHome();
+  if (home !== undefined || !process.env.CODEX_HOME) return join(actualHome, ".codex");
+  // Canonicalize only the parent, so a symlinked CODEX_HOME itself is still rejected as a destination ancestor.
+  const configured = resolve(process.env.CODEX_HOME.replace(/^~(?=$|\/)/, actualHome));
+  return join(canonicalRoot(dirname(configured)), basename(configured));
 }
 
 const AGENTS_SKILLS = join(".agents", "skills");
@@ -56,11 +59,11 @@ const generic: HarnessAdapter = {
     return join(scopeDirectory(projectRoot, scopePath), "AGENTS.md");
   },
   instructionPrecedence: 0,
-  globalSkillRoot(home = homedir()): string {
+  globalSkillRoot(home = canonicalHome()): string {
     return join(home, AGENTS_SKILLS);
   },
   projectSkillDirectory: AGENTS_SKILLS,
-  globalSkillReadRoots(home = homedir()): string[] {
+  globalSkillReadRoots(home = canonicalHome()): string[] {
     return [join(home, AGENTS_SKILLS)];
   },
   projectSkillReadDirectories: [AGENTS_SKILLS],
@@ -81,7 +84,7 @@ const codex: HarnessAdapter = {
   },
   projectSkillDirectory: CODEX_SKILLS,
   globalSkillReadRoots(home): string[] {
-    return [join(home ?? homedir(), AGENTS_SKILLS), join(codexHome(home), "skills")];
+    return [join(home ?? canonicalHome(), AGENTS_SKILLS), join(codexHome(home), "skills")];
   },
   projectSkillReadDirectories: [AGENTS_SKILLS, CODEX_SKILLS],
   preflightInstruction(destination): Diagnostic[] {
@@ -101,7 +104,7 @@ const codex: HarnessAdapter = {
 
 const claude: HarnessAdapter = {
   name: "claude",
-  globalInstruction(home = homedir()): string {
+  globalInstruction(home = canonicalHome()): string {
     return join(home, ".claude", "CLAUDE.md");
   },
   projectInstruction(projectRoot, scopePath): string {
@@ -111,11 +114,11 @@ const claude: HarnessAdapter = {
   instructionImport(relativePath): string {
     return `@${relativePath}\n`;
   },
-  globalSkillRoot(home = homedir()): string {
+  globalSkillRoot(home = canonicalHome()): string {
     return join(home, CLAUDE_SKILLS);
   },
   projectSkillDirectory: CLAUDE_SKILLS,
-  globalSkillReadRoots(home = homedir()): string[] {
+  globalSkillReadRoots(home = canonicalHome()): string[] {
     return [join(home, CLAUDE_SKILLS)];
   },
   projectSkillReadDirectories: [CLAUDE_SKILLS],

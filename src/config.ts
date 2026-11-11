@@ -222,7 +222,8 @@ export function loadMachineConfig(path: string): MachineConfig {
   if (!existsSync(source) || !lstatSync(source).isDirectory()) fail(`source is not an existing directory: ${source}`, absolutePath);
   if (lstatSync(source).isSymbolicLink()) fail(`source must not be a symlink: ${source}`, absolutePath);
   return {
-    source,
+    // The source itself is not a symlink (checked above); resolving its ancestors makes it compare equal to Git's root.
+    source: realpathSync(source),
     profile,
   };
 }

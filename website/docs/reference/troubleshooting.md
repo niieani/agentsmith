@@ -58,6 +58,12 @@ Two skills visible from the same working location share a public name. `asmith p
 
 Remove or relocate `AGENTS.override.md` at the planned scope before generation. Codex gives that file precedence, so generating `AGENTS.md` there would be misleading.
 
+## Symlink destination or ancestor is not allowed
+
+agentsmith never writes through a symlink inside the folders it manages, such as `~/.claude`, `~/.codex`, `~/.agents/skills`, or a project's `.agents/` and `.claude/`. If you link one of those to a dotfiles repository, generation stops instead of writing into the link's target. Replace the link with a real directory and let agentsmith own its contents.
+
+Symlinks above those folders are fine. Your home folder, the project, and the Source Repository may be reached through a symlinked path, such as macOS `/var` or `/home` on Fedora Atomic; agentsmith resolves those roots before comparing them with what Git reports.
+
 ## Size budget warning
 
 Use `asmith project explain` or `asmith global explain` to inspect artifact and effective-chain sizes. Reduce duplicated material, move reusable workflow detail into an on-demand skill, or intentionally raise the corresponding budget.

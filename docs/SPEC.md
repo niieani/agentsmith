@@ -55,7 +55,7 @@ partials/
 
 Project-owned sources mirror `templates/`, `packs/`, `skills/`, and `partials/` beneath `.config/agentsmith/`.
 
-Scans reject symlinks. Markdown conventions include every `.md` file, including ignored `*.local.md`. Within a selected pack, paths sort by deterministic Unicode lexical order. Pack order always precedes filename order.
+Scans reject symlinks. The home directory, project root, and Source Repository root are canonicalized with `realpath` when loaded, so symlinked ancestors above them (macOS `/var`, Fedora Atomic `/home`) compare equal to Git's paths; destinations below those roots keep their spelling, and a symlink at or above a destination but below its root is rejected. Markdown conventions include every `.md` file, including ignored `*.local.md`. Within a selected pack, paths sort by deterministic Unicode lexical order. Pack order always precedes filename order.
 
 ## 3. Source IDs
 
