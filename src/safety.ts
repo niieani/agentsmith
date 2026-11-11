@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import { parse, stringify } from "smol-toml";
 import type { GenerationPlan, PlannedDelete, PlannedWrite } from "./types.ts";
+import { AgentsmithError } from "./errors.ts";
 import { gitPathStatus, gitWorktree, type GitWorktree } from "./git.ts";
 
 export interface ProjectState {
@@ -26,6 +27,48 @@ export function projectStatePath(worktree: GitWorktree): string {
 
 export function globalStatePath(home = homedir()): string {
   return join(home, ".agents", "agentsmith", "state.toml");
+}
+
+/** Content-addressed copies of the last generated global artifacts, named by SHA-256. */
+export function globalBlobDirectory(statePath = globalStatePath()): string {
+  return join(dirname(statePath), "blobs");
+}
+
+export function blobPath(blobDirectory: string, hash: string): string {
+  if (!/^[a-f0-9]{64}$/.test(hash)) throw new Error(`Invalid blob hash: ${hash}`);
+  return join(blobDirectory, hash);
+}
+
+/** Store content blobs before state references them; existing blobs are reused. */
+export async function storeBlobs(blobDirectory: string, contents: Iterable<Uint8Array>): Promise<void> {
+  for (const content of contents) {
+    const path = blobPath(blobDirectory, hashBytes(content));
+    if (await exists(path)) continue;
+    await atomicWrite(path, content);
+  }
+}
+
+/** Read the stored content for a hash, or undefined when it was never stored. */
+export async function readBlob(blobDirectory: string, hash: string): Promise<Uint8Array | undefined> {
+  const path = blobPath(blobDirectory, hash);
+  if (!(await exists(path))) return undefined;
+  const content = new Uint8Array(await readFile(path));
+  return hashBytes(content) === hash ? content : undefined;
+}
+
+/** Remove blobs no longer referenced by state. Only call after state was committed. */
+export async function collectBlobs(blobDirectory: string, state: GlobalState): Promise<string[]> {
+  if (!(await exists(blobDirectory))) return [];
+  const referenced = new Set(Object.values(state.artifacts));
+  const removed: string[] = [];
+  for (const entry of await readdir(blobDirectory, { withFileTypes: true })) {
+    if (referenced.has(entry.name)) continue;
+    // Leftover temporary files from interrupted writes are garbage too.
+    if (!/^[a-f0-9]{64}$/.test(entry.name) && !entry.name.startsWith(".agentsmith-")) continue;
+    await rm(join(blobDirectory, entry.name), { recursive: true, force: true });
+    removed.push(entry.name);
+  }
+  return removed;
 }
 
 export async function loadProjectState(path: string): Promise<ProjectState> {
@@ -143,8 +186,44 @@ export async function preflightProjectPlan(plan: GenerationPlan, options: { proj
   }
 }
 
-export async function preflightGlobalPlan(plan: GenerationPlan, options: { state: GlobalState; force?: boolean }): Promise<void> {
+export type GlobalConflictReason = "modified" | "unrecorded" | "modified-stale";
+
+export interface GlobalConflict {
+  destination: string;
+  reason: GlobalConflictReason;
+}
+
+export interface GlobalPreflightOptions {
+  state: GlobalState;
+  force?: boolean;
+  /** `backup` returns conflicts for the caller to move aside instead of failing. */
+  onModified?: "fail" | "backup";
+  /** Destinations the caller has already reconciled and may replace. */
+  accept?: ReadonlySet<string>;
+}
+
+function conflictError(conflict: GlobalConflict): AgentsmithError {
+  const message =
+    conflict.reason === "unrecorded"
+      ? `Refusing to adopt existing unrecorded global artifact: ${conflict.destination}`
+      : conflict.reason === "modified"
+        ? `Refusing to replace modified global artifact: ${conflict.destination}`
+        : `Refusing to delete modified stale global artifact: ${conflict.destination}`;
+  return new AgentsmithError("artifact-modified", message);
+}
+
+/**
+ * Validate a global plan against recorded state. Conflicting artifacts fail
+ * the plan, or with `onModified: "backup"` are returned for backup.
+ */
+export async function preflightGlobalPlan(plan: GenerationPlan, options: GlobalPreflightOptions): Promise<GlobalConflict[]> {
   assertUniqueDestinations(plan);
+  const backup = options.onModified === "backup";
+  const conflicts: GlobalConflict[] = [];
+  const conflict = (item: GlobalConflict) => {
+    if (!backup) throw conflictError(item);
+    conflicts.push(item);
+  };
   const plannedDeletions = new Set(plan.deletes.map((item) => resolve(item.destination)));
   for (const write of plan.writes) {
     const destination = resolve(write.destination);
@@ -152,15 +231,17 @@ export async function preflightGlobalPlan(plan: GenerationPlan, options: { state
     if (!(await exists(destination))) continue;
     const destinationIsDirectory = (await lstat(destination)).isDirectory();
     const recordedHash = options.state.artifacts[destination];
-    if (!destinationIsDirectory && recordedHash === undefined) {
-      if (!options.force) throw new Error(`Refusing to adopt existing unrecorded global artifact: ${destination}`);
-    } else if (!destinationIsDirectory && !options.force && hashBytes(await readFile(destination)) !== recordedHash) {
-      throw new Error(`Refusing to replace modified global artifact: ${destination}`);
+    if (!destinationIsDirectory && !options.accept?.has(destination)) {
+      if (recordedHash === undefined) {
+        if (!options.force || backup) conflict({ destination, reason: "unrecorded" });
+      } else if ((!options.force || backup) && hashBytes(await readFile(destination)) !== recordedHash) {
+        conflict({ destination, reason: "modified" });
+      }
     }
     for (const child of await filesBelow(destination)) {
       const childHash = options.state.artifacts[child];
       if (childHash === undefined || !plannedDeletions.has(child) || hashBytes(await readFile(child)) !== childHash) {
-        throw new Error(`Refusing file/directory transition over unowned global content: ${child}`);
+        throw new AgentsmithError("artifact-modified", `Refusing file/directory transition over unowned global content: ${child}`);
       }
     }
   }
@@ -168,10 +249,78 @@ export async function preflightGlobalPlan(plan: GenerationPlan, options: { state
     const destination = resolve(deletion.destination);
     await rejectSymlink(destination);
     const recordedHash = options.state.artifacts[destination];
-    if (recordedHash === undefined) throw new Error(`Refusing to delete unrecorded global artifact: ${destination}`);
+    if (recordedHash === undefined) throw new AgentsmithError("artifact-modified", `Refusing to delete unrecorded global artifact: ${destination}`);
     if ((await exists(destination)) && hashBytes(await readFile(destination)) !== recordedHash) {
-      throw new Error(`Refusing to delete modified stale global artifact: ${destination}`);
+      conflict({ destination, reason: "modified-stale" });
     }
+  }
+  return conflicts;
+}
+
+export interface ArtifactBackup {
+  /** The artifact path that was moved aside: a file, or a whole skill directory. */
+  path: string;
+  backup: string;
+  reason: GlobalConflictReason;
+}
+
+/** `20261110T120000Z` for a backup suffix. */
+export function backupTimestamp(date = new Date()): string {
+  return date
+    .toISOString()
+    .replace(/\.\d{3}Z$/, "Z")
+    .replaceAll("-", "")
+    .replaceAll(":", "");
+}
+
+/** The skill directory owning a path: its nearest ancestor whose SKILL.md is known. */
+function owningSkillDirectory(path: string, knownFiles: ReadonlySet<string>): string | undefined {
+  let current = dirname(path);
+  while (true) {
+    if (knownFiles.has(join(current, "SKILL.md"))) return current;
+    const parent = dirname(current);
+    if (parent === current) return undefined;
+    current = parent;
+  }
+}
+
+/**
+ * Move conflicting global artifacts aside as `<name>.agentsmith-<UTC timestamp>`.
+ * A conflicting skill file backs up its whole skill directory.
+ */
+export async function backupGlobalArtifacts(
+  conflicts: readonly GlobalConflict[],
+  options: { plan: GenerationPlan; state: GlobalState; date?: Date },
+): Promise<ArtifactBackup[]> {
+  const known = new Set([
+    ...Object.keys(options.state.artifacts).map((path) => resolve(path)),
+    ...options.plan.writes.filter((write) => write.kind === "skill").map((write) => resolve(write.destination)),
+  ]);
+  const stamp = backupTimestamp(options.date);
+  const backups: ArtifactBackup[] = [];
+  const moved = new Set<string>();
+  try {
+    for (const item of conflicts) {
+      const path = owningSkillDirectory(item.destination, known) ?? item.destination;
+      if (moved.has(path) || !(await exists(path))) continue;
+      let backup = `${path}.agentsmith-${stamp}`;
+      for (let attempt = 1; await exists(backup); attempt++) backup = `${path}.agentsmith-${stamp}-${attempt}`;
+      await rename(path, backup);
+      moved.add(path);
+      backups.push({ path, backup, reason: item.reason });
+    }
+  } catch (error) {
+    await restoreBackups(backups);
+    throw error;
+  }
+  return backups;
+}
+
+/** Undo backups after a failed application, putting each artifact back in place. */
+export async function restoreBackups(backups: readonly ArtifactBackup[]): Promise<void> {
+  for (const entry of [...backups].reverse()) {
+    await rm(entry.path, { recursive: true, force: true }).catch(() => undefined);
+    await rename(entry.backup, entry.path).catch(() => undefined);
   }
 }
 
@@ -190,7 +339,7 @@ async function nearestExisting(path: string): Promise<string> {
   }
 }
 
-async function atomicWrite(destination: string, content: Uint8Array, mode?: number): Promise<void> {
+export async function atomicWrite(destination: string, content: Uint8Array, mode?: number): Promise<void> {
   await mkdir(dirname(destination), { recursive: true });
   const temporary = join(dirname(destination), `.agentsmith-${crypto.randomUUID()}.tmp`);
   try {

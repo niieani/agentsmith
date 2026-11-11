@@ -8,6 +8,8 @@
 - Project configuration: `.config/agentsmith/config.toml`
 - Project state: stored under the worktree's actual Git directory, never in generated artifacts
 - Global state: `~/.agents/agentsmith/state.toml`
+- Stored global artifact content: `~/.agents/agentsmith/blobs/<sha256>`
+- Last global run status: `~/.agents/agentsmith/status.json`
 
 CLI flags may override the machine or project configuration path. A leading `~` in configured paths expands to the current home directory. Other relative paths resolve against the file containing them. Environment variables and shell expressions are not interpolated.
 
@@ -215,6 +217,10 @@ Names use logical Source ID syntax. Unknown or malformed `agentsmith:` directive
 - A selected skill-slot contribution that matches no enabled skill is a warning.
 - Contributions for a scope with no Instruction Layer are warnings.
 
+### 6.1.1 Reserved edge slots
+
+Every Instruction Layer, global and project, has two implicit slots: `prepend` and `append`. Templates and partials may not declare them (`slot-reserved` error). Contributions to `prepend` are placed before the rendered template and contributions to `append` after it. Edge snippets expand includes but are otherwise inserted verbatim: each snippet ends with exactly one newline, snippets are concatenated in contribution order without trimming or separating blank lines, and the whole artifact is then normalized once (LF line endings, exactly one terminal newline). Skills have no reserved slots.
+
 Instruction snippets for pack `github` and slot `tools` are discovered in this order:
 
 1. `packs/github/instructions/tools/*.md`
@@ -289,13 +295,25 @@ agentsmith records the paths it generated beneath the worktree's actual Git dire
 
 ### 8.2 Global safety
 
-Global state records destination paths and content hashes outside generated artifacts.
+Global state records destination paths and content hashes outside generated artifacts. The content of every generated global artifact is also stored as a blob named by its SHA-256 hash. Blobs are written before the state that references them; blobs no longer referenced by state are removed only after a successful application. A failed or interrupted run therefore never leaves state referring to missing content.
 
 - A missing destination may be created.
 - An existing unrecorded destination requires `--force` for initial adoption.
 - A recorded destination may be replaced only when its current content matches recorded state.
 - `--force` is limited to global generate/sync adoption or recovery.
 - Stale recorded artifacts are deleted only when unchanged from recorded state.
+
+`global sync` and `global generate` accept `--on-modified=fail|backup` (default `fail`). With `backup`, every modified, unrecorded, or modified stale artifact that would otherwise fail preflight is renamed to `<path>.agentsmith-<UTC timestamp>` (format `YYYYMMDDTHHMMSSZ`, with `-<n>` appended if that name exists) before application. A conflicting file inside a skill backs up the whole skill directory: the nearest ancestor whose `SKILL.md` is recorded or planned. Backups are reported as warnings. If application fails, backups are moved back. File/directory transitions over unowned content still fail in both modes.
+
+### 8.2.1 Run status
+
+Every `global sync` and `global generate` writes `status.json` atomically after it finishes, successfully or not. It records `version` (1), `command`, `startedAt`, `timestamp` (finish time), `profile`, `sourceCommit` (Source Repository `HEAD` after any pull, or `null`), `outcome` (`success` or `failure`), `exitCode`, `error` (`{ code, message }` or `null`), `warnings` (plan warnings and backups, as printed), and `backups` (`{ path, backup, reason }`). Failure to write status is a warning and does not change the run's exit code.
+
+### 8.2.2 Adoption
+
+`global adopt` considers every existing global artifact whose content differs from recorded state, plus every planned instruction destination that exists unrecorded. It adopts only Instruction Layers (`AGENTS.md`, `CLAUDE.md`) whose content equals `prefix + stored + suffix`, where `stored` is the blob for the recorded hash and the first occurrence of `stored` determines the split. It refuses the whole operation, writing nothing, when any candidate is a skill file, a stale artifact, unrecorded, missing its blob, or edited anywhere else.
+
+Adopted text is written to snippets in `<source>/packs/<pack>/instructions/<harness>/`: prefixes to `prepend/00-adopted.local.md` (new text before existing content) and suffixes to `append/99-adopted.local.md` (new text after existing content). With `--slot NAME`, prefix then suffix are appended to `<NAME>/99-adopted.local.md`. `--pack` defaults to the last pack of the active profile and must be selected by it. Every snippet path must be ignored by Git in the Source Repository (`git check-ignore`). After writing the snippets, adopt rebuilds the plan, checks that the adopted text renders into each artifact, and generates with the adopted destinations accepted despite their modification. If any step fails, snippet files are restored. `--dry-run` reports without writing.
 
 ### 8.3 Application
 
@@ -328,11 +346,13 @@ Budgets warn and never truncate. `lint --warnings-as-errors` turns warnings into
 ## 11. CLI
 
 ```text
-asmith global sync [--config PATH] [--force]
-asmith global generate [--config PATH] [--force]
+asmith global sync [--config PATH] [--force] [--on-modified fail|backup]
+asmith global generate [--config PATH] [--force] [--on-modified fail|backup]
 asmith global diff [--config PATH]
 asmith global lint [--config PATH] [--warnings-as-errors]
 asmith global explain [--config PATH] [--json]
+asmith global status [--json] [--max-age DURATION]
+asmith global adopt [--config PATH] [--slot NAME] [--pack NAME] [--dry-run]
 
 asmith project generate [--project PATH]
 asmith project diff [--project PATH]
@@ -342,7 +362,19 @@ asmith project explain [--project PATH] [--json]
 
 `project` walks from the requested path, or current directory, toward its ancestors to find `.config/agentsmith/config.toml`.
 
-Exit status is nonzero for configuration, validation, planning, preflight, synchronization, or application errors. Warnings alone succeed unless `--warnings-as-errors` is active.
+Exit status:
+
+| Code | Error code | Cause |
+|---|---|---|
+| 0 | | Success, including warnings and backups |
+| 1 | `failure` | Any other failure, including project preflight and application errors |
+| 2 | `config` | Configuration, usage, planning validation, or `lint --warnings-as-errors` |
+| 3 | `source-dirty` | Source Repository has disallowed changes |
+| 4 | `source-pull` | `git pull --ff-only` failed |
+| 5 | `artifact-modified` | Modified or unrecorded global artifact, unowned global content in a transition, or refused adoption |
+| 6 | `status-stale` | `global status`: no recorded run, or older than `--max-age` |
+
+Warnings alone succeed unless `--warnings-as-errors` is active. `global status` exits with the recorded exit code when the last run failed, otherwise 6 when stale, otherwise 0. `--max-age` takes one or more `<number><unit>` terms with units `s`, `m`, `h`, `d`, `w`.
 
 ## 12. Determinism
 

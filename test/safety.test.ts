@@ -92,9 +92,9 @@ describe("preflight", () => {
     await Bun.write(destination, "old\n");
     const generation = plan([write(destination, "new\n")]);
     await expect(preflightGlobalPlan(generation, { state: { version: 1, artifacts: {} } })).rejects.toThrow("unrecorded");
-    await expect(preflightGlobalPlan(generation, { state: { version: 1, artifacts: {} }, force: true })).resolves.toBeUndefined();
+    await expect(preflightGlobalPlan(generation, { state: { version: 1, artifacts: {} }, force: true })).resolves.toEqual([]);
     const state = { version: 1 as const, artifacts: { [destination]: hashBytes(bytes("old\n")) } };
-    await expect(preflightGlobalPlan(generation, { state })).resolves.toBeUndefined();
+    await expect(preflightGlobalPlan(generation, { state })).resolves.toEqual([]);
     await Bun.write(destination, "edited\n");
     await expect(preflightGlobalPlan(generation, { state })).rejects.toThrow("modified");
   });
