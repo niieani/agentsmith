@@ -37,17 +37,20 @@ All budget values are optional positive UTF-8 byte thresholds. They warn rather 
 Path: `<source>/profiles/<name>.toml`.
 
 ```toml
-harnesses = ["codex", "claude"]
+harnesses = ["generic", "codex", "claude"]
 template = "personal"
 packs = ["base", "personal", "macos"]
 skills_enable = ["review-worktree"]
 skills_disable = ["publish"]
 
+[harness_skills.claude]
+enable = ["claude-hooks"]
+
 [budgets]
 effective_instruction_bytes = 28672
 ```
 
-Profile budgets override matching Source Repository defaults.
+Profile budgets override matching Source Repository defaults. See [per-harness skills](#per-harness-skills) for `harness_skills`.
 
 | Key | Required | Meaning |
 | --- | --- | --- |
@@ -73,6 +76,7 @@ A profile may extend one parent, which may extend another. agentsmith merges the
 | --- | --- |
 | `packs` | Parent packs, then child packs. A pack that appears twice anywhere in the chain is an error. |
 | `skills_enable`, `skills_disable` | Ordered union, parent entries first. |
+| `harness_skills.<harness>.enable`, `.disable` | Ordered union per harness, parent entries first. Each configured harness must be selected by the resolved profile. |
 | `harnesses`, `template` | The child's value replaces the parent's when set. |
 | `budgets` | Per key; the child's value wins. The result then overrides Source Repository defaults. |
 
@@ -93,7 +97,8 @@ A pack directory needs no manifest when it only contributes instructions or skil
 Path: `<project>/.config/agentsmith/config.toml`.
 
 ```toml
-harnesses = ["codex", "claude"]
+harnesses = ["generic", "codex", "claude"]
+claude_import_agents_md = true
 
 [budgets]
 instruction_layer_bytes = 20000
@@ -114,9 +119,32 @@ packs = ["swift", "ios"]
 harnesses = ["codex"]
 skills_enable = ["simulator-debug"]
 skills_disable = []
+
+[scopes.harness_skills.codex]
+disable = ["publish"]
 ```
 
-Top-level project keys are `harnesses`, `budgets`, and `scopes`. Scope keys are `path`, `template`, `packs`, `harnesses`, `skills_enable`, and `skills_disable`.
+Top-level project keys are `harnesses`, `claude_import_agents_md`, `budgets`, and `scopes`. Scope keys are `path`, `template`, `packs`, `harnesses`, `skills_enable`, `skills_disable`, and `harness_skills`. A `[scopes.harness_skills.<harness>]` table applies to the most recent `[[scopes]]` entry.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `claude_import_agents_md` | `true` | When a scope's generated `CLAUDE.md` would be byte-identical to the `AGENTS.md` generated beside it, write `CLAUDE.md` containing only `@AGENTS.md`. Set `false` to always write the full content. |
+
+## Per-harness skills
+
+`skills_enable` and `skills_disable` apply to every harness the profile or scope selects. A `harness_skills` table adjusts one harness:
+
+```toml
+skills_enable = ["review"]
+
+[harness_skills.claude]
+enable = ["claude-hooks"]
+disable = ["review"]
+```
+
+For each selected harness, the enabled skills are the pack skills plus `skills_enable`, minus `skills_disable`, plus that harness's `enable`, minus its `disable`. Harness lists apply last, so a harness `enable` can restore a skill that `skills_disable` removed.
+
+Each `harness_skills.<harness>` table accepts only `enable` and `disable`. Unknown harnesses, harnesses the profile or scope does not select, and a skill listed in both `enable` and `disable` are errors. An unused harness `disable` entry is a warning. In a project, write the table as `[scopes.harness_skills.<harness>]` below its `[[scopes]]` entry.
 
 ## Source IDs
 
@@ -124,14 +152,33 @@ Source IDs are slash-separated logical names, not filesystem paths. Unqualified 
 
 ## Harness destinations
 
-Harness names are `codex` and `claude`.
+Harness names are `generic`, `codex`, and `claude`. `generic` targets the shared `.agents/` convention that Codex and other agents read. See [harness discovery](/reference/harness-discovery) for what each harness reads and why.
 
 | Harness | Global instructions | Project instructions | Global skills | Project skills |
 | --- | --- | --- | --- | --- |
-| `codex` | `$CODEX_HOME/AGENTS.md` (normally `~/.codex/AGENTS.md`) | `<scope>/AGENTS.md` | `~/.agents/skills` | `<scope>/.agents/skills` |
+| `generic` | none | `<scope>/AGENTS.md` | `~/.agents/skills` | `<scope>/.agents/skills` |
+| `codex` | `$CODEX_HOME/AGENTS.md` (normally `~/.codex/AGENTS.md`) | `<scope>/AGENTS.md` | none; use `generic` | `<scope>/.codex/skills`, only for skills not enabled for `generic` |
 | `claude` | `~/.claude/CLAUDE.md` | `<scope>/CLAUDE.md` | `~/.claude/skills` | `<scope>/.claude/skills` |
 
+### Shared `AGENTS.md`
+
+`generic` and `codex` write the same `<scope>/AGENTS.md`, so agentsmith renders it once. It uses `templates/<family>/codex.md` when `codex` is selected, otherwise `generic.md`, otherwise `default.md`. Common snippets render first, then `instructions/generic/` snippets when `generic` is selected, then `instructions/codex/` snippets when `codex` is selected.
+
+### Skill placement
+
+Codex reads both `.agents/skills` and `.codex/skills` and keeps every copy, so one skill name visible twice breaks `$name` mentions. agentsmith writes each skill once per root:
+
+- A skill enabled for `generic` goes to `.agents/skills` (or `~/.agents/skills`) and also serves Codex. It renders only common skill-slot content. Codex-specific `skill-slots/harnesses/codex/` content consumed by that skill is an error, because Codex would read the common copy.
+- A skill enabled for `codex` but not `generic` goes to `<scope>/.codex/skills` with Codex content. In a global profile this is an error: enable the skill for `generic`.
+- A skill enabled for `claude` goes to the Claude root with Claude content.
+
+Harness-specific content renders only where exactly one harness reads the skill. Collision checks consider every root each selected harness reads, so a planned or unmanaged skill in `.codex/skills` collides with one of the same name in `.agents/skills` when `codex` is selected.
+
 An existing `AGENTS.override.md` at a generated Codex layer is a preflight error because it would shadow `AGENTS.md`.
+
+### Migrating to the `.agents` layout
+
+Earlier versions wrote Codex skills to `.agents/skills` and `~/.agents/skills` under the `codex` harness. Add `generic` to `harnesses` to keep those destinations; with `codex` alone, project skills move to `.codex/skills` and global skills are an error. Pack directories named `instructions/generic/` or `skill-slots/harnesses/generic/`, and a `generic.md` template, are now harness-specific.
 
 ### Migrating from `claude-code`
 

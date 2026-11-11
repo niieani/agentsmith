@@ -22,6 +22,7 @@ profiles/
 templates/
   software/
     default.md
+    generic.md
     codex.md
     claude.md
 packs/
@@ -103,22 +104,27 @@ All budget keys are optional positive UTF-8 byte thresholds.
 `profiles/studio.toml`:
 
 ```toml
-harnesses = ["codex", "claude"]
+harnesses = ["generic", "codex", "claude"]
 template = "personal"
 packs = ["base", "personal", "macos", "server"]
 skills_enable = ["review-worktree"]
 skills_disable = ["publish"]
 
+[harness_skills.claude]
+enable = ["claude-hooks"]
+disable = ["review-worktree"]
+
 [budgets]
 effective_instruction_bytes = 28672
 ```
 
-Profile budgets override matching Source Repository defaults.
+Profile budgets override matching Source Repository defaults. `harness_skills` is described in section 7.
 
 A profile may set `extends = "<profile name>"` to inherit from one parent profile; the parent may extend another. Parent names follow profile-name rules and cannot be ownership-qualified. Any profile may omit `harnesses` or `template`; the selected profile must resolve both, directly or through its chain. The chain is merged root ancestor first:
 
 - `packs`: parent packs, then child packs. A pack repeated anywhere in the chain is an error. Packs are additive only; there is no way to remove an inherited pack.
 - `skills_enable`, `skills_disable`: ordered union.
+- `harness_skills.<harness>.enable` and `.disable`: ordered union per harness; every configured harness must be in the resolved `harnesses`.
 - `harnesses`, `template`: the nearest profile that sets the value wins.
 - `budgets`: per key, child wins; the merged result then overrides Source Repository defaults.
 
@@ -137,7 +143,8 @@ When present, `pack.toml` accepts only the optional, ordered `skills` field. Omi
 ### 4.5 Project configuration
 
 ```toml
-harnesses = ["codex", "claude"]
+harnesses = ["generic", "codex", "claude"]
+claude_import_agents_md = true
 
 [budgets]
 instruction_layer_bytes = 20000
@@ -159,12 +166,15 @@ harnesses = ["codex"]
 skills_enable = ["simulator-debug"]
 skills_disable = []
 
+[scopes.harness_skills.codex]
+disable = ["publish"]
+
 [[scopes]]
 path = "services/api"
 packs = ["service"]
 ```
 
-The project root is the directory containing `.config/agentsmith/config.toml`. Scope paths are unique, normalized, existing project-relative directories that may not escape the project. A harness override must be a nonempty subset of the project defaults.
+The project root is the directory containing `.config/agentsmith/config.toml`. Scope paths are unique, normalized, existing project-relative directories that may not escape the project. A harness override must be a nonempty subset of the project defaults. `claude_import_agents_md` is an optional boolean, default `true` (section 5.3).
 
 Omitting `template` means the scope emits no Instruction Layer. Omitting skill lists does not by itself prevent packs from enabling skills. A Skill Root is created only when at least one skill is introduced at that scope.
 
@@ -181,27 +191,53 @@ templates/software/default.md
 
 The harness-specific template wins; `default.md` is the fallback. Absence of both is an error.
 
-### 5.1 Codex adapter
+Harness names are `generic`, `codex`, and `claude`. Each adapter declares its write destinations and every skill root the harness reads; placement, content, and collision rules are computed from that data. The discovery facts behind these tables are in the [harness discovery reference](../website/docs/reference/harness-discovery.md).
+
+### 5.1 Generic adapter
+
+`generic` targets the shared `.agents/` convention. It is not a runtime; Codex and other agents read its roots.
+
+| Artifact | Global destination | Scoped destination |
+|---|---|---|
+| Instruction Layer | none | `<scope>/AGENTS.md` |
+| Skill Root | `~/.agents/skills` | `<scope>/.agents/skills` |
+| Skill roots read | `~/.agents/skills` | `<scope>/.agents/skills` |
+
+No harness reads `~/.agents/AGENTS.md`, so `generic` emits no global Instruction Layer. A profile whose harnesses have no global instruction file but which names a template produces an `instruction-layer-unsupported` warning.
+
+### 5.2 Codex adapter
 
 | Artifact | Global destination | Scoped destination |
 |---|---|---|
 | Instruction Layer | `$CODEX_HOME/AGENTS.md`, default `~/.codex/AGENTS.md` | `<scope>/AGENTS.md` |
-| Skill Root | `~/.agents/skills` | `<scope>/.agents/skills` |
+| Skill Root | none | `<scope>/.codex/skills` |
+| Skill roots read | `~/.agents/skills`, `$CODEX_HOME/skills` | `<dir>/.agents/skills`, `<dir>/.codex/skills` |
 
-An existing `AGENTS.override.md` at a generated layer is a hard preflight error because it shadows `AGENTS.md`. The adapter models global then repository-to-working-directory instruction order. It warns when a project instruction chain exceeds Codex's documented default 32 KiB cap and labels the cap as configurable.
+Codex marks `$CODEX_HOME/skills` deprecated, so global Codex skills come from `generic`. An existing `AGENTS.override.md` at a generated layer is a hard preflight error because it shadows `AGENTS.md`. The adapter models global then repository-to-working-directory instruction order. It warns when a project instruction chain exceeds Codex's documented default 32 KiB cap and labels the cap as configurable.
 
-### 5.2 Claude Code adapter
+### 5.3 Claude Code adapter
 
 | Artifact | Global destination | Scoped destination |
 |---|---|---|
 | Instruction Layer | `~/.claude/CLAUDE.md` | `<scope>/CLAUDE.md` |
 | Skill Root | `~/.claude/skills` | `<scope>/.claude/skills` |
+| Skill roots read | `~/.claude/skills` | `<dir>/.claude/skills` |
 
-The adapter models ancestor discovery and nested on-demand discovery. agentsmith does not emit native `@` imports; generated Claude artifacts are flat and self-contained.
+The adapter models ancestor discovery and nested on-demand discovery. Generated Claude artifacts are flat and self-contained, with one exception: when a project scope's rendered `CLAUDE.md` is byte-identical to the `AGENTS.md` rendered at the same scope, `CLAUDE.md` contains only `@AGENTS.md`. Claude Code never loads an imported `AGENTS.md` twice, whatever its Project instructions setting. Omitting `CLAUDE.md` is not supported, because any `CLAUDE.md` above the working directory disables Claude Code's `AGENTS.md` fallback. Project configuration `claude_import_agents_md = false` disables the import.
 
-### 5.3 Physical destination collisions
+### 5.4 Shared instruction files
 
-If adapters plan the same physical destination, agentsmith coalesces byte-identical content into one write. Different content for the same destination is a planning error.
+Harnesses whose adapters resolve to the same instruction destination share one artifact. For `<scope>/AGENTS.md`, shared by `generic` and `codex`:
+
+- the template is the first existing of `codex.md` (when `codex` is selected), `generic.md` (when `generic` is selected), and `default.md`;
+- common instruction snippets render first, then `instructions/generic/` snippets when `generic` is selected, then `instructions/codex/` snippets when `codex` is selected;
+- the `AGENTS.override.md` preflight applies when `codex` is selected.
+
+In general, the selected harness with the highest adapter precedence supplies the template variant, and harness snippets render in ascending precedence.
+
+### 5.5 Physical destination collisions
+
+If adapters plan the same physical destination outside a shared instruction artifact, agentsmith coalesces byte-identical content into one write. Different content for the same destination is a planning error.
 
 ## 6. Directives
 
@@ -240,6 +276,8 @@ Reusable skill snippets for slot `tracker` are discovered in this order:
 1. `packs/github/skill-slots/tracker/*.md`
 2. `packs/github/skill-slots/harnesses/<harness>/tracker/*.md`
 
+`<harness>` is any selected harness name, including `generic`. Section 7.1 restricts where harness-specific skill snippets may render.
+
 Skill-slot contributions are keyed only by slot name, never by consuming skill name. The same snippet may therefore be rendered into multiple enabled skills. Skill sources and contributing packs may have different owners: for example, a project-owned `tracker` pack may fill `tracker` slots in shared skills.
 
 A `skills/<skill>/<slot>/` directory inside a pack is invalid because it couples the provider to a consumer. Planning fails with a migration diagnostic directing the author to `skill-slots/<slot>/`.
@@ -265,19 +303,39 @@ Snippet headings are not rewritten. Lint warns when a snippet's first structural
 
 ## 7. Skill planning and generation
 
-For one scope, enabled skill Source IDs are the stable ordered union of:
+For one scope and one selected harness, enabled skill Source IDs are the stable ordered union of:
 
 1. skills enabled by selected packs, in pack order;
 2. `skills_enable` entries;
-3. minus `skills_disable` entries.
+3. minus `skills_disable` entries;
+4. plus `harness_skills.<harness>.enable` entries;
+5. minus `harness_skills.<harness>.disable` entries.
+
+`harness_skills` is a table keyed by harness name, available on profiles and scopes (`[harness_skills.claude]`, `[scopes.harness_skills.claude]`). Each entry accepts only `enable` and `disable` Source ID lists. An unknown harness, a harness the profile or scope does not select, and a Source ID in both lists are configuration errors. A harness exclusion that matches nothing is a warning.
 
 Selections resolving to the same canonical Source ID are idempotent. A qualified exclusion matches one owner; an unqualified exclusion matches either owner with the same logical name. Exclusion affects only skills introduced by that scope; it cannot hide inherited skills.
 
-Every skill source is a directory containing `SKILL.md`. All Markdown files pass through include and slot rendering. Non-Markdown files copy unchanged, including executable mode. A common skill source is rendered for each harness, with optional harness-specific pack snippets.
+Every skill source is a directory containing `SKILL.md`. All Markdown files pass through include and slot rendering. Non-Markdown files copy unchanged, including executable mode. A common skill source is rendered once per placement root (section 7.1), with harness-specific pack snippets only where one harness alone reads that root.
 
 The public Skill Name is parsed from `SKILL.md` YAML front matter. Only the Agent Skills metadata is parsed; snippets and partials do not use front matter. The `name` and `description` fields are required, and `name` must equal the source directory basename.
 
-### 7.1 Collision policy
+### 7.1 Placement
+
+Each skill enabled at a scope for a set of harnesses is written to the fewest Skill Roots that let each of those harnesses read it exactly once. Candidates are the harnesses' own Skill Roots; a root read by more of the harnesses is chosen first, and a root is skipped when a harness it serves is already served. With the built-in adapters:
+
+| Enabled for | Project scope | Global Scope |
+|---|---|---|
+| `generic`, with or without `codex` | `<scope>/.agents/skills` | `~/.agents/skills` |
+| `codex` without `generic` | `<scope>/.codex/skills` | error `skill-harness-unplaceable` |
+| `claude` | `<scope>/.claude/skills` | `~/.claude/skills` |
+
+A harness with no Skill Root of its own that no chosen root serves produces `skill-harness-unplaceable`, naming the harnesses whose roots it reads.
+
+Harness-specific skill snippets render only into a root read by exactly one harness, and only that harness's snippets. When a skill lands in a root read by several harnesses, a consumed snippet belonging to a selected harness that reads that root is an error (`skill-harness-content-shared-root`): Codex would read the common `.agents/skills` copy without its Codex content.
+
+### 7.2 Collision policy
+
+Visibility is evaluated per harness over every Skill Root that harness reads. Codex, for example, reads both `.agents/skills` and `.codex/skills`, so skills of the same name in each collide for Codex. Only selected harnesses are considered.
 
 - A public Skill Name may be emitted at only one visible scope along any effective chain.
 - Different Source IDs declaring the same public name are errors.
@@ -402,3 +460,5 @@ The built-in adapters are based on the harness vendors' documented behavior:
 - [Codex Agent Skills](https://developers.openai.com/codex/build-skills)
 - [Claude Code project memory and CLAUDE.md](https://code.claude.com/docs/en/memory)
 - [Claude Code skills](https://code.claude.com/docs/en/skills)
+
+Codex behavior was verified against the Codex CLI source; the [harness discovery reference](../website/docs/reference/harness-discovery.md) records the details and unverified points.

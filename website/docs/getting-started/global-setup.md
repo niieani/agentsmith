@@ -21,12 +21,14 @@ profile = "laptop"
 In the Source Repository, create `profiles/laptop.toml`:
 
 ```toml
-harnesses = ["codex", "claude"]
+harnesses = ["generic", "codex", "claude"]
 template = "personal"
 packs = ["base", "personal", "macos"]
 skills_enable = ["review-worktree"]
 skills_disable = ["publish"]
 ```
+
+`generic` writes global skills to `~/.agents/skills`, where Codex reads them; `codex` writes only `~/.codex/AGENTS.md`. A global skill enabled for `codex` without `generic` is an error. See [harness destinations](/reference/configuration#harness-destinations).
 
 The Source Repository also needs an `agentsmith.toml` root config, the selected template family, packs, and skill sources. See [Source Repository layout](/reference/source-layout).
 

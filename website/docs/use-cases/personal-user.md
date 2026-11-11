@@ -93,7 +93,7 @@ None of these packs needs `pack.toml`. That optional manifest exists only for pa
 Put what both Macs share in one base profile:
 
 ```toml title="profiles/mac.toml"
-harnesses = ["codex", "claude"]
+harnesses = ["generic", "codex", "claude"]
 template = "personal"
 packs = ["base"]
 ```
@@ -152,7 +152,7 @@ The command requires a clean Source Repository, performs `git pull --ff-only`, a
 ~/.claude/CLAUDE.md
 ```
 
-If selected packs enable skills, agentsmith also generates them under the native global skill roots.
+If selected packs enable skills, agentsmith also generates them under `~/.agents/skills` (read by Codex) and `~/.claude/skills`.
 
 Run global sync manually, from a scheduler, or from whatever machine-management workflow fits your environment. It does not depend on login or reboot, so it works for long-running hosts.
 

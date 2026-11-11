@@ -49,7 +49,8 @@ export async function scanSkillRoot(root: string): Promise<{ skills: SkillIdenti
   const entries = await readdir(root, { withFileTypes: true });
   entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
+    // Hidden directories such as Codex's `.system` cache are not skills.
+    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
     const sourceDir = join(root, entry.name);
     try {
       skills.push(await readSkillIdentity(sourceDir, `unmanaged:${sourceDir}`));

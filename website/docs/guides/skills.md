@@ -13,6 +13,18 @@ For a scope, enabled skills are the ordered union of:
 2. `skills_enable` entries on the profile or scope;
 3. minus `skills_disable` entries at that same scope.
 
+A `[harness_skills.<harness>]` table, or `[scopes.harness_skills.<harness>]` in a project, then adds `enable` and removes `disable` entries for that harness only:
+
+```toml
+[harness_skills.claude]
+enable = ["claude-hooks"]
+disable = ["publish"]
+```
+
+## Placement
+
+Each skill is written once for every distinct root its harnesses read. A skill enabled for `generic` lands in `.agents/skills` and also serves Codex; a skill enabled for `codex` but not `generic` lands in `.codex/skills`; Claude Code always gets `.claude/skills`. Harness-specific skill-slot content applies only where one harness alone reads the copy, so Codex-specific content for a skill in `.agents/skills` is an error. See [harness discovery](/reference/harness-discovery#how-agentsmith-places-skills).
+
 A pack that enables skills declares them in its optional `pack.toml`:
 
 ```toml
@@ -92,6 +104,6 @@ This produces flat, self-contained skills tailored to the selected packs and har
 
 ## Collision protection
 
-agentsmith fails when two visible sources would emit the same public skill name or when a planned skill collides with an unmanaged visible skill. Use `asmith project explain` to see where a skill was enabled and `lint` to detect collisions before writing.
+agentsmith fails when two visible sources would emit the same public skill name or when a planned skill collides with an unmanaged visible skill. Visibility covers every root a harness reads: for Codex, `.agents/skills` and `.codex/skills` both count. Use `asmith project explain` to see where a skill was enabled and `lint` to detect collisions before writing.
 
 For a complete source-to-output example, continue with [Create a composable skill](/use-cases/skill-author).

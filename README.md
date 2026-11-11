@@ -1,6 +1,6 @@
 # agentsmith
 
-agentsmith assembles agent instructions and skills from Git-backed templates and reusable packs. It generates native, scope-aware artifacts for Codex and Claude Code while protecting local edits.
+agentsmith assembles agent instructions and skills from Git-backed templates and reusable packs. It generates native, scope-aware artifacts for Codex, Claude Code, and the shared `.agents/` convention while protecting local edits.
 
 The command is `asmith`.
 
@@ -8,7 +8,7 @@ The command is `asmith`.
 
 - synchronizes one reusable Source Repository across machines;
 - selects machine behavior through profiles and ordered packs;
-- generates `AGENTS.md`, `CLAUDE.md`, and native skill directories;
+- generates `AGENTS.md`, `CLAUDE.md`, and native skill directories, placing each skill so no harness sees it twice;
 - supports repository and monorepo subtree scopes;
 - fills precise Markdown slots and flattens reusable partials;
 - previews diffs, validates composition, and explains provenance;
@@ -76,10 +76,12 @@ profile = "laptop"
 The selected Source Repository contains `agentsmith.toml`, profiles, template families, packs, skills, and partials. A minimal profile looks like:
 
 ```toml
-harnesses = ["codex", "claude"]
+harnesses = ["generic", "codex", "claude"]
 template = "personal"
 packs = ["base", "macos"]
 ```
+
+`generic` writes `~/.agents/skills` and project `.agents/skills`, which Codex also reads; `codex` writes `~/.codex/AGENTS.md`; `claude` writes `~/.claude/`. See [harness discovery](website/docs/reference/harness-discovery.md) for the full mapping.
 
 Then preview and generate:
 
@@ -96,7 +98,7 @@ asmith global sync
 Create `.config/agentsmith/config.toml` in the project root:
 
 ```toml
-harnesses = ["codex", "claude"]
+harnesses = ["generic", "codex", "claude"]
 
 [[scopes]]
 path = "."

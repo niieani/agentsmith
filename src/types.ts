@@ -1,7 +1,7 @@
 /** Harness names removed in a breaking change, mapped to their replacement. */
 export const RENAMED_HARNESSES: Readonly<Record<string, string>> = { "claude-code": "claude" };
 
-export const HARNESS_NAMES = ["codex", "claude"] as const;
+export const HARNESS_NAMES = ["generic", "codex", "claude"] as const;
 export type HarnessName = (typeof HARNESS_NAMES)[number];
 
 export interface Budgets {
@@ -19,12 +19,21 @@ export interface RootConfig {
   budgets: Budgets;
 }
 
+/** Skill selections that apply to one harness only, layered after the harness-neutral lists. */
+export interface HarnessSkillSelection {
+  enable: string[];
+  disable: string[];
+}
+
+export type HarnessSkills = Partial<Record<HarnessName, HarnessSkillSelection>>;
+
 export interface ProfileConfig {
   harnesses: HarnessName[];
   template: string;
   packs: string[];
   skillsEnable: string[];
   skillsDisable: string[];
+  harnessSkills: HarnessSkills;
   budgets: Budgets;
   /** Resolved `extends` chain, root ancestor first; the last entry is the selected profile. */
   chain: string[];
@@ -43,11 +52,14 @@ export interface ScopeConfig {
   harnesses?: HarnessName[];
   skillsEnable: string[];
   skillsDisable: string[];
+  harnessSkills: HarnessSkills;
 }
 
 export interface ProjectConfig {
   harnesses: HarnessName[];
   budgets: Budgets;
+  /** Write `@AGENTS.md` as CLAUDE.md when CLAUDE.md would repeat a sibling generated AGENTS.md byte for byte. */
+  claudeImportAgentsMd: boolean;
   scopes: ScopeConfig[];
 }
 
@@ -68,6 +80,8 @@ export interface SourceId {
 
 export interface Contribution {
   pack: string;
+  /** Harness of a harness-specific contribution; undefined for common contributions. */
+  harness?: HarnessName;
   slot: string;
   path: string;
   content: string;

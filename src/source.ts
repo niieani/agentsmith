@@ -129,17 +129,21 @@ function resolveSingularSource(context: SourceContext, sourceId: string, kind: E
   return missingSource(context, id, kind, owners);
 }
 
-export async function loadTemplate(context: SourceContext, family: string, harness: HarnessName): Promise<LoadedTemplate> {
+/**
+ * Loads a template family for one instruction artifact. `harnesses` lists the harnesses sharing the artifact,
+ * most specific first; the first existing `<harness>.md` wins, then `default.md`.
+ */
+export async function loadTemplate(context: SourceContext, family: string, harnesses: HarnessName | readonly HarnessName[]): Promise<LoadedTemplate> {
   const resolved = resolveSingularSource(context, family, "template");
   for (const [legacy, renamed] of Object.entries(RENAMED_HARNESSES)) {
     const legacyPath = join(resolved.directory, `${legacy}.md`);
     if (existsSync(legacyPath)) throw new Error(`Template ${legacyPath} uses the removed harness name ${JSON.stringify(legacy)}; rename it to ${renamed}.md`);
   }
-  const harnessPath = join(resolved.directory, `${harness}.md`);
-  const defaultPath = join(resolved.directory, "default.md");
-  const path = existsSync(harnessPath) ? harnessPath : defaultPath;
-  if (!existsSync(path)) {
-    throw new Error(`Template family ${JSON.stringify(family)} has neither ${harness}.md nor default.md`);
+  const variants = typeof harnesses === "string" ? [harnesses] : [...harnesses];
+  const candidates = [...variants.map((harness) => join(resolved.directory, `${harness}.md`)), join(resolved.directory, "default.md")];
+  const path = candidates.find((candidate) => existsSync(candidate));
+  if (path === undefined) {
+    throw new Error(`Template family ${JSON.stringify(family)} has none of ${[...variants.map((harness) => `${harness}.md`), "default.md"].join(", ")}`);
   }
   const stat = await lstat(path);
   if (stat.isSymbolicLink() || !stat.isFile()) throw new Error(`Template must be a regular non-symlink file: ${path}`);
@@ -201,7 +205,8 @@ function rejectLegacyHarnessDirectory(root: string): void {
   }
 }
 
-export async function loadInstructionContributions(pack: LoadedPack, harness: HarnessName): Promise<Contribution[]> {
+/** Common instruction snippets, then each listed harness's snippets in the given order. */
+export async function loadInstructionContributions(pack: LoadedPack, harnesses: HarnessName | readonly HarnessName[]): Promise<Contribution[]> {
   const commonRoot = join(pack.directory, "instructions");
   const common = existsSync(commonRoot)
     ? (await contributionsBySlot(commonRoot, pack.sourceId)).filter((item) => {
@@ -210,11 +215,15 @@ export async function loadInstructionContributions(pack: LoadedPack, harness: Ha
       })
     : [];
   rejectLegacyHarnessDirectory(commonRoot);
-  const specific = await contributionsBySlot(join(commonRoot, harness), pack.sourceId);
+  const specific: Contribution[] = [];
+  for (const harness of typeof harnesses === "string" ? [harnesses] : harnesses) {
+    specific.push(...(await contributionsBySlot(join(commonRoot, harness), pack.sourceId)).map((item) => ({ ...item, harness })));
+  }
   return [...common, ...specific];
 }
 
-export async function loadSkillContributions(pack: LoadedPack, harness: HarnessName): Promise<Contribution[]> {
+/** Common skill-slot snippets, then each listed harness's snippets tagged with that harness. */
+export async function loadSkillContributions(pack: LoadedPack, harnesses: HarnessName | readonly HarnessName[]): Promise<Contribution[]> {
   const root = join(pack.directory, "skill-slots");
   const common = existsSync(root)
     ? (await contributionsBySlot(root, pack.sourceId)).filter((item) => {
@@ -223,7 +232,10 @@ export async function loadSkillContributions(pack: LoadedPack, harness: HarnessN
       })
     : [];
   rejectLegacyHarnessDirectory(join(root, "harnesses"));
-  const specific = await contributionsBySlot(join(root, "harnesses", harness), pack.sourceId);
+  const specific: Contribution[] = [];
+  for (const harness of typeof harnesses === "string" ? [harnesses] : harnesses) {
+    specific.push(...(await contributionsBySlot(join(root, "harnesses", harness), pack.sourceId)).map((item) => ({ ...item, harness })));
+  }
   return [...common, ...specific];
 }
 
