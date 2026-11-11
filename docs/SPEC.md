@@ -113,6 +113,15 @@ effective_instruction_bytes = 28672
 
 Profile budgets override matching Source Repository defaults.
 
+A profile may set `extends = "<profile name>"` to inherit from one parent profile; the parent may extend another. Parent names follow profile-name rules and cannot be ownership-qualified. A profile with `extends` may omit `harnesses` and `template`; a profile without it must set both, so every resolved chain has both. The chain is merged root ancestor first:
+
+- `packs`: parent packs, then child packs. A pack repeated anywhere in the chain is an error. Packs are additive only; there is no way to remove an inherited pack.
+- `skills_enable`, `skills_disable`: ordered union.
+- `harnesses`, `template`: the nearest profile that sets the value wins.
+- `budgets`: per key, child wins; the merged result then overrides Source Repository defaults.
+
+An `extends` cycle or a missing parent profile is an error. `global explain` reports the resolved chain (`profile.chain`, root first) and the profile that contributed each pack (`profile.packs`).
+
 ### 4.4 Pack
 
 Pack directories are valid without a manifest. Add `pack.toml` only when the pack enables skills:

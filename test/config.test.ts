@@ -197,6 +197,109 @@ describe("strict TOML loaders", () => {
   });
 });
 
+describe("profile extends", () => {
+  function chainFixture(): string {
+    const source = sourceFixture();
+    file(
+      join(source, "profiles/mac.toml"),
+      [
+        'harnesses = ["codex", "claude"]',
+        'template = "personal"',
+        'packs = ["base", "macos"]',
+        'skills_enable = ["review", "shared"]',
+        'skills_disable = ["publish"]',
+        "[budgets]",
+        "instruction_layer_bytes = 10",
+        "effective_instruction_bytes = 20",
+        "",
+      ].join("\n"),
+    );
+    file(
+      join(source, "profiles/studio.toml"),
+      ['extends = "mac"', 'packs = ["server"]', 'skills_enable = ["shared", "deploy"]', "[budgets]", "effective_instruction_bytes = 30", ""].join("\n"),
+    );
+    file(
+      join(source, "profiles/desk.toml"),
+      ['extends = "studio"', 'harnesses = ["codex"]', 'template = "desk"', 'packs = ["gpu"]', 'skills_disable = ["deploy"]', ""].join("\n"),
+    );
+    return source;
+  }
+
+  test("merges a chain root ancestor first", () => {
+    const source = chainFixture();
+    expect(loadProfileConfig(source, "studio")).toEqual({
+      harnesses: ["codex", "claude"],
+      template: "personal",
+      packs: ["base", "macos", "server"],
+      skillsEnable: ["review", "shared", "deploy"],
+      skillsDisable: ["publish"],
+      budgets: { instructionLayerBytes: 10, effectiveInstructionBytes: 30 },
+      chain: ["mac", "studio"],
+      packProfiles: { base: "mac", macos: "mac", server: "studio" },
+    });
+    expect(loadProfileConfig(source, "desk")).toMatchObject({
+      harnesses: ["codex"],
+      template: "desk",
+      packs: ["base", "macos", "server", "gpu"],
+      skillsDisable: ["publish", "deploy"],
+      budgets: { instructionLayerBytes: 10, effectiveInstructionBytes: 30 },
+      chain: ["mac", "studio", "desk"],
+      packProfiles: { gpu: "desk", server: "studio", base: "mac" },
+    });
+  });
+
+  test("a profile without extends reports a single-entry chain", () => {
+    expect(loadProfileConfig(sourceFixture(), "studio")).toMatchObject({ chain: ["studio"], packProfiles: { base: "studio" } });
+  });
+
+  test("rejects cycles, including self-extension", () => {
+    const source = chainFixture();
+    file(join(source, "profiles/mac.toml"), 'extends = "desk"\n');
+    expect(() => loadProfileConfig(source, "desk")).toThrow(/profile extends cycle: desk -> studio -> mac -> desk/);
+    file(join(source, "profiles/self.toml"), 'extends = "self"\n');
+    expect(() => loadProfileConfig(source, "self")).toThrow(/profile extends cycle: self -> self/);
+  });
+
+  test("rejects a missing parent", () => {
+    const source = chainFixture();
+    file(join(source, "profiles/orphan.toml"), 'extends = "nowhere"\npacks = []\n');
+    expect(() => loadProfileConfig(source, "orphan")).toThrow(/profile "orphan" extends missing profile "nowhere"/);
+  });
+
+  test("rejects ownership-qualified and invalid parents", () => {
+    const source = chainFixture();
+    file(join(source, "profiles/bad.toml"), 'extends = "source:mac"\n');
+    expect(() => loadProfileConfig(source, "bad")).toThrow(/ownership-qualified/);
+    file(join(source, "profiles/bad.toml"), 'extends = ""\n');
+    expect(() => loadProfileConfig(source, "bad")).toThrow(/extends must be a nonempty string/);
+    file(join(source, "profiles/bad.toml"), 'extends = "../escape"\n');
+    expect(() => loadProfileConfig(source, "bad")).toThrow(/invalid Source ID/);
+  });
+
+  test("rejects a pack repeated across the chain", () => {
+    const source = chainFixture();
+    file(join(source, "profiles/studio.toml"), 'extends = "mac"\npacks = ["server", "macos"]\n');
+    expect(() => loadProfileConfig(source, "studio")).toThrow(/profile "studio" repeats pack "macos" inherited from profile "mac"/);
+    file(join(source, "profiles/studio.toml"), 'extends = "mac"\npacks = ["server"]\n');
+    file(join(source, "profiles/desk.toml"), 'extends = "studio"\npacks = ["base"]\n');
+    expect(() => loadProfileConfig(source, "desk")).toThrow(/profile "desk" repeats pack "base" inherited from profile "mac"/);
+  });
+
+  test("requires the resolved profile to set harnesses and template", () => {
+    const source = chainFixture();
+    file(join(source, "profiles/partial.toml"), 'packs = ["base"]\n');
+    expect(() => loadProfileConfig(source, "partial")).toThrow(/harnesses is required on a profile that does not set extends/);
+    file(join(source, "profiles/root.toml"), 'harnesses = ["codex"]\npacks = ["base"]\n');
+    file(join(source, "profiles/leaf.toml"), 'extends = "root"\npacks = ["server"]\n');
+    expect(() => loadProfileConfig(source, "leaf")).toThrow(/root\.toml: template is required on a profile that does not set extends/);
+    file(join(source, "profiles/root.toml"), 'template = "personal"\npacks = ["base"]\n');
+    expect(() => loadProfileConfig(source, "leaf")).toThrow(/root\.toml: harnesses is required/);
+    file(join(source, "profiles/root.toml"), 'harnesses = ["codex"]\ntemplate = "personal"\npacks = ["base"]\n');
+    file(join(source, "profiles/leaf.toml"), 'extends = "root"\nharnesses = []\n');
+    expect(() => loadProfileConfig(source, "leaf")).toThrow(/leaf\.toml: harnesses must not be empty/);
+  });
+});
+
 describe("project configuration", () => {
   function projectFixture(): { root: string; config: string } {
     const root = temp();

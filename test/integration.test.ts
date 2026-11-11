@@ -130,6 +130,38 @@ describe("CLI global workflow", () => {
   });
 });
 
+describe("CLI global explain", () => {
+  test("shows the resolved profile chain and the profile contributing each pack", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agentsmith-extends-"));
+    const source = join(root, "source");
+    await put(join(source, "agentsmith.toml"), "");
+    await put(join(source, "profiles", "mac.toml"), ['harnesses = ["codex"]', 'template = "base"', 'packs = ["base"]', ""].join("\n"));
+    await put(join(source, "profiles", "laptop.toml"), ['extends = "mac"', 'packs = ["travel"]', ""].join("\n"));
+    await put(join(source, "templates", "base", "codex.md"), "# Global\n\n<!-- agentsmith:slot notes -->\n");
+    await put(join(source, "packs", "base", "instructions", "notes", "10-base.md"), "Base note.\n");
+    await put(join(source, "packs", "travel", "instructions", "notes", "20-travel.md"), "Travel note.\n");
+    await put(join(root, ".agents", "agentsmith", "config.toml"), `source = ${JSON.stringify(source)}\nprofile = "laptop"\n`);
+    const env = { ...Bun.env, HOME: root, CODEX_HOME: join(root, ".codex") };
+    const spawn = async (args: string[]) => {
+      const child = Bun.spawn(["bun", cli, "global", "explain", ...args], { cwd: root, env, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+      const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+      expect(code, stderr).toBe(0);
+      return stdout;
+    };
+    const human = await spawn([]);
+    expect(human).toContain("Profile: laptop (chain: mac -> laptop)\n  pack base: from profile mac\n  pack travel: from profile laptop\n");
+    const explanation = JSON.parse(await spawn(["--json"])) as { profile: unknown };
+    expect(explanation.profile).toEqual({
+      name: "laptop",
+      chain: ["mac", "laptop"],
+      packs: [
+        { pack: "base", profile: "mac" },
+        { pack: "travel", profile: "laptop" },
+      ],
+    });
+  });
+});
+
 describe("read-only project workflows", () => {
   for (const runtime of ["bun", "node"]) {
     test(`diff works under ${runtime} without a Git worktree and reports reduced stale-state coverage`, async () => {

@@ -520,7 +520,13 @@ async function planScopes(context: PlannerContext, scopes: ScopeInput[]): Promis
   coalesceWrites(context);
 }
 
-function builtPlan(context: PlannerContext, configPath: string): BuiltPlan {
+interface ProfileExplanation {
+  name: string;
+  chain: string[];
+  packs: Array<{ pack: string; profile: string }>;
+}
+
+function builtPlan(context: PlannerContext, configPath: string, profile?: ProfileExplanation): BuiltPlan {
   return {
     mode: context.mode,
     sourceRoot: context.sources.sourceRoot,
@@ -533,6 +539,7 @@ function builtPlan(context: PlannerContext, configPath: string): BuiltPlan {
       mode: context.mode,
       sourceRoot: context.sources.sourceRoot,
       projectRoot: context.projectRoot,
+      ...(profile === undefined ? {} : { profile }),
       artifacts: context.explanations,
       diagnostics: context.diagnostics,
     },
@@ -565,7 +572,11 @@ export async function buildGlobalPlan(configPath = MACHINE_CONFIG_PATH): Promise
       skillsDisable: profile.skillsDisable,
     },
   ]);
-  return builtPlan(context, resolvedConfig);
+  return builtPlan(context, resolvedConfig, {
+    name: machine.profile,
+    chain: profile.chain,
+    packs: profile.packs.map((pack) => ({ pack, profile: profile.packProfiles[pack]! })),
+  });
 }
 
 export async function buildProjectPlan(projectStart = process.cwd(), machineConfigPath = MACHINE_CONFIG_PATH): Promise<BuiltPlan> {

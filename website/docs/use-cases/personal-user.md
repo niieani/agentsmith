@@ -1,9 +1,9 @@
 ---
 title: Personal user walkthrough
-description: Keep Codex and Claude Code context synchronized across a laptop and a long-running workstation.
+description: Keep Codex and Claude Code context synchronized across a laptop and a long-running studio machine.
 ---
 
-Suppose you use a MacBook for app development and a long-running workstation for server work. Both run Codex and Claude Code. Most of your preferences are shared, but only the laptop needs iOS guidance and only the workstation needs server operations guidance.
+Suppose you use a MacBook for app development and an always-on Mac Studio for server work. Both run Codex and Claude Code. Most of your preferences are shared, but only the laptop needs iOS guidance and only the studio needs server operations guidance.
 
 The goal is not one giant file copied everywhere. The goal is one reusable source repository with a small profile per machine.
 
@@ -15,8 +15,9 @@ Create a Git repository with this shape:
 agent-context/
 ├── agentsmith.toml
 ├── profiles/
+│   ├── mac.toml
 │   ├── laptop.toml
-│   └── workstation.toml
+│   └── studio.toml
 ├── templates/
 │   └── personal/
 │       └── default.md
@@ -89,19 +90,29 @@ None of these packs needs `pack.toml`. That optional manifest exists only for pa
 
 ## 4. Select packs per machine
 
+Put what both Macs share in one base profile:
+
+```toml title="profiles/mac.toml"
+harnesses = ["codex", "claude"]
+template = "personal"
+packs = ["base"]
+```
+
+Each machine profile extends it and adds only what differs:
+
 ```toml title="profiles/laptop.toml"
-harnesses = ["codex", "claude"]
-template = "personal"
-packs = ["base", "ios"]
+extends = "mac"
+packs = ["ios"]
 ```
 
-```toml title="profiles/workstation.toml"
-harnesses = ["codex", "claude"]
-template = "personal"
-packs = ["base", "server"]
+```toml title="profiles/studio.toml"
+extends = "mac"
+packs = ["server"]
 ```
 
-Pack order is rendered order. Both machines receive `base`; each adds only its relevant tool section.
+A child profile inherits its parent's harnesses, template, packs, skill lists, and budgets. Parent packs come first, then child packs, so the laptop renders `base` then `ios`. Packs are additive only: a child cannot remove a parent's pack, and repeating one is an error. Setting `harnesses` or `template` in a child replaces the parent's value.
+
+Pack order is rendered order. Both machines receive `base`; each adds only its relevant tool section. `mac` is itself a valid profile, so a third Mac with no extra concerns can select it directly.
 
 ## 5. Point each machine at its profile
 
@@ -114,7 +125,7 @@ source = "~/.agents/agentsmith/source"
 profile = "laptop"
 ```
 
-On the workstation, use the same file with `profile = "workstation"`.
+On the studio, use the same file with `profile = "studio"`.
 
 The machine config is intentionally local. It answers “which machine am I?” while the Git repository answers “what profiles and reusable content exist?”
 
@@ -126,7 +137,7 @@ asmith global explain
 asmith global diff
 ```
 
-`explain` is especially useful here: it shows the selected profile, template, packs, output destinations, slots, and byte sizes. If an unexpected instruction appears, its provenance tells you which pack added it.
+`explain` is especially useful here: it shows the selected profile and the profile chain it extends (for example `mac -> laptop`), which profile contributed each pack, the template, packs, output destinations, slots, and byte sizes. If an unexpected instruction appears, its provenance tells you which pack added it.
 
 ## 7. Synchronize
 
@@ -158,7 +169,7 @@ If a generated global file was hand-edited, agentsmith detects that its content 
 
 ## What this example used
 
-- **Profiles** select different behavior per machine.
+- **Profiles** select different behavior per machine, and `extends` shares a base between them.
 - **Packs** keep shared, iOS, and server concerns independent.
 - **Slots** place those concerns inside the right Markdown sections.
 - **Required slots** prevent an incomplete baseline.

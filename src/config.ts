@@ -208,22 +208,110 @@ export function loadRootConfig(sourceRoot: string): RootConfig {
   return { budgets: budgets(input.budgets, path) };
 }
 
-export function loadProfileConfig(sourceRoot: string, name: string): ProfileConfig {
-  const path = profileConfigPath(resolve(sourceRoot), name);
+interface ProfileLayer {
+  name: string;
+  path: string;
+  extends?: string;
+  harnesses?: HarnessName[];
+  template?: string;
+  packs: string[];
+  skillsEnable: string[];
+  skillsDisable: string[];
+  budgets: Budgets;
+}
+
+function loadProfileLayer(name: string, path: string): ProfileLayer {
   const input = readToml(path);
-  exactKeys(input, ["harnesses", "template", "packs", "skills_enable", "skills_disable", "budgets"], "profile", path);
-  const result: ProfileConfig = {
-    harnesses: harnesses(input.harnesses, "harnesses", path),
-    template: string(input.template, "template", path),
+  exactKeys(input, ["extends", "harnesses", "template", "packs", "skills_enable", "skills_disable", "budgets"], "profile", path);
+  const parent = input.extends === undefined ? undefined : string(input.extends, "extends", path);
+  if (parent !== undefined && parseSourceId(parent).owner !== undefined) fail("extends cannot name an ownership-qualified profile", path);
+  if (parent === undefined) {
+    // The root of every chain must be complete, so a resolved profile always has both values.
+    for (const key of ["harnesses", "template"]) {
+      if (input[key] === undefined) fail(`${key} is required on a profile that does not set extends`, path);
+    }
+  }
+  const layer: ProfileLayer = {
+    name,
+    path,
+    extends: parent,
+    harnesses: input.harnesses === undefined ? undefined : harnesses(input.harnesses, "harnesses", path),
+    template: input.template === undefined ? undefined : string(input.template, "template", path),
     packs: sourceIds(input.packs, "packs", path),
     skillsEnable: sourceIds(input.skills_enable, "skills_enable", path),
     skillsDisable: sourceIds(input.skills_disable, "skills_disable", path),
     budgets: budgets(input.budgets, path),
   };
-  for (const sourceId of [result.template, ...result.packs, ...result.skillsEnable, ...result.skillsDisable]) {
+  for (const sourceId of [...(layer.template === undefined ? [] : [layer.template]), ...layer.packs, ...layer.skillsEnable, ...layer.skillsDisable]) {
     if (parseSourceId(sourceId).owner === "project") fail("global profiles cannot reference project-owned sources", path);
   }
-  return result;
+  return layer;
+}
+
+function orderedUnion(lists: string[][]): string[] {
+  return [...new Set(lists.flat())];
+}
+
+/**
+ * Loads a profile and its `extends` ancestors, merging root ancestor first: packs append (a pack repeated anywhere in
+ * the chain is an error), skill lists form an ordered union, `harnesses` and `template` take the nearest value, and
+ * budgets merge per key with the child winning.
+ */
+export function loadProfileConfig(sourceRoot: string, name: string): ProfileConfig {
+  const root = resolve(sourceRoot);
+  const layers: ProfileLayer[] = [];
+  const seen = new Set<string>();
+  let current: string | undefined = name;
+  let child: ProfileLayer | undefined;
+  while (current !== undefined) {
+    const path = profileConfigPath(root, current);
+    const id = parseSourceId(current).name;
+    if (seen.has(id)) {
+      fail(`profile extends cycle: ${[...layers.map((layer) => layer.name), id].join(" -> ")}`, child?.path);
+    }
+    seen.add(id);
+    if (child !== undefined && !existsSync(path)) fail(`profile ${JSON.stringify(child.name)} extends missing profile ${JSON.stringify(id)}`, child.path);
+    const layer = loadProfileLayer(id, path);
+    layers.push(layer);
+    child = layer;
+    current = layer.extends;
+  }
+  layers.reverse();
+  const leaf = layers[layers.length - 1]!;
+
+  const packs: string[] = [];
+  const packProfiles = new Map<string, string>();
+  for (const layer of layers) {
+    for (const pack of layer.packs) {
+      const previous = packProfiles.get(pack);
+      if (previous !== undefined) {
+        fail(`profile ${JSON.stringify(layer.name)} repeats pack ${JSON.stringify(pack)} inherited from profile ${JSON.stringify(previous)}`, layer.path);
+      }
+      packProfiles.set(pack, layer.name);
+      packs.push(pack);
+    }
+  }
+  const nearest = <T>(pick: (layer: ProfileLayer) => T | undefined): T | undefined =>
+    layers.reduce<T | undefined>((value, layer) => pick(layer) ?? value, undefined);
+  const resolvedHarnesses = nearest((layer) => layer.harnesses);
+  const template = nearest((layer) => layer.template);
+  if (resolvedHarnesses === undefined || template === undefined) fail("resolved profile must set harnesses and template", leaf.path);
+  const mergedBudgets: Budgets = {};
+  for (const layer of layers) {
+    for (const [key, value] of Object.entries(layer.budgets) as Array<[keyof Budgets, number | undefined]>) {
+      if (value !== undefined) mergedBudgets[key] = value;
+    }
+  }
+  return {
+    harnesses: resolvedHarnesses,
+    template,
+    packs,
+    skillsEnable: orderedUnion(layers.map((layer) => layer.skillsEnable)),
+    skillsDisable: orderedUnion(layers.map((layer) => layer.skillsDisable)),
+    budgets: mergedBudgets,
+    chain: layers.map((layer) => layer.name),
+    packProfiles: Object.fromEntries(packProfiles),
+  };
 }
 
 export function loadPackConfig(packDir: string): PackConfig {
