@@ -113,7 +113,7 @@ effective_instruction_bytes = 28672
 
 Profile budgets override matching Source Repository defaults.
 
-A profile may set `extends = "<profile name>"` to inherit from one parent profile; the parent may extend another. Parent names follow profile-name rules and cannot be ownership-qualified. A profile with `extends` may omit `harnesses` and `template`; a profile without it must set both, so every resolved chain has both. The chain is merged root ancestor first:
+A profile may set `extends = "<profile name>"` to inherit from one parent profile; the parent may extend another. Parent names follow profile-name rules and cannot be ownership-qualified. Any profile may omit `harnesses` or `template`; the selected profile must resolve both, directly or through its chain. The chain is merged root ancestor first:
 
 - `packs`: parent packs, then child packs. A pack repeated anywhere in the chain is an error. Packs are additive only; there is no way to remove an inherited pack.
 - `skills_enable`, `skills_disable`: ordered union.

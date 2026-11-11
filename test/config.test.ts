@@ -288,12 +288,14 @@ describe("profile extends", () => {
   test("requires the resolved profile to set harnesses and template", () => {
     const source = chainFixture();
     file(join(source, "profiles/partial.toml"), 'packs = ["base"]\n');
-    expect(() => loadProfileConfig(source, "partial")).toThrow(/harnesses is required on a profile that does not set extends/);
-    file(join(source, "profiles/root.toml"), 'harnesses = ["codex"]\npacks = ["base"]\n');
-    file(join(source, "profiles/leaf.toml"), 'extends = "root"\npacks = ["server"]\n');
-    expect(() => loadProfileConfig(source, "leaf")).toThrow(/root\.toml: template is required on a profile that does not set extends/);
-    file(join(source, "profiles/root.toml"), 'template = "personal"\npacks = ["base"]\n');
-    expect(() => loadProfileConfig(source, "leaf")).toThrow(/root\.toml: harnesses is required/);
+    expect(() => loadProfileConfig(source, "partial")).toThrow(/profile "partial" must set harnesses and template/);
+    file(join(source, "profiles/root.toml"), 'packs = ["base"]\n');
+    file(join(source, "profiles/leaf.toml"), 'extends = "root"\nharnesses = ["codex"]\npacks = ["server"]\n');
+    expect(() => loadProfileConfig(source, "leaf")).toThrow(
+      /leaf\.toml: profile "leaf" must set harnesses and template, directly or through extends \(chain: root -> leaf\)/,
+    );
+    file(join(source, "profiles/leaf.toml"), 'extends = "root"\nharnesses = ["codex"]\ntemplate = "personal"\npacks = ["server"]\n');
+    expect(loadProfileConfig(source, "leaf")).toMatchObject({ harnesses: ["codex"], template: "personal", packs: ["base", "server"], chain: ["root", "leaf"] });
     file(join(source, "profiles/root.toml"), 'harnesses = ["codex"]\ntemplate = "personal"\npacks = ["base"]\n');
     file(join(source, "profiles/leaf.toml"), 'extends = "root"\nharnesses = []\n');
     expect(() => loadProfileConfig(source, "leaf")).toThrow(/leaf\.toml: harnesses must not be empty/);

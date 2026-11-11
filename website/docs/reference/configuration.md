@@ -76,7 +76,7 @@ A profile may extend one parent, which may extend another. agentsmith merges the
 | `harnesses`, `template` | The child's value replaces the parent's when set. |
 | `budgets` | Per key; the child's value wins. The result then overrides Source Repository defaults. |
 
-Packs are additive only; a child cannot remove a parent's pack. The root of every chain has no `extends`, so it must set `harnesses` and `template`. Cycles and missing parents are errors. `asmith global explain` shows the resolved chain and which profile contributed each pack.
+Packs are additive only; a child cannot remove a parent's pack. A base profile may list only packs; the selected profile must end up with `harnesses` and `template`, set directly or inherited. Cycles and missing parents are errors. `asmith global explain` shows the resolved chain and which profile contributed each pack.
 
 ## Pack
 

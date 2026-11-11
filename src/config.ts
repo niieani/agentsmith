@@ -225,12 +225,6 @@ function loadProfileLayer(name: string, path: string): ProfileLayer {
   exactKeys(input, ["extends", "harnesses", "template", "packs", "skills_enable", "skills_disable", "budgets"], "profile", path);
   const parent = input.extends === undefined ? undefined : string(input.extends, "extends", path);
   if (parent !== undefined && parseSourceId(parent).owner !== undefined) fail("extends cannot name an ownership-qualified profile", path);
-  if (parent === undefined) {
-    // The root of every chain must be complete, so a resolved profile always has both values.
-    for (const key of ["harnesses", "template"]) {
-      if (input[key] === undefined) fail(`${key} is required on a profile that does not set extends`, path);
-    }
-  }
   const layer: ProfileLayer = {
     name,
     path,
@@ -295,7 +289,11 @@ export function loadProfileConfig(sourceRoot: string, name: string): ProfileConf
     layers.reduce<T | undefined>((value, layer) => pick(layer) ?? value, undefined);
   const resolvedHarnesses = nearest((layer) => layer.harnesses);
   const template = nearest((layer) => layer.template);
-  if (resolvedHarnesses === undefined || template === undefined) fail("resolved profile must set harnesses and template", leaf.path);
+  if (resolvedHarnesses === undefined || template === undefined)
+    fail(
+      `profile ${JSON.stringify(leaf.name)} must set harnesses and template, directly or through extends (chain: ${layers.map((layer) => layer.name).join(" -> ")})`,
+      leaf.path,
+    );
   const mergedBudgets: Budgets = {};
   for (const layer of layers) {
     for (const [key, value] of Object.entries(layer.budgets) as Array<[keyof Budgets, number | undefined]>) {
