@@ -113,7 +113,7 @@ Machine-owned source material that participates in assembly without belonging to
 _Avoid_: Override, dirty source
 
 **Profile**:
-A named selection of harnesses, a template family, and ordered packs used to assemble a machine's global artifacts.
+A named selection of harnesses, a template family, and ordered packs used to assemble a machine's global artifacts. A profile may extend one parent profile, inheriting its selection and appending its own packs; packs are never removed.
 _Avoid_: Host, configuration
 
 **Generation Plan**:

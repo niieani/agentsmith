@@ -194,12 +194,21 @@ async function diffPlan(plan: BuiltPlan): Promise<void> {
 }
 
 function explainHuman(plan: BuiltPlan): string {
-  const explanation = plan.explanation as { artifacts?: Array<Record<string, unknown>> };
+  const explanation = plan.explanation as {
+    artifacts?: Array<Record<string, unknown>>;
+    profile?: { name: string; chain: string[]; packs: Array<{ pack: string; profile: string }> };
+  };
   const lines = [
     `${plan.mode} plan`,
     `Config: ${plan.configPath}`,
     ...(plan.sourceRoot ? [`Source Repository: ${plan.sourceRoot}`] : []),
     ...(plan.projectRoot ? [`Project: ${plan.projectRoot}`] : []),
+    ...(explanation.profile
+      ? [
+          `Profile: ${explanation.profile.name} (chain: ${explanation.profile.chain.join(" -> ")})`,
+          ...explanation.profile.packs.map((item) => `  pack ${item.pack}: from profile ${item.profile}`),
+        ]
+      : []),
     "",
   ];
   for (const artifact of explanation.artifacts ?? []) {

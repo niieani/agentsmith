@@ -51,6 +51,28 @@ describe("generation planning", () => {
     expect(new TextDecoder().decode(plan.writes.find((write) => write.destination.endsWith("AGENTS.md"))!.content)).toContain("Be kind.");
   });
 
+  test("plans global artifacts from an extended profile and explains the chain", async () => {
+    const setup = await fixture();
+    await put(join(setup.source, "profiles", "test.toml"), ['harnesses = ["codex", "claude"]', 'template = "base"', 'packs = ["base"]', ""].join("\n"));
+    await put(join(setup.source, "profiles", "laptop.toml"), ['extends = "test"', 'harnesses = ["codex"]', 'packs = ["travel"]', ""].join("\n"));
+    await put(join(setup.source, "packs", "travel", "instructions", "greeting", "20-travel.md"), "Mind the battery.\n");
+    await put(setup.machine, `source = ${JSON.stringify(setup.source)}\nprofile = "laptop"\n`);
+    const plan = await buildGlobalPlan(setup.machine);
+    expect(plan.diagnostics.filter((item) => item.severity === "error")).toEqual([]);
+    expect(plan.writes.some((write) => write.destination.endsWith("/.claude/CLAUDE.md"))).toBeFalse();
+    const agents = new TextDecoder().decode(plan.writes.find((write) => write.destination.endsWith("/.codex/AGENTS.md"))!.content);
+    expect(agents.indexOf("Be kind.")).toBeGreaterThanOrEqual(0);
+    expect(agents.indexOf("Mind the battery.")).toBeGreaterThan(agents.indexOf("Be kind."));
+    expect((plan.explanation as { profile: unknown }).profile).toEqual({
+      name: "laptop",
+      chain: ["test", "laptop"],
+      packs: [
+        { pack: "base", profile: "test" },
+        { pack: "travel", profile: "laptop" },
+      ],
+    });
+  });
+
   test("plans project instructions and composed skills in native roots", async () => {
     const setup = await fixture();
     const plan = await buildProjectPlan(setup.project, setup.machine);

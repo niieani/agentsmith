@@ -49,6 +49,35 @@ effective_instruction_bytes = 28672
 
 Profile budgets override matching Source Repository defaults.
 
+| Key | Required | Meaning |
+| --- | --- | --- |
+| `extends` | No | Name of one parent profile in the same `profiles/` directory. Not ownership-qualified. |
+| `harnesses` | Unless `extends` is set | Nonempty list of harnesses. |
+| `template` | Unless `extends` is set | Template family Source ID. |
+| `packs` | No | Ordered pack Source IDs. |
+| `skills_enable` | No | Skills to enable in addition to pack-enabled skills. |
+| `skills_disable` | No | Skills to exclude. |
+| `budgets` | No | Same keys as the Source Repository root. |
+
+### Extending a profile
+
+```toml title="profiles/laptop.toml"
+extends = "mac"
+packs = ["ios"]
+skills_enable = ["simulator"]
+```
+
+A profile may extend one parent, which may extend another. agentsmith merges the chain starting from the root ancestor:
+
+| Key | Merge |
+| --- | --- |
+| `packs` | Parent packs, then child packs. A pack that appears twice anywhere in the chain is an error. |
+| `skills_enable`, `skills_disable` | Ordered union, parent entries first. |
+| `harnesses`, `template` | The child's value replaces the parent's when set. |
+| `budgets` | Per key; the child's value wins. The result then overrides Source Repository defaults. |
+
+Packs are additive only; a child cannot remove a parent's pack. The root of every chain has no `extends`, so it must set `harnesses` and `template`. Cycles and missing parents are errors. `asmith global explain` shows the resolved chain and which profile contributed each pack.
+
 ## Pack
 
 Path, when needed: `<source>/packs/<name>/pack.toml` or `.config/agentsmith/packs/<name>/pack.toml`.

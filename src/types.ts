@@ -26,6 +26,10 @@ export interface ProfileConfig {
   skillsEnable: string[];
   skillsDisable: string[];
   budgets: Budgets;
+  /** Resolved `extends` chain, root ancestor first; the last entry is the selected profile. */
+  chain: string[];
+  /** The profile in the chain that contributed each pack. */
+  packProfiles: Record<string, string>;
 }
 
 export interface PackConfig {
