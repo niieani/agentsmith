@@ -184,6 +184,30 @@ export function launchAgentPath(home: string): string {
   return join(home, "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`);
 }
 
+/** The single log a scheduled macOS run overwrites; `status.json` keeps the outcome, so older output is not kept. */
+export function launchAgentLogPath(job: Pick<ScheduledJob, "logDirectory">): string {
+  return join(job.logDirectory, "last-run.log");
+}
+
+/**
+ * launchd only appends to StandardOutPath, so logs would grow forever. The job runs through `/bin/sh -c` with a
+ * truncating redirect instead, keeping only the most recent run's output.
+ */
+export function launchAgentArguments(job: ScheduledJob): string[] {
+  return ["/bin/sh", "-c", `exec ${shellCommand(job.programArguments)} >${shellWord(launchAgentLogPath(job))} 2>&1`];
+}
+
+/** The asmith command inside a rendered launchd job, unwrapping the logging shell. */
+function unwrapLaunchAgentCommand(args: string[]): string {
+  if (args.length === 3 && args[0] === "/bin/sh" && args[1] === "-c") {
+    return args[2]!
+      .replace(/^exec /, "")
+      .replace(/ >(?:'[^']*'|\S+) 2>&1$/, "")
+      .trimEnd();
+  }
+  return shellCommand(args);
+}
+
 export function renderLaunchAgent(job: ScheduledJob): string {
   const strings = (values: string[]) => values.map((value) => `\t\t<string>${xml(value)}</string>`).join("\n");
   const environment = Object.entries(job.environment)
@@ -197,7 +221,7 @@ export function renderLaunchAgent(job: ScheduledJob): string {
 \t<string>${LAUNCHD_LABEL}</string>
 \t<key>ProgramArguments</key>
 \t<array>
-${strings(job.programArguments)}
+${strings(launchAgentArguments(job))}
 \t</array>
 \t<key>EnvironmentVariables</key>
 \t<dict>
@@ -209,10 +233,6 @@ ${environment}
 \t<true/>
 \t<key>ProcessType</key>
 \t<string>Background</string>
-\t<key>StandardOutPath</key>
-\t<string>${xml(join(job.logDirectory, "sync.out.log"))}</string>
-\t<key>StandardErrorPath</key>
-\t<string>${xml(join(job.logDirectory, "sync.err.log"))}</string>
 </dict>
 </plist>
 `;
@@ -324,7 +344,7 @@ export async function installSchedule(options: ScheduleOptions, host: SchedulerH
     if (await launchdLoaded(host)) await host.run("launchctl", ["bootout", `${domain}/${LAUNCHD_LABEL}`], { allowFailure: true });
     await host.run("launchctl", ["bootstrap", domain, plist]);
     host.out(`Installed LaunchAgent ${plist}`);
-    host.out(`Logs: ${job.logDirectory}`);
+    host.out(`Log (latest run only): ${launchAgentLogPath(job)}`);
   } else {
     const directory = systemdUnitDirectory(host);
     await host.mkdir(directory);
@@ -393,7 +413,7 @@ export async function readInstalledSchedule(host: SchedulerHost): Promise<Instal
       active: await launchdLoaded(host),
       definition: plist,
       intervalSeconds: interval === undefined ? undefined : Number(interval),
-      command: args.length > 0 ? shellCommand(args) : undefined,
+      command: args.length > 0 ? unwrapLaunchAgentCommand(args) : undefined,
     };
   }
   if (host.platform === "linux") {

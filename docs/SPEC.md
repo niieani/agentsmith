@@ -422,7 +422,7 @@ Other global commands perform no Git synchronization, except `global init`, whic
 
 The invocation is the running executable: the compiled binary alone, or the runtime (`process.execPath`) plus the canonical script path for the npm build or a source checkout. Scheduling a TypeScript source checkout prints a warning. The job's `PATH` is the executable's directory, the installing shell's `PATH`, then `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`, without duplicates. `CODEX_HOME` is carried over when set.
 
-- macOS: `~/Library/LaunchAgents/io.github.niieani.agentsmith.sync.plist` with `StartInterval`, `RunAtLoad`, and stdout/stderr in `~/.agents/agentsmith/logs/sync.out.log` and `sync.err.log`. Install boots out a loaded job, then runs `launchctl bootstrap gui/<uid> <plist>`. Uninstall boots it out and removes the plist.
+- macOS: `~/Library/LaunchAgents/io.github.niieani.agentsmith.sync.plist` with `StartInterval`, `RunAtLoad`, and the job run through `/bin/sh -c "exec … >~/.agents/agentsmith/logs/last-run.log 2>&1"`, so each run overwrites one combined log rather than launchd appending forever. Install boots out a loaded job, then runs `launchctl bootstrap gui/<uid> <plist>`. Uninstall boots it out and removes the plist.
 - Linux: `agentsmith-sync.service` (oneshot) and `agentsmith-sync.timer` (`OnBootSec=2min`, `OnUnitActiveSec=<seconds>s`, `Persistent=true`) in `$XDG_CONFIG_HOME/systemd/user` (default `~/.config/systemd/user`), then `systemctl --user daemon-reload` and `enable --now agentsmith-sync.timer`. When `loginctl` does not report lingering, install prints `loginctl enable-linger <user>`. Uninstall disables the timer, removes both units, and reloads.
 - Other platforms fail with exit 1.
 

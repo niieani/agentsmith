@@ -113,14 +113,14 @@ describe("schedule rendering", () => {
   test("renders a launchd agent", () => {
     const plist = renderLaunchAgent(job({ programArguments: ["/opt/a&b/asmith", "global", "sync", "--on-modified=backup"], intervalSeconds: 1800 }));
     expect(plist).toContain(`<string>${LAUNCHD_LABEL}</string>`);
+    // The job overwrites one log per run instead of letting launchd append forever.
     expect(plist).toContain(
-      "<string>/opt/a&amp;b/asmith</string>\n\t\t<string>global</string>\n\t\t<string>sync</string>\n\t\t<string>--on-modified=backup</string>",
+      "<string>/bin/sh</string>\n\t\t<string>-c</string>\n\t\t<string>exec &apos;/opt/a&amp;b/asmith&apos; global sync --on-modified=backup &gt;/Users/me/.agents/agentsmith/logs/last-run.log 2&gt;&amp;1</string>",
     );
+    expect(plist).not.toContain("StandardOutPath");
     expect(plist).toContain("<key>StartInterval</key>\n\t<integer>1800</integer>");
     expect(plist).toContain("<key>RunAtLoad</key>\n\t<true/>");
     expect(plist).toContain("<key>PATH</key>\n\t\t<string>/opt/asmith/bin:/usr/bin</string>");
-    expect(plist).toContain("<string>/Users/me/.agents/agentsmith/logs/sync.out.log</string>");
-    expect(plist).toContain("<string>/Users/me/.agents/agentsmith/logs/sync.err.log</string>");
   });
 
   test("renders systemd user units", () => {
@@ -164,8 +164,10 @@ describe("macOS schedule", () => {
     const plist = fixture.files.get(plistPath)!;
     expect(plist).toContain("<integer>1800</integer>");
     expect(plist).toContain(
-      `<string>/opt/asmith/bin/asmith</string>\n\t\t<string>global</string>\n\t\t<string>sync</string>\n\t\t<string>--on-modified=backup</string>\n\t\t<string>--config</string>\n\t\t<string>${fixture.config}</string>`,
+      `<string>exec /opt/asmith/bin/asmith global sync --on-modified=backup --config ${fixture.config} &gt;${fixture.home}/.agents/agentsmith/logs/last-run.log 2&gt;&amp;1</string>`,
     );
+    // schedule status shows the asmith command, not the logging shell around it.
+    expect((await readInstalledSchedule(fixture.host)).command).toBe(`/opt/asmith/bin/asmith global sync --on-modified=backup --config ${fixture.config}`);
     expect(plist).toContain("<string>/opt/asmith/bin:/custom/bin:/usr/bin:/opt/homebrew/bin:/usr/local/bin:/bin:/usr/sbin:/sbin</string>");
 
     const probe = fixture.calls.find((call) => call.command === "git" && call.args[0] === "ls-remote")!;

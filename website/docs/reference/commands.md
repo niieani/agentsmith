@@ -51,7 +51,7 @@ Rerunning the same `global init` is safe: it reuses the clone and config and syn
 
 | Platform | Files | Logs |
 | --- | --- | --- |
-| macOS | `~/Library/LaunchAgents/io.github.niieani.agentsmith.sync.plist` (`StartInterval`, `RunAtLoad`), loaded with `launchctl bootstrap gui/<uid>` | `~/.agents/agentsmith/logs/sync.out.log`, `sync.err.log` |
+| macOS | `~/Library/LaunchAgents/io.github.niieani.agentsmith.sync.plist` (`StartInterval`, `RunAtLoad`), loaded with `launchctl bootstrap gui/<uid>` | `~/.agents/agentsmith/logs/last-run.log`, overwritten by each run (`status.json` keeps the outcome) |
 | Linux | `~/.config/systemd/user/agentsmith-sync.service` and `.timer`, enabled with `systemctl --user enable --now` | `journalctl --user -u agentsmith-sync.service` |
 
 On Linux, user timers run only while you have a login session unless lingering is on. Install tells you when to run `loginctl enable-linger $USER`, which an always-on host needs.
