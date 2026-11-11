@@ -46,7 +46,7 @@ agentsmith exists to provide that complete workflow while keeping its source mod
 - Boolean pack conditions, pack dependencies, conflicts, or suppressing packs.
 - Runtime skill chaining or runtime partial includes.
 - Skill version resolution as a separate package-management concept.
-- Website implementation, package publication, release automation, or multi-user administration.
+- Multi-user administration.
 
 ## Users and scenarios
 
@@ -167,7 +167,7 @@ Adapters own native paths, discovery rules, instruction shadowing checks, and sk
 ## Quality requirements
 
 - Deterministic results across repeated runs on the same inputs.
-- Strict, versioned TOML; unknown keys are errors.
+- Strict TOML with no schema-version field; unknown keys, including `version`, are errors.
 - Clear diagnostics containing the responsible source and destination paths.
 - No partial output after validation or preflight failure.
 - Unit coverage for parsing, rendering, planning, and safety rules.
