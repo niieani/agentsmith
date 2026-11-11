@@ -51,6 +51,8 @@ Common snippets apply to every harness. Harness-specific snippets live in `instr
 
 Every instruction file also has two reserved slots, `prepend` and `append`, that templates never declare. Snippets in `instructions/prepend/` go at the very top of the file and `instructions/append/` at the very bottom, verbatim. [`global adopt`](/guides/safe-workflows#keeping-local-additions) uses them to keep text added around generated content. See [reserved edge slots](/reference/directives#reserved-edge-slots).
 
+To add a snippet without choosing its number by hand, run [`asmith global add SLOT "text"`](/reference/commands#adding-snippets) or `asmith project add`. It checks that the slot exists, picks a free `NN-` prefix in the largest gap, lints, and regenerates.
+
 The directory itself defines an instruction-only pack. Add `pack.toml` only when the pack should enable skills:
 
 ```toml

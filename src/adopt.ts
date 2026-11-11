@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { choosePack } from "./add.ts";
 import { generateGlobal } from "./commands.ts";
 import { loadMachineConfig, loadProfileConfig, MACHINE_CONFIG_PATH, parseSourceId, resolveConfiguredPath } from "./config.ts";
 import { AgentsmithError, classify } from "./errors.ts";
@@ -92,13 +93,10 @@ export async function adoptGlobal(options: AdoptOptions): Promise<void> {
   if (options.slot !== undefined) {
     if (!validLogicalName(options.slot)) throw new AgentsmithError("config", `Invalid slot name ${JSON.stringify(options.slot)}`);
   }
-  const packSelection = options.pack ?? profile.packs.at(-1);
-  if (packSelection === undefined) throw new AgentsmithError("config", `Profile ${machine.profile} selects no packs; pass --pack`);
-  const pack = await classify("config", () => parseSourceId(packSelection));
-  if (pack.owner === "project") throw new AgentsmithError("config", "Global adoption cannot target a project pack");
-  if (!profile.packs.some((selected) => parseSourceId(selected).name === pack.name)) {
-    throw new AgentsmithError("config", `Pack ${pack.name} is not selected by profile ${machine.profile}`);
+  if (options.pack !== undefined && (await classify("config", () => parseSourceId(options.pack!))).owner === "project") {
+    throw new AgentsmithError("config", "Global adoption cannot target a project pack");
   }
+  const pack = { name: choosePack(profile.packs, options.pack, `selected by profile ${machine.profile}`) };
   const packDirectory = join(machine.source, "packs", ...pack.name.split("/"));
   if (!existsSync(packDirectory)) throw new AgentsmithError("config", `Pack directory does not exist: ${packDirectory}`);
 

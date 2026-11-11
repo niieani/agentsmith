@@ -3,8 +3,9 @@ import { readFile, rmdir } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 import { stringify } from "smol-toml";
 import { loadMachineConfig, MACHINE_CONFIG_PATH, resolveConfiguredPath } from "./config.ts";
+import { addSnippet, type Placement } from "./add.ts";
 import { adoptGlobal } from "./adopt.ts";
-import { classify, errorCode, errorMessage, exitCodeFor } from "./errors.ts";
+import { AgentsmithError, classify, errorCode, errorMessage, exitCodeFor } from "./errors.ts";
 import { CommandError, ensureCleanSource, gitHeadCommit, gitPullFfOnly, gitWorktree } from "./git.ts";
 import { assertPlanValid, buildGlobalPlan, buildProjectPlan, type BuiltPlan } from "./planner.ts";
 import {
@@ -29,7 +30,7 @@ import {
 import { globalInit } from "./init.ts";
 import { installSchedule, printScheduleStatus, uninstallSchedule } from "./schedule.ts";
 import { printGlobalStatus, writeGlobalStatus, type RunReport } from "./status.ts";
-import type { Diagnostic, GenerationPlan, PlannedDelete, PlannedWrite } from "./types.ts";
+import type { Diagnostic, GenerationPlan, HarnessName, PlannedDelete, PlannedWrite } from "./types.ts";
 
 const encoder = new TextEncoder();
 
@@ -51,6 +52,16 @@ export interface CommandOptions {
   schedule?: boolean;
   interval?: string;
   yes?: boolean;
+  text?: string;
+  file?: string;
+  skillSlot?: boolean;
+  harness?: HarnessName;
+  placement?: Placement;
+  name?: string;
+  local?: boolean;
+  push?: boolean;
+  skipGenerate?: boolean;
+  scope?: string;
 }
 
 export function diagnosticsText(diagnostics: Diagnostic[]): string {
@@ -155,7 +166,7 @@ async function pruneEmptySkillDirectories(deletions: PlannedDelete[], report?: R
   }
 }
 
-async function generateProject(plan: BuiltPlan): Promise<void> {
+export async function generateProject(plan: BuiltPlan): Promise<void> {
   await classify("config", () => assertPlanValid(plan));
   printDiagnostics(plan.diagnostics.filter((item) => item.severity === "warning"));
   const prepared = await prepareProjectPlan(plan);
@@ -376,6 +387,7 @@ export type CommandAction =
   | "explain"
   | "status"
   | "adopt"
+  | "add"
   | "init"
   | "schedule-install"
   | "schedule-uninstall"
@@ -392,6 +404,11 @@ export async function executeCommand(mode: "global" | "project", action: Command
     return 0;
   }
   if (action === "status") return printGlobalStatus(options);
+  if (action === "add") {
+    if (options.slot === undefined) throw new AgentsmithError("config", `${mode} add requires a slot`);
+    await addSnippet(mode, { ...options, slot: options.slot });
+    return 0;
+  }
   if (action === "adopt") {
     await adoptGlobal(options);
     return 0;

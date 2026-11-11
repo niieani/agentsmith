@@ -340,6 +340,19 @@ agentsmith scans all Markdown in selected source directories, including ignored 
 
 **Why it helps:** exceptional host notes use the same composition pipeline without creating a public profile for a private detail.
 
+## Add a rule from the command line
+
+**Problem:** you want to add one instruction to every machine without opening the Source Repository, choosing a file number, and committing by hand.
+
+```sh
+asmith global add tools "Use Bun for scripts and tests." --dry-run
+asmith global add tools "Use Bun for scripts and tests." --push
+```
+
+`add` checks that the active template declares the `tools` slot, writes `packs/<pack>/instructions/tools/NN-use-bun-for-scripts-and-tests.md` in the next free gap, lints, commits only that file, pushes, and regenerates this machine. Other machines pick it up on their next sync. Pass `--pack NAME` when the profile selects several packs, `--harness NAME` for a harness-specific snippet, `--skill-slot` to extend every skill that declares the slot, or `--local` for a Git-ignored machine-only note. In a project, `asmith project add tools "..." --pack local` writes to a project pack instead. See [adding snippets](/reference/commands#adding-snippets).
+
+**Why it helps:** one command validates the slot, picks a non-conflicting number, and leaves the Source Repository clean.
+
 ## Keep a hand edit with `global adopt`
 
 **Problem:** you added a few machine-specific lines at the top of the generated `~/.claude/CLAUDE.md`, and the next sync stops because the file changed.
@@ -349,7 +362,7 @@ asmith global adopt --dry-run
 asmith global adopt
 ```
 
-When the edit is strictly before or after the generated content, `adopt` writes it as Git-ignored `*.local.md` snippets in the reserved `prepend` and `append` slots of the profile's last pack, then regenerates the same file. Use `--slot NAME` to file the text under a template section instead. Edits in the middle of generated content, and edits to skills, are refused. See [adopting local edits](/reference/commands#adopting-local-edits).
+When the edit is strictly before or after the generated content, `adopt` writes it as Git-ignored `*.local.md` snippets in the reserved `prepend` and `append` slots, then regenerates the same file. Use `--slot NAME` to file the text under a template section instead. Edits in the middle of generated content, and edits to skills, are refused. When the profile selects more than one pack, pass `--pack NAME`. See [adopting local edits](/reference/commands#adopting-local-edits).
 
 **Why it helps:** the local addition moves into source once, and later syncs reproduce it instead of fighting it.
 
