@@ -38,3 +38,17 @@ Each slice ends with `bun run check` and updates the specification, configuratio
 - An unattended sync over a hand-edited `CLAUDE.md` with `--on-modified=backup` succeeds, keeps a backup, and records a warning in `status.json`.
 - `global adopt` round-trips a prepend and an append into snippets that reproduce the edited file on the next generation, and refuses a mid-file edit.
 - A fresh machine reaches a synced, scheduled state with `global init --schedule`.
+
+## Slice E: adding snippets from the CLI
+
+`asmith global add <slot> [text]` and `asmith project add <slot> [text]` write a new snippet into a pack slot.
+
+- Content: the trailing positional argument, `--file <path>`, or stdin when neither is given and stdin is not a TTY. Exactly one source.
+- Target: `instructions/[<harness>/]<slot>/` by default; `--skill-slot` targets `skill-slots/[harnesses/<harness>/]<slot>/`. `--harness <name>` selects the harness-specific directory.
+- Validation: an instruction slot must be declared by the selected template for some harness in scope; a skill slot must be declared by at least one enabled skill. Otherwise exit nonzero and list the slots that exist. For a skill slot, the output lists every skill that will receive the snippet.
+- Pack: `--pack` is required unless exactly one candidate exists (the profile's only pack; the scope's only project pack). The same rule applies to `global adopt`.
+- Numbering: `--placement gap|first|last`, default `gap`: the file directly after the lower neighbor of the largest gap between existing two-digit prefixes (`00, 10, 11, 99` gives `12`); ties take the lowest gap; an empty slot starts at `50`; no free number is an error, and existing files are never renamed. `first` and `last` go below the lowest and above the highest prefix. Filename `NN-<slug>.md`, slug from the content or `--name`.
+- `--local` (global only) writes `*.local.md` and requires Git to ignore it.
+- After writing: lint (removing the file and failing on errors), then regenerate this machine's artifacts unless `--skip-generate`.
+- `--push` (global only, not with `--local`): require a clean source, `git pull --ff-only`, write, lint, commit only the new file, push, then regenerate.
+- `--dry-run` prints the path and content without writing.
