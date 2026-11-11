@@ -312,7 +312,7 @@ Global state records destination paths and content hashes outside generated arti
 - `--force` is limited to global generate/sync adoption or recovery.
 - Stale recorded artifacts are deleted only when unchanged from recorded state.
 
-`global sync` and `global generate` accept `--on-modified=fail|backup` (default `fail`). With `backup`, every modified, unrecorded, or modified stale artifact that would otherwise fail preflight is renamed to `<path>.agentsmith-<UTC timestamp>` (format `YYYYMMDDTHHMMSSZ`, with `-<n>` appended if that name exists) before application. A conflicting file inside a skill backs up the whole skill directory: the nearest ancestor whose `SKILL.md` is recorded or planned. Backups are reported as warnings. If application fails, backups are moved back. File/directory transitions over unowned content still fail in both modes.
+`global sync` and `global generate` accept `--on-modified=fail|backup` (default `fail`). With `backup`, every modified, unrecorded, or modified stale artifact that would otherwise fail preflight is renamed to `<path>.agentsmith-<UTC timestamp>` (format `YYYYMMDDTHHMMSSZ`, with `-<n>` appended if that name exists) before application. A conflicting file inside a skill backs up the whole skill directory (the nearest ancestor whose `SKILL.md` is recorded or planned) to `~/.agents/agentsmith/backups/<UTC timestamp>/<original absolute path>`. Skill backups never stay in a skill root, because harnesses would discover them as additional skills with the same name. Backups are reported as warnings. If application fails, backups are moved back. File/directory transitions over unowned content still fail in both modes.
 
 ### 8.2.1 Run status
 

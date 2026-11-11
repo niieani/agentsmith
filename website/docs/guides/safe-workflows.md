@@ -34,7 +34,7 @@ For a machine that syncs itself on a timer, run:
 asmith global sync --on-modified=backup
 ```
 
-When someone has edited a generated global file by hand, this moves the file aside as `<name>.agentsmith-<UTC timestamp>` and keeps converging instead of stopping. For a skill, the whole skill directory is moved. Each backup is a warning on stderr and in `~/.agents/agentsmith/status.json`. Review backups later and either move the change into the Source Repository or delete the backup. A backed-up skill directory stays in the skill root, so remove it once reviewed.
+When someone has edited a generated global file by hand, this moves the file aside as `<name>.agentsmith-<UTC timestamp>` and keeps converging instead of stopping. For a skill, the whole skill directory moves to `~/.agents/agentsmith/backups/<UTC timestamp>/<original path>`, outside every skill folder, so no harness loads it as a second copy. Each backup is a warning on stderr and in `~/.agents/agentsmith/status.json`. Review backups later and either move the change into the Source Repository or delete the backup.
 
 Each run records its result in `status.json`. Monitor it with:
 

@@ -14,7 +14,7 @@ For a newly generated output, add and commit it before the next generation.
 `global sync` and `global generate` exit with code 5. Run `asmith global diff` to see the difference, then choose:
 
 - To keep text you added at the very top or bottom of a global `AGENTS.md` or `CLAUDE.md`, run `asmith global adopt`.
-- To keep a copy of the file but let generation continue, run `asmith global generate --on-modified=backup`. Review the `*.agentsmith-<timestamp>` backup afterwards.
+- To keep a copy of the file but let generation continue, run `asmith global generate --on-modified=backup`. Review the `*.agentsmith-<timestamp>` file backup, or skill backups under `~/.agents/agentsmith/backups/`, afterwards.
 - To discard the changes and take over the paths, run `asmith global generate --force`. This updates the external hash state after writing.
 
 ## Adoption refused

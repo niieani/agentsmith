@@ -309,9 +309,11 @@ describe("global reliability", () => {
     const instructionBackup = claudeEntries.find((name) => /^CLAUDE\.md\.agentsmith-\d{8}T\d{6}Z$/.test(name));
     expect(instructionBackup).toBeDefined();
     expect(await readFile(join(fixture.root, ".claude", instructionBackup!), "utf8")).toContain("manual edit");
-    const skillEntries = await readdir(join(fixture.root, ".claude", "skills"));
-    const skillBackup = skillEntries.find((name) => name.startsWith(`${fixture.skill}.agentsmith-`));
-    expect(await readFile(join(fixture.root, ".claude", "skills", skillBackup!, "SKILL.md"), "utf8")).toContain("skill edit");
+    // Skill directories move outside every skill root so no harness loads a second copy.
+    expect((await readdir(join(fixture.root, ".claude", "skills"))).filter((name) => name.includes(".agentsmith-"))).toEqual([]);
+    const backupRoot = join(fixture.root, ".agents", "agentsmith", "backups");
+    const [stamp] = await readdir(backupRoot);
+    expect(await readFile(join(backupRoot, stamp!, fixture.skillDir.slice(1), "SKILL.md"), "utf8")).toContain("skill edit");
     expect(await readFile(join(fixture.skillDir, "SKILL.md"), "utf8")).not.toContain("skill edit");
 
     // A stale successful run fails a max-age check.

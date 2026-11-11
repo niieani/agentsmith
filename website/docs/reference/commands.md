@@ -22,7 +22,7 @@ The default machine config is `~/.agents/agentsmith/config.toml`.
 `--on-modified` decides what `global sync` and `global generate` do with a global artifact whose content differs from what agentsmith last generated, or that exists without being recorded:
 
 - `fail` (default) stops the run with exit code 5 and changes nothing.
-- `backup` renames the artifact to `<name>.agentsmith-<UTC timestamp>`, for example `CLAUDE.md.agentsmith-20261110T120000Z`, then generates. A changed file inside a skill backs up the whole skill directory. Each backup is printed as a `WARNING artifact-backup` line on stderr and recorded in `status.json`. The run still exits 0.
+- `backup` renames the artifact to `<name>.agentsmith-<UTC timestamp>`, for example `CLAUDE.md.agentsmith-20261110T120000Z`, then generates. A changed file inside a skill moves the whole skill directory to `~/.agents/agentsmith/backups/<UTC timestamp>/<original path>`, outside every skill folder. Each backup is printed as a `WARNING artifact-backup` line on stderr and recorded in `status.json`. The run still exits 0.
 
 `--force` keeps its meaning: in `fail` mode it overwrites unrecorded or modified artifacts without a backup. With `backup`, `--force` has no further effect.
 

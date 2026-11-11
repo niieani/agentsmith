@@ -164,9 +164,13 @@ describe("modified artifact backups", () => {
     const conflicts = await preflightGlobalPlan(generation, { state, onModified: "backup" });
     expect(conflicts).toEqual([{ destination: reference, reason: "modified" }]);
     const date = new Date("2026-11-10T12:34:56.789Z");
-    const backups = await backupGlobalArtifacts(conflicts, { plan: generation, state, date });
-    expect(backups).toEqual([{ path: skill, backup: `${skill}.agentsmith-20261110T123456Z`, reason: "modified" }]);
-    expect(await readFile(join(`${skill}.agentsmith-20261110T123456Z`, "references", "guide.md"), "utf8")).toBe("edited\n");
+    const backupRoot = join(root, "backups");
+    const backups = await backupGlobalArtifacts(conflicts, { plan: generation, state, date, backupRoot });
+    const expected = join(backupRoot, "20261110T123456Z", skill.slice(1));
+    expect(backups).toEqual([{ path: skill, backup: expected, reason: "modified" }]);
+    expect(await readFile(join(expected, "references", "guide.md"), "utf8")).toBe("edited\n");
+    // Nothing is left in the skill root that a harness could load as a second copy.
+    expect(await readdir(join(root, "skills"))).toEqual([]);
     await restoreBackups(backups);
     expect(await readFile(reference, "utf8")).toBe("edited\n");
   });

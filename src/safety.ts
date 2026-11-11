@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmod, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, cp, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import { parse, stringify } from "smol-toml";
@@ -284,13 +284,31 @@ function owningSkillDirectory(path: string, knownFiles: ReadonlySet<string>): st
   }
 }
 
+/** Where whole skill directories are moved, outside every skill root so no harness loads them. */
+export function globalBackupRoot(home = homedir()): string {
+  return join(home, ".agents", "agentsmith", "backups");
+}
+
+async function moveAside(path: string, backup: string): Promise<void> {
+  await mkdir(dirname(backup), { recursive: true });
+  try {
+    await rename(path, backup);
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "EXDEV")) throw error;
+    await cp(path, backup, { recursive: true, errorOnExist: true, force: false });
+    await rm(path, { recursive: true, force: true });
+  }
+}
+
 /**
- * Move conflicting global artifacts aside as `<name>.agentsmith-<UTC timestamp>`.
- * A conflicting skill file backs up its whole skill directory.
+ * Move conflicting global artifacts aside. An instruction file becomes `<name>.agentsmith-<UTC timestamp>` beside the
+ * original, which no harness reads. A conflicting skill file backs up its whole skill directory to
+ * `<backupRoot>/<UTC timestamp>/<original absolute path>`: a renamed directory left in the skill root would still be
+ * discovered, and Codex would load two skills with the same name.
  */
 export async function backupGlobalArtifacts(
   conflicts: readonly GlobalConflict[],
-  options: { plan: GenerationPlan; state: GlobalState; date?: Date },
+  options: { plan: GenerationPlan; state: GlobalState; date?: Date; backupRoot?: string },
 ): Promise<ArtifactBackup[]> {
   const known = new Set([
     ...Object.keys(options.state.artifacts).map((path) => resolve(path)),
@@ -301,11 +319,13 @@ export async function backupGlobalArtifacts(
   const moved = new Set<string>();
   try {
     for (const item of conflicts) {
-      const path = owningSkillDirectory(item.destination, known) ?? item.destination;
+      const skillDirectory = owningSkillDirectory(item.destination, known);
+      const path = skillDirectory ?? item.destination;
       if (moved.has(path) || !(await exists(path))) continue;
-      let backup = `${path}.agentsmith-${stamp}`;
-      for (let attempt = 1; await exists(backup); attempt++) backup = `${path}.agentsmith-${stamp}-${attempt}`;
-      await rename(path, backup);
+      const base = skillDirectory === undefined ? `${path}.agentsmith-${stamp}` : join(options.backupRoot ?? globalBackupRoot(), stamp, resolve(path).slice(1));
+      let backup = base;
+      for (let attempt = 1; await exists(backup); attempt++) backup = `${base}-${attempt}`;
+      await moveAside(path, backup);
       moved.add(path);
       backups.push({ path, backup, reason: item.reason });
     }
@@ -320,7 +340,7 @@ export async function backupGlobalArtifacts(
 export async function restoreBackups(backups: readonly ArtifactBackup[]): Promise<void> {
   for (const entry of [...backups].reverse()) {
     await rm(entry.path, { recursive: true, force: true }).catch(() => undefined);
-    await rename(entry.backup, entry.path).catch(() => undefined);
+    await moveAside(entry.backup, entry.path).catch(() => undefined);
   }
 }
 
