@@ -53,6 +53,7 @@ const globalCommands = or(
     "status",
     object({
       action: constant("status"),
+      config: configOption,
       json: option("--json"),
       maxAge: optional(option("--max-age", string({ metavar: "DURATION" }))),
     }),
@@ -63,7 +64,10 @@ const globalCommands = or(
       action: constant("adopt"),
       config: configOption,
       slot: optional(option("--slot", string({ metavar: "NAME" }))),
+      skill: optional(option("--skill", string({ metavar: "NAME" }))),
       pack: optional(option("--pack", string({ metavar: "NAME" }))),
+      push: option("--push"),
+      noCommit: option("--no-commit"),
       dryRun: option("--dry-run"),
     }),
   ),
@@ -89,6 +93,16 @@ const globalCommands = or(
       command("status", object({ action: constant("schedule-status") })),
     ),
   ),
+  command(
+    "clean",
+    object({
+      action: constant("clean"),
+      config: configOption,
+      yes: option("-y", "--yes"),
+      force: option("--force"),
+      onModified: onModifiedOption,
+    }),
+  ),
   command("diff", object({ action: constant("diff"), config: configOption })),
   command(
     "lint",
@@ -110,7 +124,29 @@ const globalCommands = or(
 
 const projectCommands = or(
   command("add", object({ action: constant("add"), project: projectOption, scope: optional(option("--scope", string({ metavar: "PATH" }))), ...addOptions })),
-  command("generate", object({ action: constant("generate"), project: projectOption })),
+  command("generate", object({ action: constant("generate"), project: projectOption, onModified: onModifiedOption })),
+  command(
+    "adopt",
+    object({
+      action: constant("adopt"),
+      project: projectOption,
+      scope: optional(option("--scope", string({ metavar: "PATH" }))),
+      skill: option("--skill", string({ metavar: "NAME" })),
+      pack: optional(option("--pack", string({ metavar: "NAME" }))),
+      dryRun: option("--dry-run"),
+    }),
+  ),
+  command(
+    "clean",
+    object({
+      action: constant("clean"),
+      project: projectOption,
+      scope: optional(option("--scope", string({ metavar: "PATH" }))),
+      yes: option("-y", "--yes"),
+      force: option("--force"),
+      onModified: onModifiedOption,
+    }),
+  ),
   command("diff", object({ action: constant("diff"), project: projectOption })),
   command(
     "lint",

@@ -5,7 +5,7 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { parse, stringify } from "smol-toml";
 import { diagnosticsText, prepareGlobalPlan, runRecordedGlobal } from "./commands.ts";
-import { loadProfileConfig, MACHINE_CONFIG_PATH, profileConfigPath, resolveConfiguredPath } from "./config.ts";
+import { loadProfileConfig, MACHINE_CONFIG_PATH, profileConfigPath, readMachineHome, resolveConfiguredPath } from "./config.ts";
 import { AgentsmithError, classify, errorMessage } from "./errors.ts";
 import { walkFiles } from "./fs.ts";
 import { gitWorktree, runCommand } from "./git.ts";
@@ -119,7 +119,7 @@ async function verifyProfile(source: string, profile: string): Promise<void> {
 }
 
 /** Whether an existing machine config selects something else; undefined when there is none. */
-function existingMachineConfig(configPath: string): { source?: string; profile?: string; raw: string } | undefined {
+function existingMachineConfig(configPath: string): { source?: string; profile?: string; home?: string; raw: string } | undefined {
   if (!existsSync(configPath)) return undefined;
   const raw = readFileSync(configPath, "utf8");
   try {
@@ -128,6 +128,8 @@ function existingMachineConfig(configPath: string): { source?: string; profile?:
       raw,
       source: typeof value.source === "string" ? resolveConfiguredPath(value.source, configPath) : undefined,
       profile: typeof value.profile === "string" ? value.profile : undefined,
+      // Kept as written, so a relative sandbox home stays relative to the config file.
+      home: typeof value.home === "string" ? value.home : undefined,
     };
   } catch {
     return { raw };
@@ -165,8 +167,13 @@ async function describeConflict(conflict: GlobalConflict, planned: Uint8Array | 
  */
 export async function globalInit(options: InitOptions, dependencies: InitDependencies = {}): Promise<void> {
   const cwd = process.cwd();
-  const source = resolveConfiguredPath(options.source ?? DEFAULT_SOURCE_PATH, join(cwd, ".source"));
   const configPath = resolveConfiguredPath(options.config ?? MACHINE_CONFIG_PATH, join(cwd, "config.toml"));
+  // A machine config that already sets a sandbox home keeps it, and the default clone lands inside the sandbox.
+  const home = readMachineHome(configPath);
+  const source =
+    options.source === undefined && home !== undefined
+      ? join(home, ".agents", "agentsmith", "source")
+      : resolveConfiguredPath(options.source ?? DEFAULT_SOURCE_PATH, join(cwd, ".source"));
   if (options.interval !== undefined && !options.schedule) throw new AgentsmithError("config", "--interval requires --schedule");
   if (options.schedule) {
     intervalSeconds(options.interval);
@@ -190,7 +197,9 @@ export async function globalInit(options: InitOptions, dependencies: InitDepende
 
   if (!unchanged) {
     await mkdir(dirname(configPath), { recursive: true });
-    await atomicWrite(configPath, new TextEncoder().encode(stringify({ source, profile: options.profile })));
+    const config: Record<string, string> = { source, profile: options.profile };
+    if (existing?.home !== undefined) config.home = existing.home;
+    await atomicWrite(configPath, new TextEncoder().encode(stringify(config)));
     console.log(`${existing === undefined ? "Wrote" : "Replaced"} machine config ${configPath} (profile ${options.profile})`);
   } else {
     console.log(`Machine config ${configPath} already selects profile ${options.profile}`);

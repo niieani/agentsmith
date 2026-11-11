@@ -72,3 +72,8 @@ export function canonicalRoot(path: string): string {
 export function canonicalHome(): string {
   return canonicalRoot(homedir());
 }
+
+/** The home agentsmith writes under: a machine config's sandbox `home` when set, otherwise the real one. */
+export function agentsmithHome(home?: string): string {
+  return home ?? canonicalHome();
+}

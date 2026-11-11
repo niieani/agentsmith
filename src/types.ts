@@ -13,6 +13,11 @@ export interface Budgets {
 export interface MachineConfig {
   source: string;
   profile: string;
+  /**
+   * Configured sandbox home with symlinked ancestors resolved. When set, every agentsmith destination and every piece
+   * of agentsmith state resolves under it instead of `$HOME`, and `CODEX_HOME` is ignored. Git keeps the real `$HOME`.
+   */
+  home?: string;
 }
 
 export interface RootConfig {
@@ -35,6 +40,10 @@ export interface ProfileConfig {
   skillsDisable: string[];
   harnessSkills: HarnessSkills;
   budgets: Budgets;
+  /** Report unmanaged skills in every Skill Root a selected harness reads. The nearest profile in the chain that sets it wins. */
+  exclusive: boolean;
+  /** Skill directory name globs left alone in exclusive mode; an ordered union through `extends`. */
+  exclusiveAllow: string[];
   /** Resolved `extends` chain, root ancestor first; the last entry is the selected profile. */
   chain: string[];
   /** The profile in the chain that contributed each pack. */
@@ -53,6 +62,10 @@ export interface ScopeConfig {
   skillsEnable: string[];
   skillsDisable: string[];
   harnessSkills: HarnessSkills;
+  /** Overrides the project's `exclusive` for this scope. */
+  exclusive?: boolean;
+  /** Added to the project's `exclusive_allow` for this scope. */
+  exclusiveAllow: string[];
 }
 
 export interface ProjectConfig {
@@ -60,6 +73,8 @@ export interface ProjectConfig {
   budgets: Budgets;
   /** Write `@AGENTS.md` as CLAUDE.md when CLAUDE.md would repeat a sibling generated AGENTS.md byte for byte. */
   claudeImportAgentsMd: boolean;
+  exclusive: boolean;
+  exclusiveAllow: string[];
   scopes: ScopeConfig[];
 }
 

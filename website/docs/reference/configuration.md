@@ -18,6 +18,21 @@ profile = "laptop"
 | --- | --- | --- |
 | `source` | Yes | Source Repository path. |
 | `profile` | Yes | Profile filename without `.toml`. |
+| `home` | No | Sandbox home. See [sandbox home](#sandbox-home). |
+
+Relative paths resolve against the directory holding the config file; `~` means your real home.
+
+### Sandbox home
+
+```toml title="~/sandbox/config.toml"
+source = "source"
+profile = "laptop"
+home = "home"
+```
+
+When `home` is set, agentsmith uses it in place of `$HOME` for everything it owns: global artifacts (`<home>/.claude/CLAUDE.md`, `<home>/.codex/AGENTS.md`, `<home>/.agents/skills`, …), `state.toml`, `status.json`, stored content blobs, backups, and scheduler logs, all under `<home>/.agents/agentsmith/`. `CODEX_HOME` is ignored while `home` is set, so a sandbox never writes into your real `~/.codex`. The directory must already exist.
+
+Git and SSH still run with your real `$HOME`, so your identity, keys, and credential helpers keep working for `global sync`, `global add --push`, and `global init`. Pass the config with `--config` to every global command, including `global status`. `global schedule install --config` schedules a job that syncs the sandbox; the LaunchAgent or systemd unit itself stays in your real home. `global init --config` keeps an existing config's `home` and, without `--source`, clones into `<home>/.agents/agentsmith/source`.
 
 ## Root config
 
@@ -61,6 +76,8 @@ Profile budgets override matching Source Repository defaults. See [per-harness s
 | `skills_enable` | No | Skills to enable in addition to pack-enabled skills. |
 | `skills_disable` | No | Skills to exclude. |
 | `budgets` | No | Same keys as the Source Repository root. |
+| `exclusive` | No | `true` reports every skill agentsmith did not write. See [exclusive mode](#exclusive-mode). Default `false`. |
+| `exclusive_allow` | No | Skill directory name globs that exclusive mode leaves alone. |
 
 ### Extending a profile
 
@@ -77,7 +94,8 @@ A profile may extend one parent, which may extend another. agentsmith merges the
 | `packs` | Parent packs, then child packs. A pack that appears twice anywhere in the chain is an error. |
 | `skills_enable`, `skills_disable` | Ordered union, parent entries first. |
 | `harness_skills.<harness>.enable`, `.disable` | Ordered union per harness, parent entries first. Each configured harness must be selected by the resolved profile. |
-| `harnesses`, `template` | The child's value replaces the parent's when set. |
+| `harnesses`, `template`, `exclusive` | The child's value replaces the parent's when set. |
+| `exclusive_allow` | Ordered union, parent entries first. |
 | `budgets` | Per key; the child's value wins. The result then overrides Source Repository defaults. |
 
 Packs are additive only; a child cannot remove a parent's pack. A base profile may list only packs; the selected profile must end up with `harnesses` and `template`, set directly or inherited. Cycles and missing parents are errors. `asmith global explain` shows the resolved chain and which profile contributed each pack.
@@ -124,11 +142,28 @@ skills_disable = []
 disable = ["publish"]
 ```
 
-Top-level project keys are `harnesses`, `claude_import_agents_md`, `budgets`, and `scopes`. Scope keys are `path`, `template`, `packs`, `harnesses`, `skills_enable`, `skills_disable`, and `harness_skills`. A `[scopes.harness_skills.<harness>]` table applies to the most recent `[[scopes]]` entry.
+Top-level project keys are `harnesses`, `claude_import_agents_md`, `budgets`, `exclusive`, `exclusive_allow`, and `scopes`. Scope keys are `path`, `template`, `packs`, `harnesses`, `skills_enable`, `skills_disable`, `harness_skills`, `exclusive`, and `exclusive_allow`. A `[scopes.harness_skills.<harness>]` table applies to the most recent `[[scopes]]` entry.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `claude_import_agents_md` | `true` | When a scope's generated `CLAUDE.md` would be byte-identical to the `AGENTS.md` generated beside it, write `CLAUDE.md` containing only `@AGENTS.md`. Set `false` to always write the full content. |
+| `exclusive` | `false` | Turn on [exclusive mode](#exclusive-mode) for every scope. A scope's own `exclusive` overrides it. |
+| `exclusive_allow` | `[]` | Skill directory name globs that exclusive mode leaves alone. A scope's own list is added to this one. |
+
+## Exclusive mode
+
+```toml
+exclusive = true
+exclusive_allow = ["find-skills", "vercel-*"]
+```
+
+With exclusive mode on, agentsmith expects to own every skill a selected harness can see in the scope being generated. It checks every Skill Root that a selected harness reads, globally or in each exclusive project scope (for example `~/.agents/skills`, `~/.codex/skills`, and `~/.claude/skills`), and reports each skill directory it did not write. Directories whose name matches an `exclusive_allow` glob are left alone, which suits skills that another tool installs, such as `npx skills add`. Hidden directories, such as Codex's `.system`, are skipped.
+
+Globs match the whole directory name: `*` matches any run of characters, `?` one character, and `[ab]` or `[!ab]` one character from, or not from, a set.
+
+Unmanaged skills make `lint`, `generate`, and `sync` exit 5 and list each path. With `--on-modified=backup` they move to the backup folder and the run continues: globally `~/.agents/agentsmith/backups/<UTC timestamp>/<original path>`, in a project `<Git directory>/agentsmith/backups/<UTC timestamp>/<original path>`. To keep an unmanaged skill, adopt it with [`adopt --skill`](/reference/commands#adopting-unmanaged-skills).
+
+In a profile, `exclusive` follows `extends` like `harnesses`: the nearest profile that sets it wins. `exclusive_allow` lists merge as an ordered union. In a project, `exclusive` and `exclusive_allow` at the top level apply to every scope; a scope's `exclusive` overrides the top-level value, and its `exclusive_allow` adds to the top-level list.
 
 ## Per-harness skills
 

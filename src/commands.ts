@@ -2,16 +2,20 @@ import { existsSync } from "node:fs";
 import { readFile, rmdir } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 import { stringify } from "smol-toml";
-import { loadMachineConfig, MACHINE_CONFIG_PATH, resolveConfiguredPath } from "./config.ts";
+import { loadMachineConfig, MACHINE_CONFIG_PATH, readMachineHome, resolveConfiguredPath } from "./config.ts";
 import { addSnippet, type Placement } from "./add.ts";
 import { adoptGlobal } from "./adopt.ts";
+import { adoptSkill } from "./adopt-skill.ts";
+import { cleanGlobal, cleanProject } from "./clean.ts";
 import { AgentsmithError, classify, errorCode, errorMessage, exitCodeFor } from "./errors.ts";
 import { CommandError, ensureCleanSource, gitHeadCommit, gitPullFfOnly, gitWorktree } from "./git.ts";
-import { assertPlanValid, buildGlobalPlan, buildProjectPlan, type BuiltPlan } from "./planner.ts";
+import { assertPlanValid, buildGlobalPlan, buildProjectPlan, type BuiltPlan, type UnmanagedSkill } from "./planner.ts";
+import { isWithin } from "./fs.ts";
 import {
   applyPlan,
   backupGlobalArtifacts,
   collectBlobs,
+  globalBackupRoot,
   globalBlobDirectory,
   globalStatePath,
   hashBytes,
@@ -19,7 +23,9 @@ import {
   loadProjectState,
   preflightGlobalPlan,
   preflightProjectPlan,
+  projectBackupRoot,
   projectStatePath,
+  quarantinePaths,
   restoreBackups,
   storeBlobs,
   unifiedDiff,
@@ -29,7 +35,7 @@ import {
 } from "./safety.ts";
 import { globalInit } from "./init.ts";
 import { installSchedule, printScheduleStatus, uninstallSchedule } from "./schedule.ts";
-import { printGlobalStatus, writeGlobalStatus, type RunReport } from "./status.ts";
+import { globalStatusPath, printGlobalStatus, writeGlobalStatus, type RunReport } from "./status.ts";
 import type { Diagnostic, GenerationPlan, HarnessName, PlannedDelete, PlannedWrite } from "./types.ts";
 
 const encoder = new TextEncoder();
@@ -60,8 +66,10 @@ export interface CommandOptions {
   name?: string;
   local?: boolean;
   push?: boolean;
+  noCommit?: boolean;
   skipGenerate?: boolean;
   scope?: string;
+  skill?: string;
 }
 
 export function diagnosticsText(diagnostics: Diagnostic[]): string {
@@ -105,7 +113,7 @@ export async function prepareGlobalPlan(plan: BuiltPlan): Promise<{
   statePath: string;
   previous: GlobalState;
 }> {
-  const statePath = globalStatePath();
+  const statePath = globalStatePath(plan.home);
   const previous = await loadGlobalState(statePath);
   const current = new Set(plan.plannedPaths.map((path) => resolve(path)));
   plan.deletes = Object.keys(previous.artifacts)
@@ -166,16 +174,63 @@ async function pruneEmptySkillDirectories(deletions: PlannedDelete[], report?: R
   }
 }
 
-export async function generateProject(plan: BuiltPlan): Promise<void> {
+/** Exclusive-mode unmanaged skills, minus directories holding artifacts agentsmith recorded (such as stale skills). */
+export function exclusiveViolations(plan: Pick<BuiltPlan, "unmanagedSkills">, recorded: Iterable<string>): UnmanagedSkill[] {
+  const files = [...recorded].map((path) => resolve(path));
+  return plan.unmanagedSkills.filter((skill) => !files.some((file) => isWithin(skill.path, file)));
+}
+
+export function unmanagedSkillsError(mode: "global" | "project", skills: readonly UnmanagedSkill[]): AgentsmithError {
+  return new AgentsmithError(
+    "artifact-modified",
+    [
+      `Exclusive mode found ${skills.length} unmanaged skill(s) that agentsmith did not write:`,
+      ...skills.map((skill) => `  ${skill.path}`),
+      `Adopt one with \`asmith ${mode} adopt --skill NAME\`, allow it with exclusive_allow, or move them to backups with --on-modified=backup.`,
+    ].join("\n"),
+  );
+}
+
+/** Paths a plan's state records: global destinations, or project paths resolved against the worktree. */
+export async function recordedPaths(plan: BuiltPlan): Promise<string[]> {
+  if (plan.mode === "global") return Object.keys((await loadGlobalState(globalStatePath(plan.home))).artifacts);
+  try {
+    const worktree = await gitWorktree(plan.projectRoot!);
+    return (await loadProjectState(projectStatePath(worktree))).paths.map((path) => resolve(worktree.root, path));
+  } catch {
+    return [];
+  }
+}
+
+export interface ProjectGenerateOptions {
+  onModified?: "fail" | "backup";
+}
+
+export async function generateProject(plan: BuiltPlan, options: ProjectGenerateOptions = {}): Promise<void> {
   await classify("config", () => assertPlanValid(plan));
   printDiagnostics(plan.diagnostics.filter((item) => item.severity === "warning"));
   const prepared = await prepareProjectPlan(plan);
   await preflightProjectPlan(plan, { projectRoot: plan.projectRoot!, state: prepared.previous });
+  const unmanaged = exclusiveViolations(
+    plan,
+    prepared.previous.paths.map((path) => resolve(prepared.worktree.root, path)),
+  );
+  if (unmanaged.length > 0 && options.onModified !== "backup") throw unmanagedSkillsError("project", unmanaged);
   const application: GenerationPlan = {
     ...plan,
     writes: [...plan.writes, projectStateWrite(prepared.statePath, prepared.worktree.root, plan)],
   };
-  await applyPlan(application);
+  const quarantined = await quarantinePaths(
+    unmanaged.map((skill) => skill.path),
+    { backupRoot: projectBackupRoot(prepared.worktree) },
+  );
+  try {
+    await applyPlan(application);
+  } catch (cause) {
+    await restoreBackups(quarantined);
+    throw cause;
+  }
+  for (const backup of quarantined) console.error(`WARNING unmanaged-skill-backup: moved unmanaged skill ${backup.path} to ${backup.backup}`);
   await pruneEmptySkillDirectories(plan.deletes);
   console.log(`Generated ${plan.writes.length} file(s); removed ${plan.deletes.length} stale file(s).`);
 }
@@ -202,12 +257,26 @@ export async function generateGlobal(plan: BuiltPlan, options: GlobalGenerateOpt
     onModified: options.onModified,
     accept: options.accept,
   });
+  const unmanaged = exclusiveViolations(plan, Object.keys(prepared.previous.artifacts));
+  if (unmanaged.length > 0 && options.onModified !== "backup") throw unmanagedSkillsError("global", unmanaged);
   const blobs = globalBlobDirectory(prepared.statePath);
   await storeBlobs(
     blobs,
     plan.writes.map((write) => write.content),
   );
-  const backups: ArtifactBackup[] = await backupGlobalArtifacts(conflicts, { plan, state: prepared.previous });
+  const backupRoot = globalBackupRoot(plan.home);
+  const backups: ArtifactBackup[] = await backupGlobalArtifacts(conflicts, { plan, state: prepared.previous, backupRoot });
+  try {
+    backups.push(
+      ...(await quarantinePaths(
+        unmanaged.map((skill) => skill.path),
+        { backupRoot },
+      )),
+    );
+  } catch (cause) {
+    await restoreBackups(backups);
+    throw cause;
+  }
   const application: GenerationPlan = {
     ...plan,
     writes: [...plan.writes, globalStateWrite(prepared.statePath, plan)],
@@ -220,7 +289,12 @@ export async function generateGlobal(plan: BuiltPlan, options: GlobalGenerateOpt
   }
   for (const backup of backups) {
     report?.backups.push(backup);
-    warn(report, `WARNING artifact-backup: moved ${backup.reason} global artifact ${backup.path} to ${backup.backup}`);
+    warn(
+      report,
+      backup.reason === "unmanaged"
+        ? `WARNING unmanaged-skill-backup: moved unmanaged skill ${backup.path} to ${backup.backup}`
+        : `WARNING artifact-backup: moved ${backup.reason} global artifact ${backup.path} to ${backup.backup}`,
+    );
   }
   await pruneEmptySkillDirectories(plan.deletes, report);
   try {
@@ -236,8 +310,8 @@ export async function runRecordedGlobal(action: "sync" | "generate", options: Co
   const startedAt = new Date();
   const report: RunReport = { warnings: [], backups: [] };
   let failure: unknown;
+  const configPath = resolveConfiguredPath(options.config ?? MACHINE_CONFIG_PATH, resolve(process.cwd(), "config.toml"));
   try {
-    const configPath = resolveConfiguredPath(options.config ?? MACHINE_CONFIG_PATH, resolve(process.cwd(), "config.toml"));
     const machine = await classify("config", () => loadMachineConfig(configPath));
     report.profile = machine.profile;
     if (action === "sync") {
@@ -245,25 +319,28 @@ export async function runRecordedGlobal(action: "sync" | "generate", options: Co
       await gitPullFfOnly(machine.source);
     }
     report.sourceCommit = await gitHeadCommit(machine.source);
-    const plan = await classify("config", () => buildGlobalPlan(options.config ?? MACHINE_CONFIG_PATH));
+    const plan = await classify("config", () => buildGlobalPlan(configPath));
     await generateGlobal(plan, { force: options.force, onModified: options.onModified }, report);
   } catch (cause) {
     failure = cause;
   }
   try {
-    await writeGlobalStatus({
-      version: 1,
-      command: action,
-      startedAt: startedAt.toISOString(),
-      timestamp: new Date().toISOString(),
-      profile: report.profile ?? null,
-      sourceCommit: report.sourceCommit ?? null,
-      outcome: failure === undefined ? "success" : "failure",
-      exitCode: failure === undefined ? 0 : exitCodeFor(failure),
-      error: failure === undefined ? null : { code: errorCode(failure), message: errorMessage(failure) },
-      warnings: report.warnings,
-      backups: report.backups.map(({ path, backup, reason }) => ({ path, backup, reason })),
-    });
+    await writeGlobalStatus(
+      {
+        version: 1,
+        command: action,
+        startedAt: startedAt.toISOString(),
+        timestamp: new Date().toISOString(),
+        profile: report.profile ?? null,
+        sourceCommit: report.sourceCommit ?? null,
+        outcome: failure === undefined ? "success" : "failure",
+        exitCode: failure === undefined ? 0 : exitCodeFor(failure),
+        error: failure === undefined ? null : { code: errorCode(failure), message: errorMessage(failure) },
+        warnings: report.warnings,
+        backups: report.backups.map(({ path, backup, reason }) => ({ path, backup, reason })),
+      },
+      globalStatusPath(globalStatePath(readMachineHome(configPath))),
+    );
   } catch (cause) {
     console.error(`WARNING status-write: could not record run status: ${errorMessage(cause)}`);
   }
@@ -391,9 +468,10 @@ export type CommandAction =
   | "init"
   | "schedule-install"
   | "schedule-uninstall"
-  | "schedule-status";
+  | "schedule-status"
+  | "clean";
 
-const GLOBAL_ONLY_ACTIONS: ReadonlySet<CommandAction> = new Set(["status", "adopt", "init", "schedule-install", "schedule-uninstall", "schedule-status"]);
+const GLOBAL_ONLY_ACTIONS: ReadonlySet<CommandAction> = new Set(["status", "init", "schedule-install", "schedule-uninstall", "schedule-status"]);
 
 /** Execute one CLI command and return its process exit code. */
 export async function executeCommand(mode: "global" | "project", action: CommandAction, options: CommandOptions): Promise<number> {
@@ -410,6 +488,13 @@ export async function executeCommand(mode: "global" | "project", action: Command
     return 0;
   }
   if (action === "adopt") {
+    if (options.skill !== undefined) {
+      if (options.slot !== undefined) throw new AgentsmithError("config", "--slot applies to instruction adoption, not --skill");
+      await adoptSkill(mode, { ...options, skill: options.skill });
+      return 0;
+    }
+    if (mode === "project") throw new AgentsmithError("config", "project adopt requires --skill NAME");
+    if (options.push || options.noCommit) throw new AgentsmithError("config", "--push and --no-commit apply only to global adopt --skill");
     await adoptGlobal(options);
     return 0;
   }
@@ -427,14 +512,20 @@ export async function executeCommand(mode: "global" | "project", action: Command
     return 0;
   }
   if (action === "schedule-status") return printScheduleStatus();
+  if (action === "clean") {
+    await (mode === "global" ? cleanGlobal(options) : cleanProject(options));
+    return 0;
+  }
   const plan = await classify("config", () => planFor(mode, options));
   if (action === "generate") {
-    await generateProject(plan);
+    await generateProject(plan, { onModified: options.onModified });
   } else if (action === "diff") {
     await diffPlan(plan);
   } else if (action === "lint") {
     printDiagnostics(plan.diagnostics);
     await classify("config", () => assertPlanValid(plan, options.warningsAsErrors));
+    const unmanaged = exclusiveViolations(plan, await recordedPaths(plan));
+    if (unmanaged.length > 0) throw unmanagedSkillsError(mode, unmanaged);
     console.log(`Lint passed with ${plan.diagnostics.filter((item) => item.severity === "warning").length} warning(s).`);
   } else {
     await classify("config", () => assertPlanValid(plan));

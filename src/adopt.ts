@@ -102,7 +102,7 @@ export async function adoptGlobal(options: AdoptOptions): Promise<void> {
 
   const plan = await classify("config", () => buildGlobalPlan(configOption));
   await classify("config", () => assertPlanValid(plan));
-  const statePath = globalStatePath();
+  const statePath = globalStatePath(plan.home);
   const state = await loadGlobalState(statePath);
   const blobs = globalBlobDirectory(statePath);
   const instructions = new Map(
