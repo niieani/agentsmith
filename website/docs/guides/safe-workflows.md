@@ -53,7 +53,7 @@ asmith global adopt --dry-run
 asmith global adopt
 ```
 
-This writes your additions as Git-ignored `*.local.md` snippets in the reserved `prepend` and `append` slots of the profile's last pack, then regenerates. Later generations keep reproducing the same file. Edits in the middle of generated content, and edits to skills, are never adopted: back them up and move them into the Source Repository by hand.
+This writes your additions as Git-ignored `*.local.md` snippets in the reserved `prepend` and `append` slots, then regenerates. Pass `--pack NAME` when the profile selects more than one pack. Later generations keep reproducing the same file. Edits in the middle of generated content, and edits to skills, are never adopted: back them up and move them into the Source Repository by hand.
 
 ## Transactional writes
 

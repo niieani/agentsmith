@@ -13,7 +13,7 @@ import {
 } from "./config.ts";
 import { canonicalRoot, walkFiles } from "./fs.ts";
 import { getHarnessAdapter, placeSkill, skillReadRoots, skillWriteRoot, type SkillLocation } from "./harness.ts";
-import { renderMarkdown } from "./markdown.ts";
+import { RESERVED_EDGE_SLOTS, renderMarkdown } from "./markdown.ts";
 import {
   loadInstructionContributions,
   loadPacks,
@@ -46,6 +46,23 @@ export interface BuiltPlan extends GenerationPlan {
   projectRoot?: string;
   configPath: string;
   plannedPaths: string[];
+  /** Every artifact that can receive snippets, with the slots it declares. */
+  slotTargets: SlotTarget[];
+}
+
+/** One planned artifact able to receive pack snippets, and the slots it declares. */
+export interface SlotTarget {
+  kind: "instruction" | "skill";
+  scope: string;
+  destination: string;
+  /** Instruction: the harnesses sharing the Instruction Layer. Skill: the selected harnesses this copy serves. */
+  harnesses: HarnessName[];
+  /** Skill only: the one harness reading this skill root, when exactly one does; only it receives harness-specific snippets. */
+  exclusiveReader?: HarnessName;
+  /** Skill only: the skill name. */
+  skill?: string;
+  /** Declared slots, including the reserved edge slots of an Instruction Layer. */
+  slots: string[];
 }
 
 interface ScopeInput {
@@ -87,6 +104,7 @@ interface PlannerContext {
   writes: PlannedWrite[];
   explanations: unknown[];
   skillPlacements: SkillPlacement[];
+  slotTargets: SlotTarget[];
   instructionSizes: Array<{ harness: HarnessName; scope: string; bytes: number }>;
 }
 
@@ -298,6 +316,13 @@ async function planInstructions(context: PlannerContext, scope: ScopeInput, pack
     const result = await renderContent(context, template.content, template.path, contributions, true);
     for (const harness of members) context.diagnostics.push(...(getHarnessAdapter(harness).preflightInstruction?.(destination) ?? []));
     rendered.push({ destination, harnesses: members, content: result.content, template, trace: result.trace });
+    context.slotTargets.push({
+      kind: "instruction",
+      scope: scope.path,
+      destination,
+      harnesses: HARNESS_NAMES.filter((harness) => members.includes(harness)),
+      slots: [...new Set([...Object.keys(result.trace.slots), ...RESERVED_EDGE_SLOTS])].sort(),
+    });
   }
 
   if (context.mode === "project" && context.claudeImportAgentsMd) {
@@ -418,6 +443,15 @@ async function planSkills(context: PlannerContext, scope: ScopeInput, packs: Loa
 
       const destinationDir = join(placement.root, skill.name);
       const writeHarness = placement.serves[0];
+      context.slotTargets.push({
+        kind: "skill",
+        scope: scope.path,
+        destination: destinationDir,
+        harnesses: placement.serves,
+        exclusiveReader: placement.exclusiveReader,
+        skill: skill.name,
+        slots: [...ownersBySlot.keys()].sort(),
+      });
       context.skillPlacements.push({
         harnesses: placement.readers.filter((harness) => context.configuredHarnesses.includes(harness)),
         scope: scope.path,
@@ -727,6 +761,7 @@ function builtPlan(context: PlannerContext, configPath: string, profile?: Profil
       diagnostics: context.diagnostics,
     },
     plannedPaths: context.writes.filter((write) => write.kind !== "state").map((write) => write.destination),
+    slotTargets: context.slotTargets,
   };
 }
 
@@ -745,6 +780,7 @@ export async function buildGlobalPlan(configPath = MACHINE_CONFIG_PATH): Promise
     writes: [],
     explanations: [],
     skillPlacements: [],
+    slotTargets: [],
     instructionSizes: [],
   };
   await planScopes(context, [
@@ -783,6 +819,7 @@ export async function buildProjectPlan(projectStart = process.cwd(), machineConf
     writes: [],
     explanations: [],
     skillPlacements: [],
+    slotTargets: [],
     instructionSizes: [],
   };
   await planScopes(

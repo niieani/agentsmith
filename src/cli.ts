@@ -6,12 +6,28 @@ import { choice, string } from "@optique/core/valueparser";
 import { run } from "@optique/run";
 import { executeCommand } from "./commands.ts";
 import { errorMessage, exitCodeFor } from "./errors.ts";
+import { HARNESS_NAMES } from "./types.ts";
 import { VERSION } from "./version.ts";
 
 const configOption = optional(option("--config", string({ metavar: "PATH" })));
 const projectOption = optional(option("--project", string({ metavar: "PATH" })));
 const intervalOption = optional(option("--interval", string({ metavar: "DURATION" })));
 const onModifiedOption = withDefault(option("--on-modified", choice(["fail", "backup"] as const)), "fail" as const);
+
+const addOptions = {
+  slot: argument(string({ metavar: "SLOT" })),
+  text: optional(argument(string({ metavar: "TEXT" }))),
+  file: optional(option("--file", string({ metavar: "PATH" }))),
+  skillSlot: option("--skill-slot"),
+  harness: optional(option("--harness", choice(HARNESS_NAMES))),
+  pack: optional(option("--pack", string({ metavar: "NAME" }))),
+  placement: withDefault(option("--placement", choice(["gap", "first", "last"] as const)), "gap" as const),
+  name: optional(option("--name", string({ metavar: "NAME" }))),
+  local: option("--local"),
+  push: option("--push"),
+  skipGenerate: option("--skip-generate"),
+  dryRun: option("--dry-run"),
+};
 
 const globalCommands = or(
   command(
@@ -50,6 +66,7 @@ const globalCommands = or(
       dryRun: option("--dry-run"),
     }),
   ),
+  command("add", object({ action: constant("add"), config: configOption, ...addOptions })),
   command(
     "init",
     object({
@@ -91,6 +108,7 @@ const globalCommands = or(
 );
 
 const projectCommands = or(
+  command("add", object({ action: constant("add"), project: projectOption, scope: optional(option("--scope", string({ metavar: "PATH" }))), ...addOptions })),
   command("generate", object({ action: constant("generate"), project: projectOption })),
   command("diff", object({ action: constant("diff"), project: projectOption })),
   command(
