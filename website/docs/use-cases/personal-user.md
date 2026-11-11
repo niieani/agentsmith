@@ -116,7 +116,18 @@ Pack order is rendered order. Both machines receive `base`; each adds only its r
 
 ## 5. Point each machine at its profile
 
-Clone the repository to the same conventional location on each machine, then create the local machine config.
+Once the repository is pushed, each machine needs one line:
+
+```sh
+# laptop
+asmith global init git@github.com:me/agent-context.git --profile laptop --schedule
+# studio
+asmith global init git@github.com:me/agent-context.git --profile studio --schedule
+```
+
+`init` clones to `~/.agents/agentsmith/source`, writes the machine config below, runs the first sync, and installs an hourly timer (launchd on macOS, a systemd user timer on Linux). Give each machine a read-only deploy key or an HTTPS token, because the timer runs without your SSH agent. On headless Linux hosts, also run `loginctl enable-linger $USER`.
+
+To do it by hand, clone the repository to the same conventional location on each machine, then create the local machine config.
 
 On the laptop:
 
@@ -154,7 +165,7 @@ The command requires a clean Source Repository, performs `git pull --ff-only`, a
 
 If selected packs enable skills, agentsmith also generates them under the native global skill roots.
 
-Run global sync manually, from a scheduler, or from whatever machine-management workflow fits your environment. It does not depend on login or reboot, so it works for long-running hosts.
+Run global sync manually, from a scheduler, or from whatever machine-management workflow fits your environment. It does not depend on login or reboot, so it works for long-running hosts. `asmith global schedule install` sets up the timer if you skipped `--schedule`; scheduled runs use `--on-modified=backup`, so a hand edit is kept as a backup and reported by `asmith global status` instead of blocking every later sync.
 
 ## 8. Make a change once
 

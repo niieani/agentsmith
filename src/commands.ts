@@ -26,12 +26,15 @@ import {
   type GlobalState,
   type ProjectState,
 } from "./safety.ts";
+import { globalInit } from "./init.ts";
+import { installSchedule, printScheduleStatus, uninstallSchedule } from "./schedule.ts";
 import { printGlobalStatus, writeGlobalStatus, type RunReport } from "./status.ts";
 import type { Diagnostic, GenerationPlan, PlannedDelete, PlannedWrite } from "./types.ts";
 
 const encoder = new TextEncoder();
 
 export interface CommandOptions {
+  action?: CommandAction;
   config?: string;
   project?: string;
   force?: boolean;
@@ -42,6 +45,12 @@ export interface CommandOptions {
   slot?: string;
   pack?: string;
   dryRun?: boolean;
+  url?: string;
+  profile?: string;
+  source?: string;
+  schedule?: boolean;
+  interval?: string;
+  yes?: boolean;
 }
 
 export function diagnosticsText(diagnostics: Diagnostic[]): string {
@@ -81,7 +90,7 @@ async function prepareProjectPlan(plan: BuiltPlan): Promise<{
   return { worktree, statePath, previous };
 }
 
-async function prepareGlobalPlan(plan: BuiltPlan): Promise<{
+export async function prepareGlobalPlan(plan: BuiltPlan): Promise<{
   statePath: string;
   previous: GlobalState;
 }> {
@@ -212,7 +221,7 @@ export async function generateGlobal(plan: BuiltPlan, options: GlobalGenerateOpt
 }
 
 /** Run `global sync` or `global generate` and always record the outcome in status.json. */
-async function runRecordedGlobal(action: "sync" | "generate", options: CommandOptions): Promise<void> {
+export async function runRecordedGlobal(action: "sync" | "generate", options: CommandOptions): Promise<void> {
   const startedAt = new Date();
   const report: RunReport = { warnings: [], backups: [] };
   let failure: unknown;
@@ -359,12 +368,25 @@ async function planFor(mode: "global" | "project", options: CommandOptions): Pro
     : buildProjectPlan(options.project ?? process.cwd(), options.config ?? MACHINE_CONFIG_PATH);
 }
 
-export type CommandAction = "sync" | "generate" | "diff" | "lint" | "explain" | "status" | "adopt";
+export type CommandAction =
+  | "sync"
+  | "generate"
+  | "diff"
+  | "lint"
+  | "explain"
+  | "status"
+  | "adopt"
+  | "init"
+  | "schedule-install"
+  | "schedule-uninstall"
+  | "schedule-status";
+
+const GLOBAL_ONLY_ACTIONS: ReadonlySet<CommandAction> = new Set(["status", "adopt", "init", "schedule-install", "schedule-uninstall", "schedule-status"]);
 
 /** Execute one CLI command and return its process exit code. */
 export async function executeCommand(mode: "global" | "project", action: CommandAction, options: CommandOptions): Promise<number> {
   if (action === "sync" && mode !== "global") throw new Error("Project sync is not supported");
-  if ((action === "status" || action === "adopt") && mode !== "global") throw new Error(`Project ${action} is not supported`);
+  if (GLOBAL_ONLY_ACTIONS.has(action) && mode !== "global") throw new Error(`Project ${action} is not supported`);
   if (mode === "global" && (action === "sync" || action === "generate")) {
     await runRecordedGlobal(action, options);
     return 0;
@@ -374,6 +396,20 @@ export async function executeCommand(mode: "global" | "project", action: Command
     await adoptGlobal(options);
     return 0;
   }
+  if (action === "init") {
+    if (options.url === undefined || options.profile === undefined) throw new Error("global init requires a Git URL and --profile");
+    await globalInit({ ...options, url: options.url, profile: options.profile });
+    return 0;
+  }
+  if (action === "schedule-install") {
+    await installSchedule({ interval: options.interval, config: options.config });
+    return 0;
+  }
+  if (action === "schedule-uninstall") {
+    await uninstallSchedule();
+    return 0;
+  }
+  if (action === "schedule-status") return printScheduleStatus();
   const plan = await classify("config", () => planFor(mode, options));
   if (action === "generate") {
     await generateProject(plan);

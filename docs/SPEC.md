@@ -10,6 +10,8 @@
 - Global state: `~/.agents/agentsmith/state.toml`
 - Stored global artifact content: `~/.agents/agentsmith/blobs/<sha256>`
 - Last global run status: `~/.agents/agentsmith/status.json`
+- Default Source Repository clone for `global init`: `~/.agents/agentsmith/source`
+- Scheduled sync logs (macOS): `~/.agents/agentsmith/logs/`
 
 CLI flags may override the machine or project configuration path. A leading `~` in configured paths expands to the current home directory. Other relative paths resolve against the file containing them. Environment variables and shell expressions are not interpolated.
 
@@ -338,7 +340,37 @@ git pull --ff-only
 
 The command is noninteractive and propagates missing-upstream, detached-head, authentication, conflict, and non-fast-forward failures without generating.
 
-Other global commands perform no Git synchronization. Project commands never synchronize.
+Other global commands perform no Git synchronization, except `global init`, which clones. Project commands never synchronize.
+
+## 9a. Machine bootstrap and scheduling
+
+`global init <git-url> --profile NAME [--source PATH] [--config PATH] [--schedule [--interval DURATION]] [--yes]` runs, in order, stopping at the first failure:
+
+1. Validate options. `--interval` requires `--schedule`; with `--schedule` the interval is validated and an unsupported platform fails before anything is written.
+2. If a machine configuration exists at the config path and selects a different source path or profile (or cannot be read), fail with exit 2 and print the command to rerun with `--yes`. `--yes` replaces it.
+3. Clone the Source Repository noninteractively (`GIT_TERMINAL_PROMPT=0`) to `--source`, default `~/.agents/agentsmith/source`. A missing or empty directory is cloned into (clone failure: exit 4). A nonempty directory is reused only when it is the root of a Git worktree and one of its remotes matches the URL after normalization (local paths canonicalized; trailing `/` and `.git` ignored); otherwise exit 2.
+4. Resolve the profile, including its `extends` chain. A missing or unresolvable profile fails with exit 2 and lists every `profiles/**/*.toml` name.
+5. Write the machine configuration (`source` as an absolute path, `profile`), unless it already matches.
+6. Lint the global plan (errors exit 2) and print every planned write as `create`, `update`, `unchanged`, `replace unrecorded`, or `replace modified`, plus stale removals.
+7. If any planned destination is an unrecorded or modified global artifact, print its diff. With `--yes`, continue with `--on-modified=backup`. In an interactive terminal, ask; a refusal exits 5. Without a terminal and without `--yes`, exit 5 and print the command to rerun with `--yes`.
+8. Run `global sync` with the chosen `--on-modified` mode, recording `status.json` like any sync.
+9. With `--schedule`, run `global schedule install` with `--interval` and `--config`.
+
+`global schedule install [--interval DURATION] [--config PATH]` requires a readable machine configuration. The interval uses the `global status --max-age` duration syntax, defaults to `1h`, and must be at least `1m`. The job runs:
+
+```text
+<asmith invocation> global sync --on-modified=backup [--config <absolute PATH>]
+```
+
+The invocation is the running executable: the compiled binary alone, or the runtime (`process.execPath`) plus the canonical script path for the npm build or a source checkout. Scheduling a TypeScript source checkout prints a warning. The job's `PATH` is the executable's directory, the installing shell's `PATH`, then `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`, without duplicates. `CODEX_HOME` is carried over when set.
+
+- macOS: `~/Library/LaunchAgents/io.github.niieani.agentsmith.sync.plist` with `StartInterval`, `RunAtLoad`, and stdout/stderr in `~/.agents/agentsmith/logs/sync.out.log` and `sync.err.log`. Install boots out a loaded job, then runs `launchctl bootstrap gui/<uid> <plist>`. Uninstall boots it out and removes the plist.
+- Linux: `agentsmith-sync.service` (oneshot) and `agentsmith-sync.timer` (`OnBootSec=2min`, `OnUnitActiveSec=<seconds>s`, `Persistent=true`) in `$XDG_CONFIG_HOME/systemd/user` (default `~/.config/systemd/user`), then `systemctl --user daemon-reload` and `enable --now agentsmith-sync.timer`. When `loginctl` does not report lingering, install prints `loginctl enable-linger <user>`. Uninstall disables the timer, removes both units, and reloads.
+- Other platforms fail with exit 1.
+
+After installing, the command runs `git ls-remote` in the Source Repository with the job's `PATH`, without `SSH_AUTH_SOCK`, askpass programs, or terminal prompts, and with `ssh -o BatchMode=yes` unless `GIT_SSH_COMMAND` or `core.sshCommand` is set. Failure prints a warning recommending a read-only deploy key or a stored HTTPS token; it never fails the install.
+
+`global schedule status` reports whether the job is installed and loaded or active, its definition file, interval, and command, and the last run from `status.json`. It exits 0.
 
 ## 10. Budgets
 
@@ -362,6 +394,10 @@ asmith global lint [--config PATH] [--warnings-as-errors]
 asmith global explain [--config PATH] [--json]
 asmith global status [--json] [--max-age DURATION]
 asmith global adopt [--config PATH] [--slot NAME] [--pack NAME] [--dry-run]
+asmith global init GIT_URL --profile NAME [--source PATH] [--config PATH] [--schedule] [--interval DURATION] [--yes]
+asmith global schedule install [--interval DURATION] [--config PATH]
+asmith global schedule uninstall
+asmith global schedule status
 
 asmith project generate [--project PATH]
 asmith project diff [--project PATH]
@@ -379,8 +415,8 @@ Exit status:
 | 1 | `failure` | Any other failure, including project preflight and application errors |
 | 2 | `config` | Configuration, usage, planning validation, or `lint --warnings-as-errors` |
 | 3 | `source-dirty` | Source Repository has disallowed changes |
-| 4 | `source-pull` | `git pull --ff-only` failed |
-| 5 | `artifact-modified` | Modified or unrecorded global artifact, unowned global content in a transition, or refused adoption |
+| 4 | `source-pull` | `git pull --ff-only` or the `global init` clone failed |
+| 5 | `artifact-modified` | Modified or unrecorded global artifact, unowned global content in a transition, refused adoption, or `global init` not confirmed |
 | 6 | `status-stale` | `global status`: no recorded run, or older than `--max-age` |
 
 Warnings alone succeed unless `--warnings-as-errors` is active. `global status` exits with the recorded exit code when the last run failed, otherwise 6 when stale, otherwise 0. `--max-age` takes one or more `<number><unit>` terms with units `s`, `m`, `h`, `d`, `w`.

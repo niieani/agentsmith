@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { object, or } from "@optique/core/constructs";
 import { optional, withDefault } from "@optique/core/modifiers";
-import { command, constant, option } from "@optique/core/primitives";
+import { argument, command, constant, option } from "@optique/core/primitives";
 import { choice, string } from "@optique/core/valueparser";
 import { run } from "@optique/run";
 import { executeCommand } from "./commands.ts";
@@ -10,6 +10,7 @@ import { VERSION } from "./version.ts";
 
 const configOption = optional(option("--config", string({ metavar: "PATH" })));
 const projectOption = optional(option("--project", string({ metavar: "PATH" })));
+const intervalOption = optional(option("--interval", string({ metavar: "DURATION" })));
 const onModifiedOption = withDefault(option("--on-modified", choice(["fail", "backup"] as const)), "fail" as const);
 
 const globalCommands = or(
@@ -48,6 +49,27 @@ const globalCommands = or(
       pack: optional(option("--pack", string({ metavar: "NAME" }))),
       dryRun: option("--dry-run"),
     }),
+  ),
+  command(
+    "init",
+    object({
+      action: constant("init"),
+      url: argument(string({ metavar: "GIT_URL" })),
+      profile: option("--profile", string({ metavar: "NAME" })),
+      source: optional(option("--source", string({ metavar: "PATH" }))),
+      config: configOption,
+      schedule: option("--schedule"),
+      interval: intervalOption,
+      yes: option("--yes"),
+    }),
+  ),
+  command(
+    "schedule",
+    or(
+      command("install", object({ action: constant("schedule-install"), interval: intervalOption, config: configOption })),
+      command("uninstall", object({ action: constant("schedule-uninstall") })),
+      command("status", object({ action: constant("schedule-status") })),
+    ),
   ),
   command("diff", object({ action: constant("diff"), config: configOption })),
   command(

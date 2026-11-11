@@ -5,6 +5,29 @@ description: Synchronize global instructions and skills across machines with a G
 
 Global mode is for personal agent context that follows you across machines. Each host keeps a tiny machine config and selects one profile from a shared Source Repository.
 
+## Quick start: `global init`
+
+When your Source Repository already exists, one command sets up a machine:
+
+```sh
+asmith global init git@github.com:me/agent-context.git --profile laptop --schedule
+```
+
+It clones the repository to `~/.agents/agentsmith/source`, checks that the `laptop` profile resolves, writes `~/.agents/agentsmith/config.toml`, lints, lists what the first sync will write, runs that sync, and installs a timer that syncs every hour. Use `--source PATH` to clone elsewhere and `--interval 30m` to sync more often.
+
+If the machine already has global files that agentsmith did not write, for example a hand-written `~/.claude/CLAUDE.md`, `init` shows the diff and asks before replacing them. The originals are kept as `CLAUDE.md.agentsmith-<timestamp>`. In scripts, pass `--yes` to accept. Without a terminal and without `--yes`, `init` stops with exit code 5 and prints the command to rerun. To keep text from the original, run `asmith global adopt` after copying it back around the generated content, or move it into a pack.
+
+The scheduled job runs without your SSH agent, so it needs read access that does not prompt. Use a read-only deploy key without a passphrase, or an HTTPS token in a credential helper. `init --schedule` and `global schedule install` warn when the repository is not reachable that way.
+
+```sh
+asmith global schedule status   # installed? interval, command, last run
+asmith global status --max-age 3h  # for monitoring
+```
+
+On Linux, run `loginctl enable-linger $USER` on always-on hosts so the timer runs without a login session.
+
+The rest of this page builds the same setup by hand.
+
 ## 1. Create the machine config
 
 Create `~/.agents/agentsmith/config.toml`:
