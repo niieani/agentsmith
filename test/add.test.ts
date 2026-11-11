@@ -202,7 +202,12 @@ describe("global add", () => {
     const path = join(f.notes, "11-prefer-small-commits.md");
     expect(added.stdout).toContain(path);
     expect(added.stdout).toContain("number 11: gap, directly after 10");
-    expect(added.stdout).toContain("not committed");
+    // A shared global snippet is committed by default (only the new file), so the next sync is not blocked.
+    expect(added.stdout).toContain("not pushed");
+    expect(await git(f.source, "log", "-1", "--name-only", "--format=%s")).toBe(
+      "Add snippet packs/base/instructions/notes/11-prefer-small-commits.md\n\npacks/base/instructions/notes/11-prefer-small-commits.md\n",
+    );
+    expect(await git(f.source, "status", "--porcelain")).toBe("");
     expect(await readFile(path, "utf8")).toBe("Prefer small commits.\n");
     expect(await readFile(f.claude, "utf8")).toContain("Shared note.\n\nPrefer small commits.");
     expect(await readFile(f.codex, "utf8")).toContain("Prefer small commits.");
@@ -218,6 +223,13 @@ describe("global add", () => {
     expect(fromStdin.exitCode, fromStdin.stderr).toBe(0);
     expect(await readFile(join(f.notes, "12-piped-note.md"), "utf8")).toBe("From stdin.\n");
     expect(await readFile(f.claude, "utf8")).toContain("From stdin.");
+
+    const uncommitted = await f.asmith(["global", "add", "notes", "Left for review.", "--no-commit", "--skip-generate"]);
+    expect(uncommitted.exitCode, uncommitted.stderr).toBe(0);
+    expect(uncommitted.stdout).toContain("not committed");
+    expect(await git(f.source, "status", "--porcelain")).toContain("left-for-review.md");
+    const conflicting = await f.asmith(["global", "add", "notes", "x", "--push", "--no-commit"]);
+    expect(conflicting.exitCode).toBe(2);
 
     const both = await f.asmith(["global", "add", "notes", "text", "--file", join(f.root, "snippet.md")]);
     expect(both.exitCode).toBe(2);

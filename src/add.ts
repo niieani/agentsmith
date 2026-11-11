@@ -36,6 +36,8 @@ export interface AddOptions {
   name?: string;
   local?: boolean;
   push?: boolean;
+  /** Global only: leave the new snippet uncommitted. Without it, a non-local global snippet is committed. */
+  noCommit?: boolean;
   skipGenerate?: boolean;
   dryRun?: boolean;
   config?: string;
@@ -286,6 +288,7 @@ function normalizeScope(value: string): string {
 
 async function projectTarget(options: AddOptions): Promise<AddTarget> {
   if (options.push) throw new AgentsmithError("config", "--push is only supported by global add");
+  if (options.noCommit) throw new AgentsmithError("config", "--no-commit is only supported by global add; project add never commits");
   if (options.local) throw new AgentsmithError("config", "--local is only supported by global add");
   const start = options.project ?? process.cwd();
   const configPath = await classify("config", () => discoverProjectConfig(start));
@@ -380,12 +383,14 @@ function renders(plan: BuiltPlan, path: string): boolean {
 }
 
 /**
- * Write a new snippet into a pack slot, lint the result, and regenerate. Global `--push` commits only the new file
- * on top of a fast-forwarded, clean Source Repository and pushes it.
+ * Write a new snippet into a pack slot, lint the result, and regenerate. A global snippet that is not `--local` is
+ * committed (only the new file) unless `--no-commit`; `--push` first fast-forwards a clean Source Repository and then
+ * pushes the commit.
  */
 export async function addSnippet(mode: "global" | "project", options: AddOptions): Promise<void> {
   validateSlotName(options);
   if (options.push && options.local) throw new AgentsmithError("config", "--push cannot be combined with --local; local snippets are never committed");
+  if (options.push && options.noCommit) throw new AgentsmithError("config", "--push cannot be combined with --no-commit");
   const content = await snippetContent(options);
   const target = mode === "global" ? await globalTarget(options) : await projectTarget(options);
 
@@ -431,9 +436,12 @@ export async function addSnippet(mode: "global" | "project", options: AddOptions
     });
   }
 
-  if (options.push) await commitAndPush(target.sourceRoot, path, created);
-  else if (target.mode === "global" && !options.local) {
-    console.log(`  not committed: commit and push it in ${target.sourceRoot} (or use --push) before the next global sync`);
+  // An uncommitted file in the Source Repository blocks every later global sync, so a shared global snippet is
+  // committed unless the user opts out.
+  if (target.mode === "global" && !options.local && !options.noCommit) {
+    await commitSnippet(target.sourceRoot, path, created, { push: options.push === true });
+  } else if (target.mode === "global" && options.noCommit) {
+    console.log(`  not committed: commit and push it in ${target.sourceRoot} before the next global sync, which refuses a dirty Source Repository`);
   }
 
   if (options.skipGenerate) {
@@ -448,7 +456,7 @@ export async function addSnippet(mode: "global" | "project", options: AddOptions
   console.log(`Added ${path}.`);
 }
 
-async function commitAndPush(sourceRoot: string, path: string, created: readonly string[]): Promise<void> {
+async function commitSnippet(sourceRoot: string, path: string, created: readonly string[], options: { push: boolean }): Promise<void> {
   const relativePath = relative(sourceRoot, path).split(sep).join("/");
   try {
     await runCommand("git", ["add", "--", relativePath], { cwd: sourceRoot });
@@ -459,6 +467,12 @@ async function commitAndPush(sourceRoot: string, path: string, created: readonly
     throw new AgentsmithError("failure", `Could not commit ${relativePath}; removed it:\n${errorMessage(cause)}`, { cause });
   }
   const commit = await gitHeadCommit(sourceRoot);
+  if (!options.push) {
+    console.log(
+      `  committed ${commit ?? relativePath}, not pushed: push it with \`git -C ${sourceRoot} push\` (or use --push); once another machine pushes, the next global sync cannot fast-forward`,
+    );
+    return;
+  }
   try {
     await runCommand("git", ["push", "-q"], { cwd: sourceRoot, timeoutMs: 120_000 });
   } catch (cause) {

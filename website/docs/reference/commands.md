@@ -18,7 +18,7 @@ description: Every asmith command, option, and intended workflow.
 | `asmith global explain [--config PATH] [--json]` | Show artifacts, provenance, sizes, slots, and includes. |
 | `asmith global status [--json] [--max-age DURATION]` | Show the last recorded `sync` or `generate` run; exit nonzero when it failed or is too old. |
 | `asmith global adopt [--config PATH] [--slot NAME] [--pack NAME] [--dry-run]` | Move edits made before or after generated instruction content into local snippets. |
-| `asmith global add SLOT [TEXT] [--file PATH] [--skill-slot] [--harness NAME] [--pack NAME] [--placement gap\|first\|last] [--name NAME] [--local] [--push] [--skip-generate] [--dry-run] [--config PATH]` | Write a new snippet into a pack slot, lint, and regenerate. |
+| `asmith global add SLOT [TEXT] [--file PATH] [--skill-slot] [--harness NAME] [--pack NAME] [--placement gap\|first\|last] [--name NAME] [--local] [--push | --no-commit] [--skip-generate] [--dry-run] [--config PATH]` | Write a new snippet into a pack slot, lint, and regenerate. |
 
 The default machine config is `~/.agents/agentsmith/config.toml`.
 
@@ -133,7 +133,7 @@ asmith project add tools "Run make check before pushing." --pack local
 - `--push` (global only, not with `--local`) requires a clean Source Repository (exit 3), runs `git pull --ff-only` (exit 4), writes and lints, commits only the new file, pushes, and then regenerates. When the push fails, the commit stays in place and the error says how to push it; history is never reset.
 - `--dry-run` prints the path, chosen number, and content without writing, pulling, or regenerating.
 
-A global snippet added without `--local` or `--push` is an untracked file in the Source Repository: commit it before the next `global sync`, which rejects nonignored untracked changes.
+A global snippet that is not `--local` is committed by default, only the new file, because an uncommitted file in the Source Repository makes every later `global sync` refuse to run. Without `--push` the commit stays local: push it before another machine pushes, or the next `global sync` cannot fast-forward (exit 4). `--no-commit` leaves the file uncommitted for you to review and commit yourself. Project add never commits.
 
 ## Project commands
 

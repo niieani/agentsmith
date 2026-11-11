@@ -395,7 +395,8 @@ Adopted text is written to snippets in `<source>/packs/<pack>/instructions/<harn
 - The file name is `NN-<slug>.md`, or `NN-<slug>.local.md` with `--local`. Only directory entries named `NN-…` with exactly two leading digits contribute prefixes; other entries are ignored. `gap` (default) chooses `lower + 1` for the pair of consecutive prefixes, or the highest prefix and 100, with the most free numbers between them, ties to the lowest pair. `first` chooses `lowest - 1`; `last` chooses `highest + 1`. An empty directory starts at 50 for every placement. No free number is an error; existing files are never renamed. The slug is derived from `--name` (a trailing `.md` or `.local.md` is dropped) or from the first content line with a letter or digit: NFKD-folded, lowercased, non-alphanumeric runs replaced by `-`, at most six words and 48 characters; content without such a line yields `snippet`.
 - `--local` is global only and requires `git check-ignore` to report the path ignored.
 - After writing, the plan is rebuilt and must lint without errors and list the new file in some artifact's provenance; otherwise the file and any directories created for it are removed and the command exits 2. Regeneration then runs the global generate path (recording `status.json`) or the project generate path, unless `--skip-generate`. A regeneration failure keeps the snippet and reports the underlying error and exit code.
-- `--push` is global only and incompatible with `--local`. It runs `git pull --ff-only` after the clean-source check, chooses the number on the pulled tree, writes and lints, commits only the new path, runs `git push`, then regenerates. A failed commit removes the file. A failed push exits 1, keeps the commit, and skips regeneration.
+- A global snippet that is not `--local` is committed by default: only the new path, with no pull and no clean-source requirement. The commit is not pushed, and the output says so. `--no-commit` (global only, incompatible with `--push`) skips the commit.
+- `--push` is global only and incompatible with `--local` and `--no-commit`. It runs `git pull --ff-only` after the clean-source check, chooses the number on the pulled tree, writes and lints, commits only the new path, runs `git push`, then regenerates. A failed commit removes the file. A failed push exits 1, keeps the commit, and skips regeneration.
 - `--dry-run` validates and prints the path, number, and content without writing, pulling, or regenerating.
 
 ### 8.3 Application
@@ -466,7 +467,7 @@ asmith global lint [--config PATH] [--warnings-as-errors]
 asmith global explain [--config PATH] [--json]
 asmith global status [--json] [--max-age DURATION]
 asmith global adopt [--config PATH] [--slot NAME] [--pack NAME] [--dry-run]
-asmith global add SLOT [TEXT] [--file PATH] [--skill-slot] [--harness NAME] [--pack NAME] [--placement gap|first|last] [--name NAME] [--local] [--push] [--skip-generate] [--dry-run] [--config PATH]
+asmith global add SLOT [TEXT] [--file PATH] [--skill-slot] [--harness NAME] [--pack NAME] [--placement gap|first|last] [--name NAME] [--local] [--push | --no-commit] [--skip-generate] [--dry-run] [--config PATH]
 asmith global init GIT_URL --profile NAME [--source PATH] [--config PATH] [--schedule] [--interval DURATION] [--yes]
 asmith global schedule install [--interval DURATION] [--config PATH]
 asmith global schedule uninstall

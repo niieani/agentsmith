@@ -25,6 +25,7 @@ const addOptions = {
   name: optional(option("--name", string({ metavar: "NAME" }))),
   local: option("--local"),
   push: option("--push"),
+  noCommit: option("--no-commit"),
   skipGenerate: option("--skip-generate"),
   dryRun: option("--dry-run"),
 };

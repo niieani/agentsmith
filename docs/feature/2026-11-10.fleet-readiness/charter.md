@@ -50,5 +50,6 @@ Each slice ends with `bun run check` and updates the specification, configuratio
 - Numbering: `--placement gap|first|last`, default `gap`: the file directly after the lower neighbor of the largest gap between existing two-digit prefixes (`00, 10, 11, 99` gives `12`); ties take the lowest gap; an empty slot starts at `50`; no free number is an error, and existing files are never renamed. `first` and `last` go below the lowest and above the highest prefix. Filename `NN-<slug>.md`, slug from the content or `--name`.
 - `--local` (global only) writes `*.local.md` and requires Git to ignore it.
 - After writing: lint (removing the file and failing on errors), then regenerate this machine's artifacts unless `--skip-generate`.
+- A global snippet that is not `--local` is committed by default (only the new file); `--no-commit` opts out. An uncommitted file in the Source Repository blocks every later sync.
 - `--push` (global only, not with `--local`): require a clean source, `git pull --ff-only`, write, lint, commit only the new file, push, then regenerate.
 - `--dry-run` prints the path and content without writing.
