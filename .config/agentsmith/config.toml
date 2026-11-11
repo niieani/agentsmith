@@ -1,4 +1,4 @@
-harnesses = ["codex"]
+harnesses = ["generic", "codex"]
 
 [[scopes]]
 path = "."

@@ -132,13 +132,13 @@ packs/review/instructions/codex/tools/20-codex.md
 **Problem:** two machines share personal preferences, but have different operating systems, tools, or responsibilities.
 
 ```toml title="profiles/laptop.toml"
-harnesses = ["codex", "claude"]
+harnesses = ["generic", "codex", "claude"]
 template = "personal"
 packs = ["base", "macos", "ios"]
 ```
 
 ```toml title="profiles/server.toml"
-harnesses = ["codex"]
+harnesses = ["generic", "codex"]
 template = "personal"
 packs = ["base", "linux", "operations"]
 ```

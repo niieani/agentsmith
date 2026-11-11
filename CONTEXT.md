@@ -20,8 +20,12 @@ _Avoid_: Project profile, local config
 An agent runtime with its own instruction and skill discovery semantics.
 _Avoid_: Tool, client
 
+**Generic Harness**:
+The harness named `generic`, which targets the shared `.agents/` convention read by Codex and other agents rather than one runtime.
+_Avoid_: Universal harness, default harness
+
 **Harness Adapter**:
-agentsmith's mapping between scopes, artifact kinds, and a harness's native discovery model.
+agentsmith's mapping between scopes, artifact kinds, and a harness's native discovery model, including every Skill Root the harness reads.
 _Avoid_: Output adapter, arbitrary target
 
 **Artifact**:
@@ -53,12 +57,20 @@ The instruction layers and skill artifacts visible at a working location after a
 _Avoid_: Generated context, merged scope
 
 **Instruction Layer**:
-A complete instruction artifact associated with one scope and combined with instruction layers from broader applicable scopes.
+A complete instruction artifact associated with one scope and combined with instruction layers from broader applicable scopes. Harnesses that read the same file, such as Codex and the Generic Harness with `AGENTS.md`, share one Instruction Layer.
 _Avoid_: Instructions target, AGENTS target
 
 **Skill Root**:
 The collection of skill artifacts associated with one scope.
 _Avoid_: Skills target, skill catalog
+
+**Shared Skill Root**:
+A Skill Root read by more than one harness, such as `.agents/skills`, read by the Generic Harness and Codex. Skill Artifacts placed there carry only harness-neutral content.
+_Avoid_: Common root, generic folder
+
+**Skill Placement**:
+The choice of Skill Roots for one Enabled Skill so that each harness it is enabled for reads it exactly once.
+_Avoid_: Skill copy, fan-out
 
 **Skill Artifact**:
 One assembled skill placed in a skill root.
@@ -149,7 +161,7 @@ The public identity declared by a skill and exposed to a harness.
 _Avoid_: Source ID, skill path
 
 **Enabled Skill**:
-A skill selected for generation in a scope by at least one pack and not excluded by the active configuration.
+A skill selected for generation in a scope, for one or more harnesses, by a pack or skill list and not excluded by the active configuration.
 _Avoid_: Installed skill, active skill
 
 **Skill Exclusion**:

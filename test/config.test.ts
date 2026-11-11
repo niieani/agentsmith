@@ -216,9 +216,18 @@ describe("project configuration", () => {
     expect(loadProjectConfig(config)).toEqual({
       harnesses: ["codex", "claude"],
       budgets: { instructionLayerBytes: 20000, effectiveInstructionBytes: undefined, skillMarkdownBytes: undefined },
+      claudeImportAgentsMd: true,
       scopes: [
-        { path: ".", template: "software", packs: ["base"], harnesses: undefined, skillsEnable: [], skillsDisable: [] },
-        { path: "apps/ios", template: "project:custom", packs: ["project:deploy"], harnesses: ["codex"], skillsEnable: [], skillsDisable: [] },
+        { path: ".", template: "software", packs: ["base"], harnesses: undefined, skillsEnable: [], skillsDisable: [], harnessSkills: {} },
+        {
+          path: "apps/ios",
+          template: "project:custom",
+          packs: ["project:deploy"],
+          harnesses: ["codex"],
+          skillsEnable: [],
+          skillsDisable: [],
+          harnessSkills: {},
+        },
       ],
     });
   });
@@ -246,5 +255,64 @@ describe("project configuration", () => {
     file(config, `harnesses = [\"codex\"]\n[[scopes]]\npath = \".\"\npacks = [\"base\"]\n[[scopes]]\npath = \"apps/ios\"\npacks = [\"base\"]\n`);
     expect(() => loadProjectConfig(config)).toThrow(/repeats inherited pack/);
     expect(() => discoverProjectConfig(temp())).toThrow(/no .*config\.toml found/);
+  });
+  test("parses per-harness skill selections and the CLAUDE.md import opt-out", () => {
+    const { config } = projectFixture();
+    file(
+      config,
+      [
+        'harnesses = ["generic", "codex", "claude"]',
+        "claude_import_agents_md = false",
+        "[[scopes]]",
+        'path = "."',
+        "packs = []",
+        "[scopes.harness_skills.claude]",
+        'enable = ["deploy"]',
+        'disable = ["review"]',
+        "[scopes.harness_skills.generic]",
+        'disable = ["deploy"]',
+        "",
+      ].join("\n"),
+    );
+    const loaded = loadProjectConfig(config);
+    expect(loaded.claudeImportAgentsMd).toBeFalse();
+    expect(loaded.scopes[0]!.harnessSkills).toEqual({ claude: { enable: ["deploy"], disable: ["review"] }, generic: { enable: [], disable: ["deploy"] } });
+  });
+
+  test("rejects invalid per-harness skill selections", () => {
+    const { config } = projectFixture();
+    const scope = (body: string, harnesses = '["codex", "claude"]') => file(config, `harnesses = ${harnesses}\n[[scopes]]\npath = "."\npacks = []\n${body}\n`);
+    scope('[scopes.harness_skills.gemini]\nenable = ["x"]');
+    expect(() => loadProjectConfig(config)).toThrow(/unknown harness "gemini"/);
+    scope('[scopes.harness_skills.generic]\nenable = ["x"]');
+    expect(() => loadProjectConfig(config)).toThrow(/harness "generic", which is not selected/);
+    scope('harnesses = ["codex"]\n[scopes.harness_skills.claude]\nenable = ["x"]');
+    expect(() => loadProjectConfig(config)).toThrow(/harness "claude", which is not selected/);
+    scope('[scopes.harness_skills.claude-code]\nenable = ["x"]');
+    expect(() => loadProjectConfig(config)).toThrow(/renamed to "claude"/);
+    scope('[scopes.harness_skills.codex]\nskills = ["x"]');
+    expect(() => loadProjectConfig(config)).toThrow(/unknown scopes\[0\]\.harness_skills\.codex key: skills/);
+    scope('[scopes.harness_skills.codex]\nenable = ["x"]\ndisable = ["x"]');
+    expect(() => loadProjectConfig(config)).toThrow(/both enables and disables "x"/);
+    scope("harness_skills = 1");
+    expect(() => loadProjectConfig(config)).toThrow(/must be a TOML table/);
+    file(config, 'harnesses = ["codex"]\nclaude_import_agents_md = "no"\n[[scopes]]\npath = "."\npacks = []\n');
+    expect(() => loadProjectConfig(config)).toThrow(/claude_import_agents_md must be a boolean/);
+  });
+
+  test("validates per-harness skill selections in profiles", () => {
+    const source = sourceFixture();
+    file(
+      join(source, "profiles/studio.toml"),
+      'harnesses = ["generic", "claude"]\ntemplate = "personal"\npacks = []\n[harness_skills.claude]\nenable = ["review"]\n',
+    );
+    expect(loadProfileConfig(source, "studio").harnessSkills).toEqual({ claude: { enable: ["review"], disable: [] } });
+    file(join(source, "profiles/studio.toml"), 'harnesses = ["generic"]\ntemplate = "personal"\npacks = []\n[harness_skills.codex]\nenable = ["review"]\n');
+    expect(() => loadProfileConfig(source, "studio")).toThrow(/not selected/);
+    file(
+      join(source, "profiles/studio.toml"),
+      'harnesses = ["claude"]\ntemplate = "personal"\npacks = []\n[harness_skills.claude]\nenable = ["project:review"]\n',
+    );
+    expect(() => loadProfileConfig(source, "studio")).toThrow(/project-owned sources/);
   });
 });

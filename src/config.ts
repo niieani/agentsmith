@@ -8,6 +8,7 @@ import {
   RENAMED_HARNESSES,
   type Budgets,
   type HarnessName,
+  type HarnessSkills,
   type MachineConfig,
   type PackConfig,
   type ProfileConfig,
@@ -95,6 +96,30 @@ function harnesses(value: unknown, label: string, path: string, required = true)
     );
   }
   return values as HarnessName[];
+}
+
+function harnessSkills(value: unknown, label: string, selected: readonly HarnessName[], path: string): HarnessSkills {
+  if (value === undefined) return {};
+  const input = table(value, label, path);
+  const result: HarnessSkills = {};
+  for (const [name, selection] of Object.entries(input)) {
+    const [harness] = harnesses([name], `${label} harness`, path);
+    if (!selected.includes(harness!)) fail(`${label}.${name} configures harness ${JSON.stringify(name)}, which is not selected`, path);
+    const entry = table(selection, `${label}.${name}`, path);
+    exactKeys(entry, ["enable", "disable"], `${label}.${name}`, path);
+    const enable = sourceIds(entry.enable, `${label}.${name}.enable`, path);
+    const disable = sourceIds(entry.disable, `${label}.${name}.disable`, path);
+    const both = enable.find((item) => disable.includes(item));
+    if (both !== undefined) fail(`${label}.${name} both enables and disables ${JSON.stringify(both)}`, path);
+    result[harness!] = { enable, disable };
+  }
+  return result;
+}
+
+function boolean(value: unknown, label: string, path: string, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  if (typeof value !== "boolean") fail(`${label} must be a boolean`, path);
+  return value;
 }
 
 function budgets(value: unknown, path: string): Budgets {
@@ -211,16 +236,19 @@ export function loadRootConfig(sourceRoot: string): RootConfig {
 export function loadProfileConfig(sourceRoot: string, name: string): ProfileConfig {
   const path = profileConfigPath(resolve(sourceRoot), name);
   const input = readToml(path);
-  exactKeys(input, ["harnesses", "template", "packs", "skills_enable", "skills_disable", "budgets"], "profile", path);
+  exactKeys(input, ["harnesses", "template", "packs", "skills_enable", "skills_disable", "harness_skills", "budgets"], "profile", path);
+  const profileHarnesses = harnesses(input.harnesses, "harnesses", path);
   const result: ProfileConfig = {
-    harnesses: harnesses(input.harnesses, "harnesses", path),
+    harnesses: profileHarnesses,
     template: string(input.template, "template", path),
     packs: sourceIds(input.packs, "packs", path),
     skillsEnable: sourceIds(input.skills_enable, "skills_enable", path),
     skillsDisable: sourceIds(input.skills_disable, "skills_disable", path),
+    harnessSkills: harnessSkills(input.harness_skills, "harness_skills", profileHarnesses, path),
     budgets: budgets(input.budgets, path),
   };
-  for (const sourceId of [result.template, ...result.packs, ...result.skillsEnable, ...result.skillsDisable]) {
+  const harnessSelections = Object.values(result.harnessSkills).flatMap((item) => [...item.enable, ...item.disable]);
+  for (const sourceId of [result.template, ...result.packs, ...result.skillsEnable, ...result.skillsDisable, ...harnessSelections]) {
     if (parseSourceId(sourceId).owner === "project") fail("global profiles cannot reference project-owned sources", path);
   }
   return result;
@@ -264,7 +292,7 @@ function normalizeScopePath(raw: string, root: string, configPath: string): stri
 
 function scope(value: unknown, index: number, projectHarnesses: HarnessName[], root: string, path: string): ScopeConfig {
   const input = table(value, `scopes[${index}]`, path);
-  exactKeys(input, ["path", "template", "packs", "harnesses", "skills_enable", "skills_disable"], `scopes[${index}]`, path);
+  exactKeys(input, ["path", "template", "packs", "harnesses", "skills_enable", "skills_disable", "harness_skills"], `scopes[${index}]`, path);
   const scopeHarnesses = input.harnesses === undefined ? undefined : harnesses(input.harnesses, `scopes[${index}].harnesses`, path);
   if (scopeHarnesses !== undefined) {
     const defaults = new Set(projectHarnesses);
@@ -279,6 +307,7 @@ function scope(value: unknown, index: number, projectHarnesses: HarnessName[], r
     harnesses: scopeHarnesses,
     skillsEnable: sourceIds(input.skills_enable, `scopes[${index}].skills_enable`, path),
     skillsDisable: sourceIds(input.skills_disable, `scopes[${index}].skills_disable`, path),
+    harnessSkills: harnessSkills(input.harness_skills, `scopes[${index}].harness_skills`, scopeHarnesses ?? projectHarnesses, path),
   };
 }
 
@@ -286,7 +315,7 @@ export function loadProjectConfig(path: string): ProjectConfig {
   const absolutePath = resolve(path);
   const root = projectRootFromConfig(absolutePath);
   const input = readToml(absolutePath);
-  exactKeys(input, ["harnesses", "budgets", "scopes"], "project configuration", absolutePath);
+  exactKeys(input, ["harnesses", "claude_import_agents_md", "budgets", "scopes"], "project configuration", absolutePath);
   const projectHarnesses = harnesses(input.harnesses, "harnesses", absolutePath);
   if (!Array.isArray(input.scopes)) fail("scopes must be an array of tables", absolutePath);
   const scopes = input.scopes.map((value, index) => scope(value, index, projectHarnesses, root, absolutePath));
@@ -310,7 +339,12 @@ export function loadProjectConfig(path: string): ProjectConfig {
       }
     }
   }
-  return { harnesses: projectHarnesses, budgets: budgets(input.budgets, absolutePath), scopes };
+  return {
+    harnesses: projectHarnesses,
+    budgets: budgets(input.budgets, absolutePath),
+    claudeImportAgentsMd: boolean(input.claude_import_agents_md, "claude_import_agents_md", absolutePath, true),
+    scopes,
+  };
 }
 
 export function discoverProjectConfig(start: string): string {

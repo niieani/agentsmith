@@ -10,7 +10,7 @@ Project generation combines reusable sources with configuration committed to a p
 At the repository root, create `.config/agentsmith/config.toml`:
 
 ```toml
-harnesses = ["codex", "claude"]
+harnesses = ["generic", "codex", "claude"]
 
 [[scopes]]
 path = "."
@@ -39,6 +39,8 @@ asmith project generate
 git add AGENTS.md CLAUDE.md .config/agentsmith
 git commit -m "chore: generate agent context"
 ```
+
+If `CLAUDE.md` would repeat `AGENTS.md` exactly, agentsmith writes it as a one-line `@AGENTS.md` import so Claude Code reads the shared file once. Set `claude_import_agents_md = false` to write the full content instead. Skills go to `.agents/skills`, which Codex also reads, and `.claude/skills`.
 
 agentsmith only overwrites project outputs that Git reports as tracked and clean. Review and commit newly created outputs before regenerating them.
 

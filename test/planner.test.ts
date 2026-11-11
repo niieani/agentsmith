@@ -22,7 +22,7 @@ async function fixture(): Promise<{ root: string; source: string; machine: strin
   const skill = "agentsmith-fixture-review";
   await mkdir(project, { recursive: true });
   await put(join(source, "agentsmith.toml"), "");
-  await put(join(source, "profiles", "test.toml"), ['harnesses = ["codex", "claude"]', 'template = "base"', 'packs = ["base"]', ""].join("\n"));
+  await put(join(source, "profiles", "test.toml"), ['harnesses = ["generic", "codex", "claude"]', 'template = "base"', 'packs = ["base"]', ""].join("\n"));
   await put(join(source, "templates", "base", "default.md"), "# Instructions\n\n## Greeting\n\n<!-- agentsmith:required-slot greeting -->\n");
   await put(join(source, "packs", "base", "pack.toml"), `skills = ["${skill}"]\n`);
   await put(join(source, "packs", "base", "instructions", "greeting", "10-hello.md"), "Be kind.\n");
@@ -35,7 +35,7 @@ async function fixture(): Promise<{ root: string; source: string; machine: strin
   await put(machine, `source = ${JSON.stringify(source)}\nprofile = "test"\n`);
   await put(
     join(project, ".config", "agentsmith", "config.toml"),
-    ['harnesses = ["codex", "claude"]', "", "[[scopes]]", 'path = "."', 'template = "base"', 'packs = ["base"]', ""].join("\n"),
+    ['harnesses = ["generic", "codex", "claude"]', "", "[[scopes]]", 'path = "."', 'template = "base"', 'packs = ["base"]', ""].join("\n"),
   );
   return { root, source, machine, project, skill };
 }
@@ -100,7 +100,8 @@ describe("generation planning", () => {
     expect(plan.writes.filter((write) => write.destination.endsWith(`/${projectSkill}/SKILL.md`))).toHaveLength(2);
 
     const explanation = plan.explanation as { artifacts: Array<Record<string, unknown>> };
-    const instruction = explanation.artifacts.find((artifact) => artifact.kind === "instruction" && artifact.harness === "codex")!;
+    const instruction = explanation.artifacts.find((artifact) => artifact.kind === "instruction" && artifact.destination === join(setup.project, "AGENTS.md"))!;
+    expect(instruction.harnesses).toEqual(["generic", "codex"]);
     expect(instruction).toMatchObject({ templateSelection: "base", templateSourceId: "project:base" });
     expect(instruction.packSources).toEqual([
       { selection: "base", sourceId: "source:base", directory: join(setup.source, "packs", "base") },
@@ -202,7 +203,7 @@ describe("generation planning", () => {
     );
     await put(
       join(setup.project, ".config", "agentsmith", "config.toml"),
-      ['harnesses = ["codex"]', "", "[[scopes]]", 'path = "."', 'packs = ["acme-tracker"]', ""].join("\n"),
+      ['harnesses = ["generic"]', "", "[[scopes]]", 'path = "."', 'packs = ["acme-tracker"]', ""].join("\n"),
     );
 
     const plan = await buildProjectPlan(setup.project, setup.machine);
@@ -281,5 +282,217 @@ describe("generation planning", () => {
     );
     const plan = await buildProjectPlan(setup.project, setup.machine);
     expect(plan.diagnostics.some((item) => item.code === "planned-unmanaged-skill-collision" && item.path?.includes("packages/hidden"))).toBeTrue();
+  });
+
+  test("CLAUDE.md imports an identical sibling AGENTS.md by default", async () => {
+    const setup = await fixture();
+    const plan = await buildProjectPlan(setup.project, setup.machine);
+    expect(writeText(plan, join(setup.project, "CLAUDE.md"))).toBe("@AGENTS.md\n");
+    expect(writeText(plan, join(setup.project, "AGENTS.md"))).toContain("Be kind.");
+    const explanation = plan.explanation as { artifacts: Array<Record<string, unknown>> };
+    expect(explanation.artifacts.find((artifact) => artifact.destination === join(setup.project, "CLAUDE.md"))).toMatchObject({
+      importsFrom: join(setup.project, "AGENTS.md"),
+    });
+  });
+
+  test("CLAUDE.md stays flat when it differs from AGENTS.md or the project opts out", async () => {
+    const setup = await fixture();
+    await put(join(setup.source, "packs", "base", "instructions", "claude", "greeting", "20-claude.md"), "Claude only.\n");
+    let plan = await buildProjectPlan(setup.project, setup.machine);
+    expect(writeText(plan, join(setup.project, "CLAUDE.md"))).toContain("Claude only.");
+
+    const optOut = await fixture();
+    await put(
+      join(optOut.project, ".config", "agentsmith", "config.toml"),
+      ['harnesses = ["codex", "claude"]', "claude_import_agents_md = false", "[[scopes]]", 'path = "."', 'template = "base"', 'packs = ["base"]', ""].join(
+        "\n",
+      ),
+    );
+    plan = await buildProjectPlan(optOut.project, optOut.machine);
+    expect(writeText(plan, join(optOut.project, "CLAUDE.md"))).toBe(writeText(plan, join(optOut.project, "AGENTS.md")));
+    expect(writeText(plan, join(optOut.project, "CLAUDE.md"))).toContain("Be kind.");
+  });
+
+  test("renders one shared AGENTS.md with Codex variants only when Codex is selected", async () => {
+    const setup = await fixture();
+    await put(join(setup.source, "templates", "base", "codex.md"), "# Codex\n\n<!-- agentsmith:required-slot greeting -->\n");
+    await put(join(setup.source, "templates", "base", "generic.md"), "# Generic\n\n<!-- agentsmith:required-slot greeting -->\n");
+    await put(join(setup.source, "packs", "base", "instructions", "codex", "greeting", "20-codex.md"), "Codex only.\n");
+    await put(join(setup.source, "packs", "base", "instructions", "generic", "greeting", "20-generic.md"), "Generic only.\n");
+    const config = (harnesses: string) =>
+      put(
+        join(setup.project, ".config", "agentsmith", "config.toml"),
+        [
+          `harnesses = ${harnesses}`,
+          "[[scopes]]",
+          'path = "."',
+          'template = "base"',
+          'packs = ["base"]',
+          'skills_disable = ["agentsmith-fixture-review"]',
+          "",
+        ].join("\n"),
+      );
+
+    await config('["generic", "codex"]');
+    let plan = await buildProjectPlan(setup.project, setup.machine);
+    expect(plan.diagnostics.filter((item) => item.severity === "error")).toEqual([]);
+    expect(plan.writes.filter((write) => write.kind === "instruction")).toHaveLength(1);
+    let agents = writeText(plan, join(setup.project, "AGENTS.md"));
+    expect(agents).toStartWith("# Codex");
+    expect(agents.indexOf("Be kind.")).toBeLessThan(agents.indexOf("Generic only."));
+    expect(agents.indexOf("Generic only.")).toBeLessThan(agents.indexOf("Codex only."));
+
+    await config('["generic"]');
+    plan = await buildProjectPlan(setup.project, setup.machine);
+    agents = writeText(plan, join(setup.project, "AGENTS.md"));
+    expect(agents).toStartWith("# Generic");
+    expect(agents).not.toContain("Codex only.");
+  });
+
+  test("places skills per harness: shared .agents root, Codex-only .codex root, Claude root", async () => {
+    const setup = await fixture();
+    const agents = join(setup.project, ".agents", "skills", setup.skill, "SKILL.md");
+    const codex = join(setup.project, ".codex", "skills", setup.skill, "SKILL.md");
+    const claude = join(setup.project, ".claude", "skills", setup.skill, "SKILL.md");
+    const has = (plan: { writes: Array<{ destination: string }> }, path: string) => plan.writes.some((write) => write.destination === path);
+    const config = (lines: string[]) =>
+      put(
+        join(setup.project, ".config", "agentsmith", "config.toml"),
+        [...lines.slice(0, 1), "[[scopes]]", 'path = "."', 'packs = ["base"]', ...lines.slice(1), ""].join("\n"),
+      );
+
+    let plan = await buildProjectPlan(setup.project, setup.machine);
+    expect(plan.diagnostics.filter((item) => item.severity === "error")).toEqual([]);
+    expect([has(plan, agents), has(plan, codex), has(plan, claude)]).toEqual([true, false, true]);
+
+    await config(['harnesses = ["codex", "claude"]']);
+    plan = await buildProjectPlan(setup.project, setup.machine);
+    expect([has(plan, agents), has(plan, codex), has(plan, claude)]).toEqual([false, true, true]);
+
+    await put(join(setup.source, "packs", "base", "skill-slots", "harnesses", "codex", "detail", "20-codex.md"), "Codex detail.\n");
+    await config(['harnesses = ["generic", "codex"]', "[scopes.harness_skills.generic]", `disable = ["${setup.skill}"]`]);
+    plan = await buildProjectPlan(setup.project, setup.machine);
+    expect(plan.diagnostics.filter((item) => item.severity === "error")).toEqual([]);
+    expect([has(plan, agents), has(plan, codex)]).toEqual([false, true]);
+    expect(writeText(plan, codex)).toContain("Codex detail.");
+  });
+
+  test("rejects harness-specific skill content in a root shared with another harness", async () => {
+    const setup = await fixture();
+    await put(join(setup.source, "packs", "base", "skill-slots", "harnesses", "codex", "detail", "20-codex.md"), "Codex detail.\n");
+    await put(join(setup.source, "packs", "base", "skill-slots", "harnesses", "claude", "detail", "20-claude.md"), "Claude detail.\n");
+    const plan = await buildProjectPlan(setup.project, setup.machine);
+    const shared = plan.diagnostics.filter((item) => item.code === "skill-harness-content-shared-root");
+    expect(shared).toHaveLength(1);
+    expect(shared[0]).toMatchObject({ severity: "error" });
+    expect(shared[0]!.path).toEndWith("20-codex.md");
+    expect(writeText(plan, join(setup.project, ".agents", "skills", setup.skill, "SKILL.md"))).not.toContain("Codex detail.");
+    expect(writeText(plan, join(setup.project, ".claude", "skills", setup.skill, "SKILL.md"))).toContain("Claude detail.");
+    expect(plan.diagnostics.some((item) => item.code === "skill-contribution-inactive")).toBeFalse();
+  });
+
+  test("rejects a global Codex skill that is not also enabled for generic", async () => {
+    const setup = await fixture();
+    await put(join(setup.source, "profiles", "test.toml"), ['harnesses = ["codex", "claude"]', 'template = "base"', 'packs = ["base"]', ""].join("\n"));
+    const plan = await buildGlobalPlan(setup.machine);
+    const unplaceable = plan.diagnostics.filter((item) => item.code === "skill-harness-unplaceable");
+    expect(unplaceable).toHaveLength(1);
+    expect(unplaceable[0]!.message).toContain("enable it for generic");
+    expect(plan.writes.filter((write) => write.destination.endsWith("SKILL.md")).map((write) => write.destination)).toEqual([
+      expect.stringMatching(/\/\.claude\/skills\//),
+    ]);
+  });
+
+  test("global generic emits skills but no instruction file", async () => {
+    const setup = await fixture();
+    await put(join(setup.source, "profiles", "test.toml"), ['harnesses = ["generic"]', 'template = "base"', 'packs = ["base"]', ""].join("\n"));
+    const plan = await buildGlobalPlan(setup.machine);
+    expect(plan.writes.filter((write) => write.kind === "instruction")).toEqual([]);
+    expect(plan.writes.some((write) => write.destination.endsWith(`/.agents/skills/${setup.skill}/SKILL.md`))).toBeTrue();
+    expect(plan.diagnostics.some((item) => item.code === "instruction-layer-unsupported")).toBeTrue();
+  });
+
+  test("enables and disables skills per harness in profiles", async () => {
+    const setup = await fixture();
+    const extra = "agentsmith-fixture-deploy";
+    await put(join(setup.source, "skills", extra, "SKILL.md"), `---\nname: ${extra}\ndescription: Deploy a fixture.\n---\n\nDeploy.\n`);
+    await put(
+      join(setup.source, "profiles", "test.toml"),
+      [
+        'harnesses = ["generic", "codex", "claude"]',
+        'template = "base"',
+        'packs = ["base"]',
+        "[harness_skills.claude]",
+        `enable = ["${extra}"]`,
+        `disable = ["${setup.skill}"]`,
+        "",
+      ].join("\n"),
+    );
+    const plan = await buildGlobalPlan(setup.machine);
+    expect(plan.diagnostics.filter((item) => item.severity === "error")).toEqual([]);
+    const skills = plan.writes.filter((write) => write.destination.endsWith("SKILL.md")).map((write) => write.destination);
+    expect(skills.filter((path) => path.includes("/.claude/skills/"))).toEqual([expect.stringContaining(`/${extra}/`)]);
+    expect(skills.filter((path) => path.includes("/.agents/skills/"))).toEqual([expect.stringContaining(`/${setup.skill}/`)]);
+  });
+
+  test("warns about an inactive per-harness exclusion", async () => {
+    const setup = await fixture();
+    await put(
+      join(setup.project, ".config", "agentsmith", "config.toml"),
+      ['harnesses = ["codex", "claude"]', "[[scopes]]", 'path = "."', "packs = []", "[scopes.harness_skills.claude]", `disable = ["${setup.skill}"]`, ""].join(
+        "\n",
+      ),
+    );
+    const plan = await buildProjectPlan(setup.project, setup.machine);
+    expect(plan.diagnostics.some((item) => item.code === "skill-exclusion-inactive" && item.message.includes("for claude"))).toBeTrue();
+  });
+
+  test("an unmanaged .codex skill collides with a planned .agents skill only when Codex is selected", async () => {
+    const setup = await fixture();
+    await put(join(setup.project, ".codex", "skills", setup.skill, "SKILL.md"), `---\nname: ${setup.skill}\ndescription: Unmanaged Codex.\n---\n`);
+    let plan = await buildProjectPlan(setup.project, setup.machine);
+    expect(plan.diagnostics.some((item) => item.code === "planned-unmanaged-skill-collision" && item.path?.includes(".codex"))).toBeTrue();
+
+    await put(
+      join(setup.project, ".config", "agentsmith", "config.toml"),
+      ['harnesses = ["generic"]', "[[scopes]]", 'path = "."', 'packs = ["base"]', ""].join("\n"),
+    );
+    plan = await buildProjectPlan(setup.project, setup.machine);
+    expect(plan.diagnostics.some((item) => item.code === "planned-unmanaged-skill-collision")).toBeFalse();
+  });
+
+  test("unmanaged skills in .agents and .codex roots are duplicates for Codex", async () => {
+    const setup = await fixture();
+    const name = "agentsmith-unmanaged-twin";
+    for (const root of [".agents", ".codex"]) {
+      await put(join(setup.project, root, "skills", name, "SKILL.md"), `---\nname: ${name}\ndescription: Twin.\n---\n`);
+    }
+    const plan = await buildProjectPlan(setup.project, setup.machine);
+    expect(plan.diagnostics.some((item) => item.code === "unmanaged-skill-collision" && item.message.includes(name))).toBeTrue();
+  });
+
+  test("a Codex-only skill and a generic skill of the same name on one chain collide for Codex", async () => {
+    const setup = await fixture();
+    await mkdir(join(setup.project, "sub"), { recursive: true });
+    await put(
+      join(setup.project, ".config", "agentsmith", "config.toml"),
+      [
+        'harnesses = ["generic", "codex"]',
+        "[[scopes]]",
+        'path = "."',
+        "packs = []",
+        "[scopes.harness_skills.codex]",
+        `enable = ["${setup.skill}"]`,
+        "[[scopes]]",
+        'path = "sub"',
+        "packs = []",
+        'harnesses = ["generic"]',
+        `skills_enable = ["${setup.skill}"]`,
+        "",
+      ].join("\n"),
+    );
+    const plan = await buildProjectPlan(setup.project, setup.machine);
+    const collision = plan.diagnostics.find((item) => item.code === "skill-name-collision");
+    expect(collision?.message).toContain("visible more than once for codex");
   });
 });
