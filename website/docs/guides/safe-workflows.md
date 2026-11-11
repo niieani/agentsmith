@@ -22,9 +22,38 @@ Previously generated paths are recorded beneath the worktree's actual Git direct
 
 ## Global safety
 
-Global outputs are tracked by content hash in `~/.agents/agentsmith/state.toml`. A recorded artifact is replaced or removed only when its current bytes still match recorded state.
+Global outputs are tracked by content hash in `~/.agents/agentsmith/state.toml`. A copy of each generated artifact is kept under `~/.agents/agentsmith/blobs/`, named by its hash. A recorded artifact is replaced or removed only when its current bytes still match recorded state.
 
 `--force` allows initial adoption or recovery of global outputs. It does not bypass project Git safety.
+
+## Unattended global sync
+
+For a machine that syncs itself on a timer, run:
+
+```sh
+asmith global sync --on-modified=backup
+```
+
+When someone has edited a generated global file by hand, this moves the file aside as `<name>.agentsmith-<UTC timestamp>` and keeps converging instead of stopping. For a skill, the whole skill directory is moved. Each backup is a warning on stderr and in `~/.agents/agentsmith/status.json`. Review backups later and either move the change into the Source Repository or delete the backup. A backed-up skill directory stays in the skill root, so remove it once reviewed.
+
+Each run records its result in `status.json`. Monitor it with:
+
+```sh
+asmith global status --max-age 2h
+```
+
+This exits nonzero when the last run failed or is older than two hours. Each failure category has its own exit code, so a wrapper can tell a dirty Source Repository (3) from a pull that cannot fast-forward (4) or a modified artifact (5). See [Exit behavior](/reference/commands#exit-behavior).
+
+## Keeping local additions
+
+If you add machine-specific text at the top or bottom of a generated global `AGENTS.md` or `CLAUDE.md`, keep it with:
+
+```sh
+asmith global adopt --dry-run
+asmith global adopt
+```
+
+This writes your additions as Git-ignored `*.local.md` snippets in the reserved `prepend` and `append` slots of the profile's last pack, then regenerates. Later generations keep reproducing the same file. Edits in the middle of generated content, and edits to skills, are never adopted: back them up and move them into the Source Repository by hand.
 
 ## Transactional writes
 

@@ -134,11 +134,12 @@ function toScope(input: ScopeConfig, defaults: HarnessName[]): ScopeInput {
   };
 }
 
-async function renderContent(context: PlannerContext, content: string, path: string, contributions: Contribution[]) {
+async function renderContent(context: PlannerContext, content: string, path: string, contributions: Contribution[], edgeSlots = false) {
   const rendered = await renderMarkdown({
     content,
     templatePath: path,
     contributions,
+    edgeSlots,
     resolveInclude: async (sourceId) => resolvePartial(context.sources, sourceId),
   });
   context.diagnostics.push(...rendered.diagnostics);
@@ -188,7 +189,7 @@ async function planInstruction(context: PlannerContext, scope: ScopeInput, harne
     return;
   }
   const template = await loadTemplate(context.sources, scope.template, harness);
-  const rendered = await renderContent(context, template.content, template.path, contributions);
+  const rendered = await renderContent(context, template.content, template.path, contributions, true);
   const adapter = getHarnessAdapter(harness);
   const destination = context.mode === "global" ? adapter.globalInstruction() : adapter.projectInstruction(context.projectRoot!, scope.path);
   context.diagnostics.push(...(adapter.preflightInstruction?.(destination) ?? []));

@@ -13,7 +13,16 @@ export interface RenderMarkdownOptions {
   templatePath: string;
   contributions?: readonly Contribution[];
   resolveInclude?: IncludeResolver;
+  /**
+   * Instruction artifacts receive the reserved edge slots: contributions to
+   * `prepend` and `append` are inserted verbatim at the very top and bottom of
+   * the rendered artifact, and templates may not declare those slots.
+   */
+  edgeSlots?: boolean;
 }
+
+/** Slots added implicitly around every instruction artifact. */
+export const RESERVED_EDGE_SLOTS = ["prepend", "append"] as const;
 
 interface Heading {
   level: number;
@@ -25,6 +34,7 @@ interface RenderContext {
   trace: RenderTrace;
   resolveInclude?: IncludeResolver;
   includeStack: string[];
+  reservedSlots: ReadonlySet<string>;
 }
 
 type Directive = { kind: "slot"; name: string } | { kind: "required-slot"; name: string } | { kind: "include"; name: string };
@@ -56,18 +66,41 @@ export async function renderMarkdown(options: RenderMarkdownOptions): Promise<Re
     trace,
     resolveInclude: options.resolveInclude,
     includeStack: [options.templatePath],
+    reservedSlots: new Set(options.edgeSlots ? RESERVED_EDGE_SLOTS : []),
   };
 
+  const contributions = options.contributions ?? [];
+  const slotted = contributions.filter((item) => !context.reservedSlots.has(item.slot));
   const expanded = await expandIncludes(splitLines(options.content), options.templatePath, context, false);
-  const filled = await fillSlots(expanded, options.templatePath, options.contributions ?? [], context);
+  const filled = await fillSlots(expanded, options.templatePath, slotted, context);
 
   findRemainingDirectives(filled, options.templatePath, diagnostics);
 
-  return {
-    content: normalizeMarkdown(filled.join("\n")),
-    trace,
-    diagnostics,
-  };
+  let content = normalizeMarkdown(filled.join("\n"));
+  if (options.edgeSlots) {
+    const prepend = await renderEdgeSlot("prepend", contributions, context);
+    const append = await renderEdgeSlot("append", contributions, context);
+    if (prepend || append) content = normalizeMarkdown(prepend + content + append);
+  }
+
+  return { content, trace, diagnostics };
+}
+
+/**
+ * Edge snippets are concatenated verbatim, without trimming or separating
+ * blank lines, so adopted local edits reproduce the edited artifact exactly.
+ */
+async function renderEdgeSlot(slot: string, contributions: readonly Contribution[], context: RenderContext): Promise<string> {
+  const items = contributions.filter((item) => item.slot === slot);
+  if (items.length === 0) return "";
+  context.trace.slots[slot] = items.map((item) => item.path);
+  let output = "";
+  for (const item of items) {
+    const lines = await expandIncludes(splitLines(item.content), item.path, { ...context, includeStack: [item.path] }, false);
+    findRemainingDirectives(lines, item.path, context.diagnostics);
+    if (lines.length > 0) output += `${lines.join("\n")}\n`;
+  }
+  return output;
 }
 
 async function expandIncludes(lines: string[], path: string, context: RenderContext, isPartial: boolean, inheritedHeading?: Heading): Promise<string[]> {
@@ -201,6 +234,15 @@ async function fillSlots(lines: string[], path: string, contributions: readonly 
       });
       continue;
     }
+    if (context.reservedSlots.has(directive.name)) {
+      context.diagnostics.push({
+        severity: "error",
+        code: "slot-reserved",
+        message: `Slot \"${directive.name}\" is reserved: it is added implicitly at the edge of every instruction artifact (line ${index + 1}).`,
+        path,
+      });
+      continue;
+    }
     const previous = declarations.get(directive.name);
     if (previous) {
       context.diagnostics.push({
@@ -266,6 +308,8 @@ async function fillSlots(lines: string[], path: string, contributions: readonly 
       continue;
     }
 
+    // Reserved slot declarations were already reported; drop them.
+    if (context.reservedSlots.has(directive.name)) continue;
     const items = grouped.get(directive.name) ?? [];
     context.trace.slots[directive.name] = items.map((item) => item.path);
     if (directive.kind === "required-slot" && items.length === 0) {
@@ -488,7 +532,7 @@ function validIncludeId(value: string): boolean {
   }
 }
 
-function validLogicalName(value: string): boolean {
+export function validLogicalName(value: string): boolean {
   if (!value || value.includes("\\") || value.includes("\0") || value.startsWith("/")) return false;
   return value.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }

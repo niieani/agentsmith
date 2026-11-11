@@ -20,6 +20,10 @@ A receiving template or skill may declare a slot name only once. A selected inst
 
 Instruction templates receive snippets from `instructions/<slot>/`. Skills receive reusable snippets from `skill-slots/<slot>/`. A selected skill-slot contribution is inserted into every enabled skill that declares that slot; its path never contains a consuming skill name.
 
+## Reserved edge slots
+
+Every instruction artifact, global or project, also has two reserved slots, `prepend` and `append`, that templates do not declare. Snippets for `prepend` go at the very top of the artifact and snippets for `append` at the very bottom. Their content is inserted verbatim, without trimming or blank lines between snippets, which lets [`global adopt`](/reference/commands#adopting-local-edits) reproduce an edited file exactly. A template or partial that declares `prepend` or `append` is an error. Skills have no reserved slots.
+
 ## Includes
 
 Includes resolve only below a source root's `partials/` directory:

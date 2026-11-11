@@ -80,6 +80,10 @@ _Avoid_: Marker, magic comment
 A named insertion point where selected packs may contribute content to a template.
 _Avoid_: Section, placeholder, hook
 
+**Edge Slot**:
+One of the reserved slots, `prepend` and `append`, implicitly placed at the very top and bottom of every Instruction Layer. Edge snippets are inserted verbatim.
+_Avoid_: Header slot, footer slot
+
 **Snippet**:
 An ordered piece of content contributed by a pack to a slot.
 _Avoid_: Fragment, addition
@@ -139,6 +143,22 @@ _Avoid_: User generation, host generation
 **Project Generation**:
 Generation of project-owned artifacts for the scopes declared by that project.
 _Avoid_: Local generation, project sync
+
+**Stored Content**:
+The copy of a global artifact's last generated content, kept by hash beside global state so later edits can be compared with it.
+_Avoid_: Cache, snapshot
+
+**Run Status**:
+The record of the most recent global sync or generate run: when it ran, its outcome, and its warnings.
+_Avoid_: Log, health file
+
+**Adoption**:
+Turning text added strictly before or after a global Instruction Layer's Stored Content into Local Source snippets, so that generation reproduces the edited artifact.
+_Avoid_: Import, merge
+
+**Artifact Backup**:
+A modified or unrecorded global artifact renamed aside with a timestamp so generation can proceed.
+_Avoid_: Snapshot, stash
 
 **Skill**:
 A named agent-facing capability that may be assembled from a template, partials, and pack contributions.

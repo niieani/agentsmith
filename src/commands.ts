@@ -3,10 +3,15 @@ import { readFile, rmdir } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 import { stringify } from "smol-toml";
 import { loadMachineConfig, MACHINE_CONFIG_PATH, resolveConfiguredPath } from "./config.ts";
-import { CommandError, ensureCleanSource, gitPullFfOnly, gitWorktree } from "./git.ts";
+import { adoptGlobal } from "./adopt.ts";
+import { classify, errorCode, errorMessage, exitCodeFor } from "./errors.ts";
+import { CommandError, ensureCleanSource, gitHeadCommit, gitPullFfOnly, gitWorktree } from "./git.ts";
 import { assertPlanValid, buildGlobalPlan, buildProjectPlan, type BuiltPlan } from "./planner.ts";
 import {
   applyPlan,
+  backupGlobalArtifacts,
+  collectBlobs,
+  globalBlobDirectory,
   globalStatePath,
   hashBytes,
   loadGlobalState,
@@ -14,10 +19,14 @@ import {
   preflightGlobalPlan,
   preflightProjectPlan,
   projectStatePath,
+  restoreBackups,
+  storeBlobs,
   unifiedDiff,
+  type ArtifactBackup,
   type GlobalState,
   type ProjectState,
 } from "./safety.ts";
+import { printGlobalStatus, writeGlobalStatus, type RunReport } from "./status.ts";
 import type { Diagnostic, GenerationPlan, PlannedDelete, PlannedWrite } from "./types.ts";
 
 const encoder = new TextEncoder();
@@ -28,9 +37,14 @@ export interface CommandOptions {
   force?: boolean;
   json?: boolean;
   warningsAsErrors?: boolean;
+  onModified?: "fail" | "backup";
+  maxAge?: string;
+  slot?: string;
+  pack?: string;
+  dryRun?: boolean;
 }
 
-function diagnosticsText(diagnostics: Diagnostic[]): string {
+export function diagnosticsText(diagnostics: Diagnostic[]): string {
   return diagnostics
     .map((item) => {
       const location = item.path ? ` (${item.path})` : "";
@@ -41,6 +55,11 @@ function diagnosticsText(diagnostics: Diagnostic[]): string {
 
 function printDiagnostics(diagnostics: Diagnostic[]): void {
   if (diagnostics.length > 0) console.error(diagnosticsText(diagnostics));
+}
+
+function warn(report: RunReport | undefined, message: string): void {
+  console.error(message);
+  report?.warnings.push(message);
 }
 
 function relativeStatePath(root: string, path: string): string {
@@ -102,7 +121,7 @@ function globalStateWrite(statePath: string, plan: BuiltPlan): PlannedWrite {
   };
 }
 
-async function pruneEmptySkillDirectories(deletions: PlannedDelete[]): Promise<void> {
+async function pruneEmptySkillDirectories(deletions: PlannedDelete[], report?: RunReport): Promise<void> {
   for (const deletion of deletions) {
     const normalized = resolve(deletion.destination);
     const markers = [`${sep}.agents${sep}skills${sep}`, `${sep}.claude${sep}skills${sep}`];
@@ -116,9 +135,7 @@ async function pruneEmptySkillDirectories(deletions: PlannedDelete[]): Promise<v
         await rmdir(current);
       } catch (cause) {
         if (!(cause instanceof Error) || !("code" in cause) || (cause.code !== "ENOENT" && cause.code !== "ENOTEMPTY")) {
-          console.error(
-            `WARNING stale-directory-cleanup: could not remove empty directory ${current}: ${cause instanceof Error ? cause.message : String(cause)}`,
-          );
+          warn(report, `WARNING stale-directory-cleanup: could not remove empty directory ${current}: ${errorMessage(cause)}`);
           break;
         }
         if (cause instanceof Error && "code" in cause && cause.code === "ENOTEMPTY") break;
@@ -129,29 +146,108 @@ async function pruneEmptySkillDirectories(deletions: PlannedDelete[]): Promise<v
   }
 }
 
-async function generate(plan: BuiltPlan, options: CommandOptions): Promise<void> {
-  assertPlanValid(plan);
+async function generateProject(plan: BuiltPlan): Promise<void> {
+  await classify("config", () => assertPlanValid(plan));
   printDiagnostics(plan.diagnostics.filter((item) => item.severity === "warning"));
-  if (plan.mode === "project") {
-    const prepared = await prepareProjectPlan(plan);
-    await preflightProjectPlan(plan, { projectRoot: plan.projectRoot!, state: prepared.previous });
-    const application: GenerationPlan = {
-      ...plan,
-      writes: [...plan.writes, projectStateWrite(prepared.statePath, prepared.worktree.root, plan)],
-    };
+  const prepared = await prepareProjectPlan(plan);
+  await preflightProjectPlan(plan, { projectRoot: plan.projectRoot!, state: prepared.previous });
+  const application: GenerationPlan = {
+    ...plan,
+    writes: [...plan.writes, projectStateWrite(prepared.statePath, prepared.worktree.root, plan)],
+  };
+  await applyPlan(application);
+  await pruneEmptySkillDirectories(plan.deletes);
+  console.log(`Generated ${plan.writes.length} file(s); removed ${plan.deletes.length} stale file(s).`);
+}
+
+export interface GlobalGenerateOptions {
+  force?: boolean;
+  onModified?: "fail" | "backup";
+  /** Destinations already reconciled by the caller (for example, adopted edits). */
+  accept?: ReadonlySet<string>;
+}
+
+/**
+ * Generate global artifacts. Generated content is stored as content-addressed
+ * blobs before the state that references them is committed, and unreferenced
+ * blobs are collected only after the transaction succeeds.
+ */
+export async function generateGlobal(plan: BuiltPlan, options: GlobalGenerateOptions, report?: RunReport): Promise<void> {
+  await classify("config", () => assertPlanValid(plan));
+  for (const item of plan.diagnostics.filter((diagnostic) => diagnostic.severity === "warning")) warn(report, diagnosticsText([item]));
+  const prepared = await prepareGlobalPlan(plan);
+  const conflicts = await preflightGlobalPlan(plan, {
+    state: prepared.previous,
+    force: options.force,
+    onModified: options.onModified,
+    accept: options.accept,
+  });
+  const blobs = globalBlobDirectory(prepared.statePath);
+  await storeBlobs(
+    blobs,
+    plan.writes.map((write) => write.content),
+  );
+  const backups: ArtifactBackup[] = await backupGlobalArtifacts(conflicts, { plan, state: prepared.previous });
+  const application: GenerationPlan = {
+    ...plan,
+    writes: [...plan.writes, globalStateWrite(prepared.statePath, plan)],
+  };
+  try {
     await applyPlan(application);
-    await pruneEmptySkillDirectories(plan.deletes);
-  } else {
-    const prepared = await prepareGlobalPlan(plan);
-    await preflightGlobalPlan(plan, { state: prepared.previous, force: options.force });
-    const application: GenerationPlan = {
-      ...plan,
-      writes: [...plan.writes, globalStateWrite(prepared.statePath, plan)],
-    };
-    await applyPlan(application);
-    await pruneEmptySkillDirectories(plan.deletes);
+  } catch (cause) {
+    await restoreBackups(backups);
+    throw cause;
+  }
+  for (const backup of backups) {
+    report?.backups.push(backup);
+    warn(report, `WARNING artifact-backup: moved ${backup.reason} global artifact ${backup.path} to ${backup.backup}`);
+  }
+  await pruneEmptySkillDirectories(plan.deletes, report);
+  try {
+    await collectBlobs(blobs, await loadGlobalState(prepared.statePath));
+  } catch (cause) {
+    warn(report, `WARNING blob-cleanup: could not remove unreferenced stored content: ${errorMessage(cause)}`);
   }
   console.log(`Generated ${plan.writes.length} file(s); removed ${plan.deletes.length} stale file(s).`);
+}
+
+/** Run `global sync` or `global generate` and always record the outcome in status.json. */
+async function runRecordedGlobal(action: "sync" | "generate", options: CommandOptions): Promise<void> {
+  const startedAt = new Date();
+  const report: RunReport = { warnings: [], backups: [] };
+  let failure: unknown;
+  try {
+    const configPath = resolveConfiguredPath(options.config ?? MACHINE_CONFIG_PATH, resolve(process.cwd(), "config.toml"));
+    const machine = await classify("config", () => loadMachineConfig(configPath));
+    report.profile = machine.profile;
+    if (action === "sync") {
+      await ensureCleanSource(machine.source);
+      await gitPullFfOnly(machine.source);
+    }
+    report.sourceCommit = await gitHeadCommit(machine.source);
+    const plan = await classify("config", () => buildGlobalPlan(options.config ?? MACHINE_CONFIG_PATH));
+    await generateGlobal(plan, { force: options.force, onModified: options.onModified }, report);
+  } catch (cause) {
+    failure = cause;
+  }
+  try {
+    await writeGlobalStatus({
+      version: 1,
+      command: action,
+      startedAt: startedAt.toISOString(),
+      timestamp: new Date().toISOString(),
+      profile: report.profile ?? null,
+      sourceCommit: report.sourceCommit ?? null,
+      outcome: failure === undefined ? "success" : "failure",
+      exitCode: failure === undefined ? 0 : exitCodeFor(failure),
+      error: failure === undefined ? null : { code: errorCode(failure), message: errorMessage(failure) },
+      warnings: report.warnings,
+      backups: report.backups.map(({ path, backup, reason }) => ({ path, backup, reason })),
+    });
+  } catch (cause) {
+    console.error(`WARNING status-write: could not record run status: ${errorMessage(cause)}`);
+  }
+  if (failure !== undefined) throw failure;
 }
 
 async function diffPlan(plan: BuiltPlan): Promise<void> {
@@ -169,7 +265,7 @@ async function diffPlan(plan: BuiltPlan): Promise<void> {
       });
     }
   } else await prepareGlobalPlan(plan);
-  assertPlanValid(plan);
+  await classify("config", () => assertPlanValid(plan));
   printDiagnostics(plan.diagnostics);
   let output = "";
   for (const write of plan.writes) {
@@ -263,30 +359,33 @@ async function planFor(mode: "global" | "project", options: CommandOptions): Pro
     : buildProjectPlan(options.project ?? process.cwd(), options.config ?? MACHINE_CONFIG_PATH);
 }
 
-export async function executeCommand(
-  mode: "global" | "project",
-  action: "sync" | "generate" | "diff" | "lint" | "explain",
-  options: CommandOptions,
-): Promise<void> {
-  if (action === "sync") {
-    if (mode !== "global") throw new Error("Project sync is not supported");
-    const configPath = options.config ?? MACHINE_CONFIG_PATH;
-    const resolved = resolveConfiguredPath(configPath, resolve(process.cwd(), "config.toml"));
-    const machine = loadMachineConfig(resolved);
-    await ensureCleanSource(machine.source);
-    await gitPullFfOnly(machine.source);
+export type CommandAction = "sync" | "generate" | "diff" | "lint" | "explain" | "status" | "adopt";
+
+/** Execute one CLI command and return its process exit code. */
+export async function executeCommand(mode: "global" | "project", action: CommandAction, options: CommandOptions): Promise<number> {
+  if (action === "sync" && mode !== "global") throw new Error("Project sync is not supported");
+  if ((action === "status" || action === "adopt") && mode !== "global") throw new Error(`Project ${action} is not supported`);
+  if (mode === "global" && (action === "sync" || action === "generate")) {
+    await runRecordedGlobal(action, options);
+    return 0;
   }
-  const plan = await planFor(mode, options);
-  if (action === "sync" || action === "generate") {
-    await generate(plan, options);
+  if (action === "status") return printGlobalStatus(options);
+  if (action === "adopt") {
+    await adoptGlobal(options);
+    return 0;
+  }
+  const plan = await classify("config", () => planFor(mode, options));
+  if (action === "generate") {
+    await generateProject(plan);
   } else if (action === "diff") {
     await diffPlan(plan);
   } else if (action === "lint") {
     printDiagnostics(plan.diagnostics);
-    assertPlanValid(plan, options.warningsAsErrors);
+    await classify("config", () => assertPlanValid(plan, options.warningsAsErrors));
     console.log(`Lint passed with ${plan.diagnostics.filter((item) => item.severity === "warning").length} warning(s).`);
   } else {
-    assertPlanValid(plan);
+    await classify("config", () => assertPlanValid(plan));
     process.stdout.write(options.json ? `${JSON.stringify(plan.explanation, null, 2)}\n` : explainHuman(plan));
   }
+  return 0;
 }
