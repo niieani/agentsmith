@@ -53,3 +53,36 @@ Each slice ends with `bun run check` and updates the specification, configuratio
 - A global snippet that is not `--local` is committed by default (only the new file); `--no-commit` opts out. An uncommitted file in the Source Repository blocks every later sync.
 - `--push` (global only, not with `--local`): require a clean source, `git pull --ff-only`, write, lint, commit only the new file, push, then regenerate.
 - `--dry-run` prints the path and content without writing.
+
+## Slice F: sandbox home, exclusive mode, clean
+
+Three independent features; one worktree, landed in this order.
+
+### F1. `home` in the machine config
+
+- Optional `home = "<path>"`, resolved relative to the machine config file. When set, every agentsmith destination and every piece of agentsmith state (artifacts, `state.json`, `status.json`, blobs, backups, logs) resolves under it instead of `$HOME`. `CODEX_HOME` is ignored while `home` is set, so a sandbox never writes into the real `~/.codex`.
+- Git and SSH keep the real `$HOME` (identity, keys, credential helpers), so `global init`, `global add` and syncs against a private remote work from a sandbox.
+- `global schedule install` already passes `--config`; a sandboxed config therefore schedules a sandboxed job. The schedule definition itself (LaunchAgent, systemd unit) stays in the real home.
+- `global status` and every error that prints a path show the resolved path.
+
+### F2. Exclusive mode and skill adoption
+
+- Opt-in `exclusive = true` in a profile (inherited through `extends`) and in the project config (top level, overridable per `[[scopes]]`).
+- `exclusive_allow = ["<glob>", ...]` beside it lists skill names managed by other tools (for example skills installed by `npx skills add`); globs match the skill directory name. Profile lists merge as an ordered union through `extends`.
+- With exclusive mode on, every skill directory in a skill root read by a selected harness, in the scope being generated, that agentsmith did not write and that `exclusive_allow` does not match, is an unmanaged skill. Hidden directories (such as Codex's `.system`) are skipped.
+- Unmanaged skills fail lint with exit 5 (`artifact-modified` class), listing each path. With `--on-modified=backup` they are moved to the backup root (globally `~/.agents/agentsmith/backups/<ts>/…`; in projects the same layout under the project state directory) and recorded as warnings in `status.json`; the run succeeds.
+- `asmith global adopt --skill <name> [--pack <pack>] [--push | --no-commit]` copies an unmanaged global skill into `skills/<name>/` in the Source Repository, appends `<name>` to the pack's `skills`, lints, commits only those changes by default (same rules as `global add`, including `--push` and `--no-commit`), and regenerates, after which the skill is managed. `--pack` follows the single-candidate rule. A name that already exists in the Source Repository is an error. `project adopt --skill` does the same into the project's own source tree and never commits.
+
+### F3. `clean`
+
+- `asmith global clean` and `asmith project clean [--scope]`: dry run by default, printing every path that would be removed; `-y`/`--yes` deletes.
+- Removes only artifacts recorded in state whose current content matches the recorded content, then agentsmith's state, status and blobs for that mode. A modified artifact is refused (exit 5) unless `--on-modified=backup` (backed up, then removed) or `--force` (removed).
+- Leaves the machine config, the Source Repository clone, backups, logs and the schedule alone (`global schedule uninstall` stays separate). Empty directories that agentsmith created are removed; directories that held other files are kept.
+- In a project, removed tracked files show up as Git deletions for the user to commit.
+
+### Acceptance
+
+- A machine config with `home` generates, syncs, reports status and cleans entirely inside the sandbox, while Git operations use the real identity.
+- Exclusive mode reports an unmanaged skill, leaves an allowed one alone, quarantines with `--on-modified=backup`, and `global adopt --skill` turns it into a managed skill that regenerates byte-identically.
+- `clean` dry-runs, deletes with `-y`, refuses a modified artifact, and a following `generate` recreates the same tree.
+- Docs: configuration reference, commands reference, SPEC, troubleshooting, and a guide section for each feature.
