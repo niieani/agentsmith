@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CommandResult, RunCommandOptions } from "../src/git.ts";
 import {
+  configFromCommand,
   formatInterval,
   installSchedule,
   intervalSeconds,
@@ -250,6 +251,35 @@ describe("Linux schedule", () => {
     const fixture = await fakeHost("linux", (command) => (command === "loginctl" ? { stdout: "yes\n" } : undefined));
     await installSchedule({ config: fixture.config }, fixture.host);
     expect(fixture.out.join("\n")).not.toContain("enable-linger");
+  });
+});
+
+describe("sandboxed machine config", () => {
+  test("logs under the sandbox home while the job definition stays in the real home", async () => {
+    const fixture = await fakeHost("darwin");
+    const sandbox = join(fixture.host.cwd, "sandbox");
+    await mkdir(join(sandbox, "home"), { recursive: true });
+    const config = join(sandbox, "config.toml");
+    await writeFile(config, `source = ${JSON.stringify(fixture.source)}\nprofile = "test"\nhome = "home"\n`);
+    await installSchedule({ config }, fixture.host);
+    const plist = fixture.files.get(join(fixture.home, "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`));
+    expect(plist).toContain(`--config ${config} &gt;${join(sandbox, "home", ".agents", "agentsmith", "logs", "last-run.log")}`);
+
+    await mkdir(join(sandbox, "home", ".agents", "agentsmith"), { recursive: true });
+    await writeFile(
+      join(sandbox, "home", ".agents", "agentsmith", "status.json"),
+      JSON.stringify({ version: 1, command: "sync", outcome: "success", timestamp: "2026-11-10T12:00:00.000Z", exitCode: 0 }),
+    );
+    fixture.out.length = 0;
+    await printScheduleStatus(fixture.host);
+    expect(fixture.out.at(-1)).toBe("Last run: global sync succeeded at 2026-11-10T12:00:00.000Z");
+  });
+
+  test("reads --config from rendered commands", () => {
+    expect(configFromCommand("/bin/asmith global sync --on-modified=backup --config /a/config.toml")).toBe("/a/config.toml");
+    expect(configFromCommand("asmith global sync --config '/a b/it'\\''s.toml'")).toBe("/a b/it's.toml");
+    expect(configFromCommand('asmith global sync --config "/a b/c%%d.toml"')).toBe("/a b/c%d.toml");
+    expect(configFromCommand("asmith global sync --on-modified=backup")).toBeUndefined();
   });
 });
 

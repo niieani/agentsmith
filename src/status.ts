@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { MACHINE_CONFIG_PATH, readMachineHome } from "./config.ts";
 import { AgentsmithError, EXIT_CODES } from "./errors.ts";
 import { atomicWrite, globalStatePath, type ArtifactBackup } from "./safety.ts";
 
@@ -86,12 +87,13 @@ function formatAge(milliseconds: number): string {
  * see: the failed run's own exit code, `status-stale` when too old or absent,
  * otherwise 0.
  */
-export async function printGlobalStatus(options: { json?: boolean; maxAge?: string }, now = new Date()): Promise<number> {
+export async function printGlobalStatus(options: { json?: boolean; maxAge?: string; config?: string }, now = new Date()): Promise<number> {
   const maxAge = options.maxAge === undefined ? undefined : parseDuration(options.maxAge);
-  const path = globalStatusPath();
+  const home = readMachineHome(options.config ?? MACHINE_CONFIG_PATH);
+  const path = globalStatusPath(globalStatePath(home));
   const status = await readGlobalStatus(path);
   if (!status) {
-    if (options.json) process.stdout.write(`${JSON.stringify({ path, recorded: false, healthy: false }, null, 2)}\n`);
+    if (options.json) process.stdout.write(`${JSON.stringify({ path, ...(home === undefined ? {} : { home }), recorded: false, healthy: false }, null, 2)}\n`);
     console.error(`No global run has been recorded yet (${path}).`);
     return EXIT_CODES["status-stale"];
   }
@@ -100,13 +102,15 @@ export async function printGlobalStatus(options: { json?: boolean; maxAge?: stri
   const failed = status.outcome === "failure";
   if (options.json) {
     process.stdout.write(
-      `${JSON.stringify({ path, recorded: true, ...status, ageSeconds: Math.round(ageMs / 1000), stale, healthy: !failed && !stale }, null, 2)}\n`,
+      `${JSON.stringify({ path, ...(home === undefined ? {} : { home }), recorded: true, ...status, ageSeconds: Math.round(ageMs / 1000), stale, healthy: !failed && !stale }, null, 2)}\n`,
     );
   } else {
     const lines = [
       `Last run: global ${status.command} ${failed ? "failed" : "succeeded"} at ${status.timestamp} (${formatAge(ageMs)} ago)`,
       `Profile: ${status.profile ?? "(unknown)"}`,
       `Source commit: ${status.sourceCommit ?? "(unknown)"}`,
+      ...(home === undefined ? [] : [`Home: ${home}`]),
+      `Status file: ${path}`,
     ];
     if (status.error) lines.push(`Error (${status.error.code}, exit ${status.exitCode}): ${status.error.message}`);
     if (status.backups.length > 0) {

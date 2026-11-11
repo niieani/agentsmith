@@ -44,6 +44,25 @@ asmith global status --max-age 2h
 
 This exits nonzero when the last run failed or is older than two hours. Each failure category has its own exit code, so a wrapper can tell a dirty Source Repository (3) from a pull that cannot fast-forward (4) or a modified artifact (5). See [Exit behavior](/reference/commands#exit-behavior).
 
+## Trying a profile in a sandbox
+
+To see what a profile or a Source Repository change does without touching your real `~/.claude`, `~/.codex`, or `~/.agents`, point a second machine config at a sandbox home:
+
+```toml title="~/sandbox/config.toml"
+source = "~/.agents/agentsmith/source"
+profile = "experimental"
+home = "home"
+```
+
+```sh
+mkdir -p ~/sandbox/home
+asmith global generate --config ~/sandbox/config.toml
+ls ~/sandbox/home/.claude ~/sandbox/home/.agents/skills
+asmith global status --config ~/sandbox/config.toml
+```
+
+Everything agentsmith writes, including its state, status, backups, and logs, lands under `~/sandbox/home`. Git keeps your real home, so `global sync` and `global add --push` use your usual identity and keys. Pass `--config` to every command that should act on the sandbox; without it, commands act on your real home. See [sandbox home](/reference/configuration#sandbox-home).
+
 ## Keeping local additions
 
 If you add machine-specific text at the top or bottom of a generated global `AGENTS.md` or `CLAUDE.md`, keep it with:

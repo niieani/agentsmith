@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile, rmdir } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 import { stringify } from "smol-toml";
-import { loadMachineConfig, MACHINE_CONFIG_PATH, resolveConfiguredPath } from "./config.ts";
+import { loadMachineConfig, MACHINE_CONFIG_PATH, readMachineHome, resolveConfiguredPath } from "./config.ts";
 import { addSnippet, type Placement } from "./add.ts";
 import { adoptGlobal } from "./adopt.ts";
 import { AgentsmithError, classify, errorCode, errorMessage, exitCodeFor } from "./errors.ts";
@@ -12,6 +12,7 @@ import {
   applyPlan,
   backupGlobalArtifacts,
   collectBlobs,
+  globalBackupRoot,
   globalBlobDirectory,
   globalStatePath,
   hashBytes,
@@ -29,7 +30,7 @@ import {
 } from "./safety.ts";
 import { globalInit } from "./init.ts";
 import { installSchedule, printScheduleStatus, uninstallSchedule } from "./schedule.ts";
-import { printGlobalStatus, writeGlobalStatus, type RunReport } from "./status.ts";
+import { globalStatusPath, printGlobalStatus, writeGlobalStatus, type RunReport } from "./status.ts";
 import type { Diagnostic, GenerationPlan, HarnessName, PlannedDelete, PlannedWrite } from "./types.ts";
 
 const encoder = new TextEncoder();
@@ -105,7 +106,7 @@ export async function prepareGlobalPlan(plan: BuiltPlan): Promise<{
   statePath: string;
   previous: GlobalState;
 }> {
-  const statePath = globalStatePath();
+  const statePath = globalStatePath(plan.home);
   const previous = await loadGlobalState(statePath);
   const current = new Set(plan.plannedPaths.map((path) => resolve(path)));
   plan.deletes = Object.keys(previous.artifacts)
@@ -207,7 +208,11 @@ export async function generateGlobal(plan: BuiltPlan, options: GlobalGenerateOpt
     blobs,
     plan.writes.map((write) => write.content),
   );
-  const backups: ArtifactBackup[] = await backupGlobalArtifacts(conflicts, { plan, state: prepared.previous });
+  const backups: ArtifactBackup[] = await backupGlobalArtifacts(conflicts, {
+    plan,
+    state: prepared.previous,
+    backupRoot: globalBackupRoot(plan.home),
+  });
   const application: GenerationPlan = {
     ...plan,
     writes: [...plan.writes, globalStateWrite(prepared.statePath, plan)],
@@ -236,8 +241,8 @@ export async function runRecordedGlobal(action: "sync" | "generate", options: Co
   const startedAt = new Date();
   const report: RunReport = { warnings: [], backups: [] };
   let failure: unknown;
+  const configPath = resolveConfiguredPath(options.config ?? MACHINE_CONFIG_PATH, resolve(process.cwd(), "config.toml"));
   try {
-    const configPath = resolveConfiguredPath(options.config ?? MACHINE_CONFIG_PATH, resolve(process.cwd(), "config.toml"));
     const machine = await classify("config", () => loadMachineConfig(configPath));
     report.profile = machine.profile;
     if (action === "sync") {
@@ -245,25 +250,28 @@ export async function runRecordedGlobal(action: "sync" | "generate", options: Co
       await gitPullFfOnly(machine.source);
     }
     report.sourceCommit = await gitHeadCommit(machine.source);
-    const plan = await classify("config", () => buildGlobalPlan(options.config ?? MACHINE_CONFIG_PATH));
+    const plan = await classify("config", () => buildGlobalPlan(configPath));
     await generateGlobal(plan, { force: options.force, onModified: options.onModified }, report);
   } catch (cause) {
     failure = cause;
   }
   try {
-    await writeGlobalStatus({
-      version: 1,
-      command: action,
-      startedAt: startedAt.toISOString(),
-      timestamp: new Date().toISOString(),
-      profile: report.profile ?? null,
-      sourceCommit: report.sourceCommit ?? null,
-      outcome: failure === undefined ? "success" : "failure",
-      exitCode: failure === undefined ? 0 : exitCodeFor(failure),
-      error: failure === undefined ? null : { code: errorCode(failure), message: errorMessage(failure) },
-      warnings: report.warnings,
-      backups: report.backups.map(({ path, backup, reason }) => ({ path, backup, reason })),
-    });
+    await writeGlobalStatus(
+      {
+        version: 1,
+        command: action,
+        startedAt: startedAt.toISOString(),
+        timestamp: new Date().toISOString(),
+        profile: report.profile ?? null,
+        sourceCommit: report.sourceCommit ?? null,
+        outcome: failure === undefined ? "success" : "failure",
+        exitCode: failure === undefined ? 0 : exitCodeFor(failure),
+        error: failure === undefined ? null : { code: errorCode(failure), message: errorMessage(failure) },
+        warnings: report.warnings,
+        backups: report.backups.map(({ path, backup, reason }) => ({ path, backup, reason })),
+      },
+      globalStatusPath(globalStatePath(readMachineHome(configPath))),
+    );
   } catch (cause) {
     console.error(`WARNING status-write: could not record run status: ${errorMessage(cause)}`);
   }

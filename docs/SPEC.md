@@ -88,7 +88,10 @@ Every TOML document is strict. Configuration files have no schema-version field;
 ```toml
 source = "~/.agents/agentsmith/source"
 profile = "studio"
+home = "~/sandbox/home"   # optional
 ```
+
+`source` and `home` resolve relative to the configuration file; `~` and `~/` expand to the real home directory. `home`, when set, must be an existing directory and is canonicalized (symlinked ancestors resolved). It replaces `$HOME` for every agentsmith destination and every piece of agentsmith state: global Instruction Layers and Skill Roots, the Codex home (`<home>/.codex`; `CODEX_HOME` is ignored), `state.toml`, `status.json`, `blobs/`, `backups/`, and `logs/` under `<home>/.agents/agentsmith/`. Project plans that read the machine configuration use the same home for global collision checks. Git and other subprocesses inherit the real environment, including `$HOME`. Commands that only need state (`global status`, run status recording, `global schedule status`) read `home` leniently, so they still find the sandbox when the rest of the configuration is invalid; an unreadable `home` falls back to the real home.
 
 ### 4.2 Source Repository root
 
@@ -443,7 +446,9 @@ The invocation is the running executable: the compiled binary alone, or the runt
 
 After installing, the command runs `git ls-remote` in the Source Repository with the job's `PATH`, without `SSH_AUTH_SOCK`, askpass programs, or terminal prompts, and with `ssh -o BatchMode=yes` unless `GIT_SSH_COMMAND` or `core.sshCommand` is set. Failure prints a warning recommending a read-only deploy key or a stored HTTPS token; it never fails the install.
 
-`global schedule status` reports whether the job is installed and loaded or active, its definition file, interval, and command, and the last run from `status.json`. It exits 0.
+With a sandbox `home`, the log directory is `<home>/.agents/agentsmith/logs`; the job definition stays in the real home. `global init` keeps an existing configuration's `home` value when it rewrites the file and, without `--source`, clones to `<home>/.agents/agentsmith/source`.
+
+`global schedule status` reports whether the job is installed and loaded or active, its definition file, interval, and command, and the last run from `status.json`, found through the installed job's `--config` when present. It exits 0.
 
 ## 10. Budgets
 
@@ -465,7 +470,7 @@ asmith global generate [--config PATH] [--force] [--on-modified fail|backup]
 asmith global diff [--config PATH]
 asmith global lint [--config PATH] [--warnings-as-errors]
 asmith global explain [--config PATH] [--json]
-asmith global status [--json] [--max-age DURATION]
+asmith global status [--config PATH] [--json] [--max-age DURATION]
 asmith global adopt [--config PATH] [--slot NAME] [--pack NAME] [--dry-run]
 asmith global add SLOT [TEXT] [--file PATH] [--skill-slot] [--harness NAME] [--pack NAME] [--placement gap|first|last] [--name NAME] [--local] [--push | --no-commit] [--skip-generate] [--dry-run] [--config PATH]
 asmith global init GIT_URL --profile NAME [--source PATH] [--config PATH] [--schedule] [--interval DURATION] [--yes]

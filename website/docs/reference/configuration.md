@@ -18,6 +18,21 @@ profile = "laptop"
 | --- | --- | --- |
 | `source` | Yes | Source Repository path. |
 | `profile` | Yes | Profile filename without `.toml`. |
+| `home` | No | Sandbox home. See [sandbox home](#sandbox-home). |
+
+Relative paths resolve against the directory holding the config file; `~` means your real home.
+
+### Sandbox home
+
+```toml title="~/sandbox/config.toml"
+source = "source"
+profile = "laptop"
+home = "home"
+```
+
+When `home` is set, agentsmith uses it in place of `$HOME` for everything it owns: global artifacts (`<home>/.claude/CLAUDE.md`, `<home>/.codex/AGENTS.md`, `<home>/.agents/skills`, …), `state.toml`, `status.json`, stored content blobs, backups, and scheduler logs, all under `<home>/.agents/agentsmith/`. `CODEX_HOME` is ignored while `home` is set, so a sandbox never writes into your real `~/.codex`. The directory must already exist.
+
+Git and SSH still run with your real `$HOME`, so your identity, keys, and credential helpers keep working for `global sync`, `global add --push`, and `global init`. Pass the config with `--config` to every global command, including `global status`. `global schedule install --config` schedules a job that syncs the sandbox; the LaunchAgent or systemd unit itself stays in your real home. `global init --config` keeps an existing config's `home` and, without `--source`, clones into `<home>/.agents/agentsmith/source`.
 
 ## Root config
 

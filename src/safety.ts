@@ -25,8 +25,9 @@ export function projectStatePath(worktree: GitWorktree): string {
   return join(worktree.gitDir, "agentsmith", "state.toml");
 }
 
-export function globalStatePath(home = homedir()): string {
-  return join(home, ".agents", "agentsmith", "state.toml");
+/** Global state under `home`: a machine config's sandbox home, or the real home when undefined. */
+export function globalStatePath(home?: string): string {
+  return join(home ?? homedir(), ".agents", "agentsmith", "state.toml");
 }
 
 /** Content-addressed copies of the last generated global artifacts, named by SHA-256. */
@@ -285,8 +286,8 @@ function owningSkillDirectory(path: string, knownFiles: ReadonlySet<string>): st
 }
 
 /** Where whole skill directories are moved, outside every skill root so no harness loads them. */
-export function globalBackupRoot(home = homedir()): string {
-  return join(home, ".agents", "agentsmith", "backups");
+export function globalBackupRoot(home?: string): string {
+  return join(home ?? homedir(), ".agents", "agentsmith", "backups");
 }
 
 async function moveAside(path: string, backup: string): Promise<void> {

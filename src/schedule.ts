@@ -2,7 +2,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
-import { loadMachineConfig } from "./config.ts";
+import { loadMachineConfig, readMachineHome } from "./config.ts";
 import { AgentsmithError, classify, errorMessage } from "./errors.ts";
 import { type CommandResult, type RunCommandOptions, runCommand } from "./git.ts";
 import { globalStatusPath, parseDuration, readGlobalStatus } from "./status.ts";
@@ -166,7 +166,8 @@ export function scheduledJob(host: SchedulerHost, options: ScheduleOptions): Sch
     programArguments: [...invocation.argv, "global", "sync", "--on-modified=backup", ...(options.config === undefined ? [] : ["--config", configPath])],
     environment,
     intervalSeconds: intervalSeconds(options.interval),
-    logDirectory: join(host.home, ".agents", "agentsmith", "logs"),
+    // Logs are agentsmith state, so a sandboxed config logs under its sandbox home; the job definition stays in the real one.
+    logDirectory: join(readMachineHome(configPath) ?? host.home, ".agents", "agentsmith", "logs"),
     devCheckout: invocation.devCheckout,
     configPath,
   };
@@ -434,6 +435,15 @@ export async function readInstalledSchedule(host: SchedulerHost): Promise<Instal
   unsupported(host.platform);
 }
 
+/** The `--config` path in a rendered job command, unquoting shell or systemd quoting. */
+export function configFromCommand(command: string): string | undefined {
+  const match = /(?:^|\s)--config\s+(?:'((?:[^']|'\\'')*)'|"((?:[^"\\]|\\.)*)"|(\S+))/.exec(command);
+  if (!match) return undefined;
+  if (match[1] !== undefined) return match[1].replaceAll(`'\\''`, "'");
+  if (match[2] !== undefined) return match[2].replace(/\\(.)/g, "$1").replaceAll("%%", "%").replaceAll("$$", "$");
+  return match[3]!.replaceAll("%%", "%").replaceAll("$$", "$");
+}
+
 export async function printScheduleStatus(host: SchedulerHost = systemSchedulerHost()): Promise<number> {
   const schedule = await readInstalledSchedule(host);
   if (!schedule.installed) {
@@ -445,7 +455,9 @@ export async function printScheduleStatus(host: SchedulerHost = systemSchedulerH
     host.out(`Interval: ${schedule.intervalSeconds === undefined ? "(unknown)" : formatInterval(schedule.intervalSeconds)}`);
     host.out(`Command: ${schedule.command ?? "(unknown)"}`);
   }
-  const statusPath = globalStatusPath(join(host.home, ".agents", "agentsmith", "state.toml"));
+  const configPath = schedule.command === undefined ? undefined : configFromCommand(schedule.command);
+  const home = (configPath === undefined ? undefined : readMachineHome(configPath)) ?? host.home;
+  const statusPath = globalStatusPath(join(home, ".agents", "agentsmith", "state.toml"));
   try {
     const status = await readGlobalStatus(statusPath);
     host.out(

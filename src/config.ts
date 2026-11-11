@@ -215,7 +215,7 @@ function contained(root: string, candidate: string, label: string): string {
 export function loadMachineConfig(path: string): MachineConfig {
   const absolutePath = resolveConfiguredPath(path, join(resolve("."), ".agentsmith-cli-path"));
   const input = readToml(absolutePath);
-  exactKeys(input, ["source", "profile"], "machine configuration", absolutePath);
+  exactKeys(input, ["source", "profile", "home"], "machine configuration", absolutePath);
   const profile = string(input.profile, "profile", absolutePath);
   if (parseSourceId(profile).owner !== undefined) fail("machine profile cannot be ownership-qualified", absolutePath);
   const source = resolveConfiguredPath(string(input.source, "source", absolutePath), absolutePath);
@@ -225,7 +225,29 @@ export function loadMachineConfig(path: string): MachineConfig {
     // The source itself is not a symlink (checked above); resolving its ancestors makes it compare equal to Git's root.
     source: realpathSync(source),
     profile,
+    ...(input.home === undefined ? {} : { home: machineHome(input.home, absolutePath) }),
   };
+}
+
+function machineHome(value: unknown, configPath: string): string {
+  const home = resolveConfiguredPath(string(value, "home", configPath), configPath);
+  if (!existsSync(home) || !lstatSync(realpathSync(home)).isDirectory()) fail(`home is not an existing directory: ${home}`, configPath);
+  // Like $HOME, a sandbox home is a root: its symlinked ancestors are resolved so paths below it compare equal to Git's.
+  return realpathSync(home);
+}
+
+/**
+ * The sandbox home a machine config selects, read leniently so run status and cleanup still find agentsmith's state
+ * when the rest of the config is invalid. Undefined when the config is missing, unreadable, or sets no valid home.
+ */
+export function readMachineHome(configPath: string): string | undefined {
+  const absolutePath = resolveConfiguredPath(configPath, join(resolve("."), ".agentsmith-cli-path"));
+  try {
+    const input = readToml(absolutePath);
+    return input.home === undefined ? undefined : machineHome(input.home, absolutePath);
+  } catch {
+    return undefined;
+  }
 }
 
 export function loadRootConfig(sourceRoot: string): RootConfig {

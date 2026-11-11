@@ -34,6 +34,12 @@ For a newly generated output, add and commit it before the next generation.
 
 `asmith global status` exits with the failed run's exit code, or with 6 when no run is recorded or the last one is older than `--max-age`. The printed error and warnings come from `~/.agents/agentsmith/status.json`. Fix the cause and rerun `asmith global sync`.
 
+## Sandbox home problems
+
+- **`home is not an existing directory`**: create the directory named by `home` in the machine config, or fix the path. Relative paths resolve against the config file's directory.
+- **`global status` reports no recorded run for a sandbox**: pass the sandbox config with `--config`. Without it, status reads `~/.agents/agentsmith/status.json` in your real home.
+- **Git asks for an identity or a key inside a sandbox**: it should not, because Git keeps your real `$HOME`. Check that the variables you run asmith with (`HOME`, `GIT_CONFIG_GLOBAL`) point at your real configuration.
+
 ## Source Repository is not clean
 
 `global sync` exits with code 3. It rejects tracked, staged, conflicted, and nonignored untracked source changes. Commit, stash, or remove them before syncing. Ignored local source such as `*.local.md` is allowed.

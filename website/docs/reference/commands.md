@@ -16,11 +16,11 @@ description: Every asmith command, option, and intended workflow.
 | `asmith global diff [--config PATH]` | Show prospective writes and stale deletions. |
 | `asmith global lint [--config PATH] [--warnings-as-errors]` | Validate without writing. |
 | `asmith global explain [--config PATH] [--json]` | Show artifacts, provenance, sizes, slots, and includes. |
-| `asmith global status [--json] [--max-age DURATION]` | Show the last recorded `sync` or `generate` run; exit nonzero when it failed or is too old. |
+| `asmith global status [--config PATH] [--json] [--max-age DURATION]` | Show the last recorded `sync` or `generate` run; exit nonzero when it failed or is too old. |
 | `asmith global adopt [--config PATH] [--slot NAME] [--pack NAME] [--dry-run]` | Move edits made before or after generated instruction content into local snippets. |
 | `asmith global add SLOT [TEXT] [--file PATH] [--skill-slot] [--harness NAME] [--pack NAME] [--placement gap\|first\|last] [--name NAME] [--local] [--push | --no-commit] [--skip-generate] [--dry-run] [--config PATH]` | Write a new snippet into a pack slot, lint, and regenerate. |
 
-The default machine config is `~/.agents/agentsmith/config.toml`.
+The default machine config is `~/.agents/agentsmith/config.toml`. When a machine config sets a [sandbox `home`](/reference/configuration#sandbox-home), every `~/.agents/agentsmith/…` path and every global artifact path on this page resolves under that home instead, and errors print the resolved paths.
 
 ### Bootstrapping a machine
 
@@ -54,6 +54,8 @@ Rerunning the same `global init` is safe: it reuses the clone and config and syn
 | --- | --- | --- |
 | macOS | `~/Library/LaunchAgents/io.github.niieani.agentsmith.sync.plist` (`StartInterval`, `RunAtLoad`), loaded with `launchctl bootstrap gui/<uid>` | `~/.agents/agentsmith/logs/last-run.log`, overwritten by each run (`status.json` keeps the outcome) |
 | Linux | `~/.config/systemd/user/agentsmith-sync.service` and `.timer`, enabled with `systemctl --user enable --now` | `journalctl --user -u agentsmith-sync.service` |
+
+With a sandboxed `--config`, the job syncs the sandbox and the macOS log is `<home>/.agents/agentsmith/logs/last-run.log`; the job definition still goes in your real home, and `global schedule status` reads the last run from the sandbox named by the installed job's `--config`.
 
 On Linux, user timers run only while you have a login session unless lingering is on. Install tells you when to run `loginctl enable-linger $USER`, which an always-on host needs.
 
@@ -92,7 +94,7 @@ Every `global sync` and `global generate` writes `~/.agents/agentsmith/status.js
 
 `timestamp` is when the run finished. `sourceCommit` is the Source Repository `HEAD` after any pull, or `null` when unknown. On failure, `error` holds the error `code` (see the table below) and message.
 
-`asmith global status` prints that record. `--json` prints it with `ageSeconds`, `stale`, and `healthy` added. `--max-age` accepts durations such as `90s`, `30m`, `6h`, `1d`, `1w`, or `1h30m`. The command exits with the failed run's own exit code when the last run failed, with 6 when no run is recorded or the last one is older than `--max-age`, and 0 otherwise.
+`asmith global status` prints that record, the status file path, and the sandbox home when one is set. Pass the same `--config` the runs used. `--json` prints it with `ageSeconds`, `stale`, and `healthy` added. `--max-age` accepts durations such as `90s`, `30m`, `6h`, `1d`, `1w`, or `1h30m`. The command exits with the failed run's own exit code when the last run failed, with 6 when no run is recorded or the last one is older than `--max-age`, and 0 otherwise.
 
 ### Adopting local edits
 

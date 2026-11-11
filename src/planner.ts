@@ -45,6 +45,8 @@ export interface BuiltPlan extends GenerationPlan {
   sourceRoot?: string;
   projectRoot?: string;
   configPath: string;
+  /** The machine config's sandbox home, when one is set; undefined means the real home. */
+  home?: string;
   plannedPaths: string[];
   /** Every artifact that can receive snippets, with the slots it declares. */
   slotTargets: SlotTarget[];
@@ -96,6 +98,8 @@ interface PlannerContext {
   mode: "global" | "project";
   sources: SourceContext;
   projectRoot?: string;
+  /** Sandbox home from the machine config; undefined means the real home. */
+  home?: string;
   budgets: Budgets;
   /** Every harness selected by any scope in this plan. */
   configuredHarnesses: HarnessName[];
@@ -278,7 +282,7 @@ async function planInstructions(context: PlannerContext, scope: ScopeInput, pack
   const groups = new Map<string, HarnessName[]>();
   for (const harness of scope.harnesses) {
     const adapter = getHarnessAdapter(harness);
-    const destination = context.mode === "global" ? adapter.globalInstruction() : adapter.projectInstruction(context.projectRoot!, scope.path);
+    const destination = context.mode === "global" ? adapter.globalInstruction(context.home) : adapter.projectInstruction(context.projectRoot!, scope.path);
     if (destination === undefined) continue;
     const key = resolve(destination);
     groups.set(key, [...(groups.get(key) ?? []), harness]);
@@ -376,7 +380,7 @@ async function planInstructions(context: PlannerContext, scope: ScopeInput, pack
 }
 
 function skillLocation(context: PlannerContext, scope: ScopeInput): SkillLocation {
-  return context.mode === "global" ? { mode: "global" } : { mode: "project", projectRoot: context.projectRoot!, scopePath: scope.path };
+  return context.mode === "global" ? { mode: "global", home: context.home } : { mode: "project", projectRoot: context.projectRoot!, scopePath: scope.path };
 }
 
 /**
@@ -590,7 +594,7 @@ async function validateUnmanagedSkillCollisions(context: PlannerContext, scopes:
     }
   }
   for (const harness of context.configuredHarnesses) {
-    for (const root of skillReadRoots(harness, { mode: "global" })) addRoot(root, "<global>", harness);
+    for (const root of skillReadRoots(harness, { mode: "global", home: context.home })) addRoot(root, "<global>", harness);
   }
 
   const unmanaged: Array<SkillIdentity & { harnesses: HarnessName[]; scope: string }> = [];
@@ -749,6 +753,7 @@ function builtPlan(context: PlannerContext, configPath: string, profile?: Profil
     sourceRoot: context.sources.sourceRoot,
     projectRoot: context.projectRoot,
     configPath,
+    home: context.home,
     writes: context.writes,
     deletes: [],
     diagnostics: context.diagnostics,
@@ -773,6 +778,7 @@ export async function buildGlobalPlan(configPath = MACHINE_CONFIG_PATH): Promise
   const context: PlannerContext = {
     mode: "global",
     sources: { sourceRoot: machine.source },
+    home: machine.home,
     budgets: mergeBudgets(root.budgets, profile.budgets),
     configuredHarnesses: profile.harnesses,
     claudeImportAgentsMd: false,
@@ -806,12 +812,14 @@ export async function buildProjectPlan(projectStart = process.cwd(), machineConf
   const projectRoot = canonicalRoot(dirname(dirname(dirname(configPath))));
   const project = loadProjectConfig(configPath);
   let sourceRoot: string | undefined;
+  let home: string | undefined;
   const resolvedMachine = resolveConfiguredPath(machineConfigPath, join(process.cwd(), "config.toml"));
-  if (existsSync(resolvedMachine)) sourceRoot = loadMachineConfig(resolvedMachine).source;
+  if (existsSync(resolvedMachine)) ({ source: sourceRoot, home } = loadMachineConfig(resolvedMachine));
   const context: PlannerContext = {
     mode: "project",
     sources: { sourceRoot, projectRoot },
     projectRoot,
+    home,
     budgets: project.budgets,
     configuredHarnesses: HARNESS_NAMES.filter((harness) => project.scopes.some((scope) => (scope.harnesses ?? project.harnesses).includes(harness))),
     claudeImportAgentsMd: project.claudeImportAgentsMd,

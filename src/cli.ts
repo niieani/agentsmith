@@ -53,6 +53,7 @@ const globalCommands = or(
     "status",
     object({
       action: constant("status"),
+      config: configOption,
       json: option("--json"),
       maxAge: optional(option("--max-age", string({ metavar: "DURATION" }))),
     }),

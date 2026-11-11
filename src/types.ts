@@ -13,6 +13,11 @@ export interface Budgets {
 export interface MachineConfig {
   source: string;
   profile: string;
+  /**
+   * Configured sandbox home with symlinked ancestors resolved. When set, every agentsmith destination and every piece
+   * of agentsmith state resolves under it instead of `$HOME`, and `CODEX_HOME` is ignored. Git keeps the real `$HOME`.
+   */
+  home?: string;
 }
 
 export interface RootConfig {

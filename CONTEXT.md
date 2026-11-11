@@ -12,6 +12,10 @@ _Avoid_: Context repo, global repo, synced repo
 The machine-owned selection of a Source Repository and an active profile.
 _Avoid_: Global config, host file
 
+**Sandbox Home**:
+A directory named by a Machine Configuration's `home` that replaces `$HOME` for every artifact and piece of state agentsmith owns, while Git keeps the real home.
+_Avoid_: Fake home, test home
+
 **Project Configuration**:
 The project-owned declaration of its harnesses and scopes.
 _Avoid_: Project profile, local config

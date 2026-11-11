@@ -14,6 +14,7 @@ import {
   parseSourceId,
   projectConfigPath,
   projectSourceRoot,
+  readMachineHome,
   resolveConfiguredPath,
   sourceRootConfigPath,
 } from "../src/config.ts";
@@ -50,6 +51,35 @@ function sourceFixture(): string {
   );
   return root;
 }
+
+describe("machine config home", () => {
+  test("resolves home relative to the config file and canonicalizes it", () => {
+    const source = temp();
+    const sandbox = temp();
+    mkdirSync(join(sandbox, "home"));
+    symlinkSync(join(sandbox, "home"), join(sandbox, "link"));
+    const machine = join(sandbox, "config.toml");
+    file(machine, `source = ${JSON.stringify(source)}\nprofile = "studio"\nhome = "link"\n`);
+    expect(loadMachineConfig(machine)).toEqual({ source, profile: "studio", home: join(sandbox, "home") });
+    expect(readMachineHome(machine)).toBe(join(sandbox, "home"));
+
+    file(machine, `source = ${JSON.stringify(source)}\nprofile = "studio"\nhome = "missing"\n`);
+    expect(() => loadMachineConfig(machine)).toThrow(`home is not an existing directory: ${join(sandbox, "missing")}`);
+    expect(readMachineHome(machine)).toBeUndefined();
+    file(machine, `source = ${JSON.stringify(source)}\nprofile = "studio"\nhome = ""\n`);
+    expect(() => loadMachineConfig(machine)).toThrow("home must be a nonempty string");
+  });
+
+  test("reads home leniently when the rest of the config is invalid", () => {
+    const sandbox = temp();
+    const machine = join(sandbox, "config.toml");
+    file(machine, `source = "missing"\nhome = "."\n`);
+    expect(readMachineHome(machine)).toBe(sandbox);
+    expect(readMachineHome(join(sandbox, "absent.toml"))).toBeUndefined();
+    file(machine, "not toml [");
+    expect(readMachineHome(machine)).toBeUndefined();
+  });
+});
 
 describe("Source IDs and paths", () => {
   test("parses unqualified, source-qualified, and project-qualified IDs", () => {
