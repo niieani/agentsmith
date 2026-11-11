@@ -21,11 +21,21 @@ export class CommandError extends Error {
   }
 }
 
-export async function runCommand(command: string, args: readonly string[], options: { cwd?: string; allowFailure?: boolean } = {}): Promise<CommandResult> {
+export interface RunCommandOptions {
+  cwd?: string;
+  allowFailure?: boolean;
+  /** Replaces the inherited environment; `GIT_TERMINAL_PROMPT=0` is always set. */
+  env?: NodeJS.ProcessEnv;
+  /** Kill the command after this many milliseconds. */
+  timeoutMs?: number;
+}
+
+export async function runCommand(command: string, args: readonly string[], options: RunCommandOptions = {}): Promise<CommandResult> {
   const child = spawn(command, args, {
     cwd: options.cwd,
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    env: { ...(options.env ?? process.env), GIT_TERMINAL_PROMPT: "0" },
+    timeout: options.timeoutMs,
   });
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");

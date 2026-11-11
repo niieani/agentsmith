@@ -7,6 +7,10 @@ description: Every asmith command, option, and intended workflow.
 
 | Command | Purpose |
 | --- | --- |
+| `asmith global init GIT_URL --profile NAME [--source PATH] [--config PATH] [--schedule] [--interval DURATION] [--yes]` | Bootstrap a machine: clone, select a profile, lint, preview, run the first sync, optionally schedule. |
+| `asmith global schedule install [--interval DURATION] [--config PATH]` | Run `global sync --on-modified=backup` on a timer (launchd or systemd user timer). |
+| `asmith global schedule uninstall` | Remove the timer. |
+| `asmith global schedule status` | Show whether the timer is installed, its interval and command, and the last run. |
 | `asmith global sync [--config PATH] [--force] [--on-modified fail\|backup]` | Require clean source, run `git pull --ff-only`, then generate. |
 | `asmith global generate [--config PATH] [--force] [--on-modified fail\|backup]` | Generate from the current local source without pulling. |
 | `asmith global diff [--config PATH]` | Show prospective writes and stale deletions. |
@@ -16,6 +20,45 @@ description: Every asmith command, option, and intended workflow.
 | `asmith global adopt [--config PATH] [--slot NAME] [--pack NAME] [--dry-run]` | Move edits made before or after generated instruction content into local snippets. |
 
 The default machine config is `~/.agents/agentsmith/config.toml`.
+
+### Bootstrapping a machine
+
+```sh
+asmith global init git@github.com:me/agent-context.git --profile laptop --schedule
+```
+
+`global init`:
+
+1. Clones the repository to `--source` (default `~/.agents/agentsmith/source`). If that directory already holds a clone of the same repository, it is reused; a different repository, or a nonempty directory that is not a Git worktree, is an error. Git never prompts.
+2. Checks that the profile exists and resolves, including `extends`. If not, it lists the available profiles and exits 2.
+3. Writes the machine config. An existing config that selects a different source or profile is replaced only with `--yes`.
+4. Lints, then lists every file the first sync would create, update, or replace.
+5. Asks before replacing global files agentsmith did not write, such as a hand-written `~/.claude/CLAUDE.md`. It shows the diff and asks in a terminal. With `--yes` it proceeds and keeps a backup (`--on-modified=backup`). Without a terminal and without `--yes`, it exits 5 and prints the command to rerun.
+6. Runs the first `global sync`, which records `status.json`.
+7. With `--schedule`, installs the timer as `global schedule install` does. `--interval` applies only with `--schedule`.
+
+Rerunning the same `global init` is safe: it reuses the clone and config and syncs again.
+
+### Scheduled sync
+
+`asmith global schedule install` installs a per-user timer that runs:
+
+```sh
+<this asmith> global sync --on-modified=backup [--config PATH]
+```
+
+`--interval` defaults to `1h` and uses the same duration syntax as `global status --max-age` (minimum `1m`). The job uses the absolute path of the `asmith` you ran: the compiled binary, Node plus the npm script, or Bun plus `src/cli.ts`; agentsmith warns when you schedule a development checkout. The job's `PATH` is captured at install time, so `git` is found even though schedulers start with a minimal `PATH`.
+
+| Platform | Files | Logs |
+| --- | --- | --- |
+| macOS | `~/Library/LaunchAgents/io.github.niieani.agentsmith.sync.plist` (`StartInterval`, `RunAtLoad`), loaded with `launchctl bootstrap gui/<uid>` | `~/.agents/agentsmith/logs/sync.out.log`, `sync.err.log` |
+| Linux | `~/.config/systemd/user/agentsmith-sync.service` and `.timer`, enabled with `systemctl --user enable --now` | `journalctl --user -u agentsmith-sync.service` |
+
+On Linux, user timers run only while you have a login session unless lingering is on. Install tells you when to run `loginctl enable-linger $USER`, which an always-on host needs.
+
+The scheduled job has no SSH agent and cannot answer credential prompts. Install checks this by running `git ls-remote` the same way and warns if it fails; the install itself still succeeds. Give each machine non-interactive read access: a read-only deploy key without a passphrase, or an HTTPS token in a Git credential helper.
+
+`asmith global schedule status` prints whether the timer is installed and loaded, its interval and command, and the last recorded run. Use `asmith global status --max-age 3h` for monitoring.
 
 ### Modified global artifacts
 
@@ -86,8 +129,8 @@ Starting from `--project` or the current directory, agentsmith searches ancestor
 | 1 | `failure` | Any other failure, such as a failed write or a project destination Git does not consider clean. |
 | 2 | `config` | Configuration, usage, or validation error, including `lint --warnings-as-errors` with warnings. |
 | 3 | `source-dirty` | `global sync` found tracked, staged, conflicted, or nonignored untracked changes in the Source Repository. |
-| 4 | `source-pull` | `git pull --ff-only` failed: no upstream, authentication, network, or a branch that cannot fast-forward. |
-| 5 | `artifact-modified` | A global artifact was modified or unrecorded, or `global adopt` refused an edit. |
+| 4 | `source-pull` | `git pull --ff-only` or the `global init` clone failed: no upstream, authentication, network, or a branch that cannot fast-forward. |
+| 5 | `artifact-modified` | A global artifact was modified or unrecorded, `global adopt` refused an edit, or `global init` needs confirmation to replace existing files. |
 | 6 | `status-stale` | `global status` found no recorded run, or one older than `--max-age`. |
 
 Warnings succeed unless `--warnings-as-errors` is set.

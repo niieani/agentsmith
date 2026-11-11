@@ -66,7 +66,15 @@ bun run src/cli.ts --help
 
 ## Machine setup
 
-Create `~/.agents/agentsmith/config.toml`:
+Bootstrap a machine from your Source Repository in one command:
+
+```sh
+asmith global init git@github.com:me/agent-context.git --profile laptop --schedule
+```
+
+This clones the repository to `~/.agents/agentsmith/source`, writes the machine config, lints, shows what it will write, runs the first sync, and installs a launchd agent (macOS) or systemd user timer (Linux) that runs `asmith global sync --on-modified=backup` every hour. If a global file such as `~/.claude/CLAUDE.md` already exists, `init` asks before replacing it (a backup is kept); pass `--yes` to accept without a prompt. Manage the timer with `asmith global schedule install|uninstall|status`. Scheduled syncs cannot use an SSH agent, so give each machine a read-only deploy key or an HTTPS token.
+
+To set up by hand instead, create `~/.agents/agentsmith/config.toml`:
 
 ```toml
 source = "~/.agents/agentsmith/source"
