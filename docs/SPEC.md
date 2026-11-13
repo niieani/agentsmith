@@ -78,7 +78,20 @@ skills_enable = ["project:release"]
 
 Source IDs use forward-slash logical segments, not arbitrary paths. Empty segments, `.`, `..`, absolute paths, backslashes, NUL, and root escape are invalid.
 
-Global generation resolves only from the Source Repository and rejects `project:` references. Missing names are errors. For skills, Source ID and public Skill Name are separate. `project:release` resolves a source directory; the emitted name comes from that source's `SKILL.md` front matter and must equal the source directory basename.
+Global generation resolves only from the Source Repository and rejects `project:` references. Missing names are errors, except as section 3.1 describes. For skills, Source ID and public Skill Name are separate. `project:release` resolves a source directory; the emitted name comes from that source's `SKILL.md` front matter and must equal the source directory basename.
+
+### 3.1 Project generation without a Source Repository
+
+Without a machine configuration, project commands render what shared inputs define and skip personal inputs instead of failing. A Source ID that is not `project:`-qualified and that no project-owned source provides (an unqualified name, or any `source:` reference) is skipped, with one `personal-input-skipped` notice per Source ID:
+
+- a pack contributes no instruction or skill-slot snippets and enables no skills;
+- a skill is not generated, and an exclusion naming it is not reported as inactive;
+- a template leaves the scope's Instruction Layer unwritten;
+- a partial's include renders as nothing (one adjacent blank line is dropped).
+
+A skill whose required slot is then empty is skipped with the warning `skill-skipped-required-slot`, and an Instruction Layer whose required slot is empty is skipped with `instruction-layer-skipped-required-slot`; with a Source Repository both stay `required-slot-empty` errors. An empty optional slot renders empty. A missing `project:` source is still an error. Project `*.local.md` snippets still render, so the personal layer may still differ from the shared layer.
+
+The shared layer (section 5.5) applies the same rules whether or not a Source Repository is configured, without notices.
 
 ## 4. Configuration schema
 

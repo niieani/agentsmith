@@ -45,5 +45,5 @@ If `CLAUDE.md` would repeat `AGENTS.md` exactly, agentsmith writes it as a one-l
 agentsmith only overwrites project outputs that Git reports as tracked and clean, or that still hold exactly what agentsmith last wrote. A generated file you edited by hand stops the run until you restore or commit it.
 
 :::warning
-Project-only sources work without machine configuration. A machine config is needed only when an unqualified name must fall back to the Source Repository or a `source:` reference is selected. When a machine config exists, project planning loads it so matching Source Repository packs cannot be omitted silently; that config must therefore be valid.
+Project-only sources work without machine configuration. Without one, names only the Source Repository could provide, and `source:` references, are skipped with a notice, so a fresh clone still generates the shared files and shared skills. When a machine config exists, project planning loads it so matching Source Repository packs cannot be omitted silently; that config must therefore be valid.
 :::

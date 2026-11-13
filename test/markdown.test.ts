@@ -126,6 +126,17 @@ describe("includes", () => {
     expect(result.trace.includes).toEqual(["partials/common.md"]);
   });
 
+  test("leaves out an include the resolver skips on purpose, keeping the spacing", async () => {
+    const result = await renderMarkdown({
+      templatePath: "template.md",
+      content: "# Title\n\n<!-- agentsmith:include personal.md -->\n\nBody.\n",
+      resolveInclude: () => null,
+    });
+    expect(result.diagnostics).toEqual([]);
+    expect(result.content).toBe("# Title\n\nBody.\n");
+    expect(result.trace.includes).toEqual([]);
+  });
+
   test("reports missing includes, resolver failures, and absent resolvers", async () => {
     const missing = await renderMarkdown({
       templatePath: "template.md",

@@ -20,6 +20,7 @@ import { RESERVED_EDGE_SLOTS, renderMarkdown } from "./markdown.ts";
 import {
   isLocalSource,
   loadInstructionContributions,
+  personalSourcesUnavailable,
   loadPacks,
   loadSkill,
   loadSkillContributions,
@@ -264,11 +265,18 @@ function matchingExclusions(exclusions: string[], sourceId: string): string[] {
  * enabled set is `(pack skills + skills_enable - skills_disable) + harness enable - harness disable`.
  */
 async function resolveEnabledSkills(context: PlannerContext, scope: ScopeInput, packs: LoadedPack[]): Promise<EnabledSkill[]> {
-  const identities = new Map<string, Promise<SkillIdentity>>();
-  const load = (selection: string): Promise<SkillIdentity> => {
+  const identities = new Map<string, Promise<SkillIdentity | undefined>>();
+  const skipped = new Set<string>();
+  // A skill only the Source Repository could provide is left out when none is available.
+  const load = (selection: string): Promise<SkillIdentity | undefined> => {
     let identity = identities.get(selection);
     if (!identity) {
-      identity = loadSkill(context.sources, selection);
+      identity = loadSkill(context.sources, selection).catch((cause: unknown) => {
+        if (!(cause instanceof PersonalSourceSkipped)) throw cause;
+        skipped.add(selection);
+        context.skipped.push({ kind: "skill", selection });
+        return undefined;
+      });
       identities.set(selection, identity);
     }
     return identity;
@@ -291,6 +299,7 @@ async function resolveEnabledSkills(context: PlannerContext, scope: ScopeInput, 
     ];
     for (const candidate of candidates) {
       const identity = await load(candidate.selection);
+      if (identity === undefined) continue;
       if (!candidate.harnessOnly) {
         const excluded = matchingExclusions(scope.skillsDisable, identity.sourceId);
         for (const match of excluded) activeBaseExclusions.add(match);
@@ -306,7 +315,7 @@ async function resolveEnabledSkills(context: PlannerContext, scope: ScopeInput, 
       resolved.set(identity.sourceId, current);
     }
     for (const excluded of selection.disable) {
-      if (!activeHarnessExclusions.has(excluded)) {
+      if (!activeHarnessExclusions.has(excluded) && !skipped.has(excluded)) {
         warning(
           context.diagnostics,
           "skill-exclusion-inactive",
@@ -316,7 +325,7 @@ async function resolveEnabledSkills(context: PlannerContext, scope: ScopeInput, 
     }
   }
   for (const excluded of scope.skillsDisable) {
-    if (!activeBaseExclusions.has(excluded)) {
+    if (!activeBaseExclusions.has(excluded) && !skipped.has(excluded)) {
       warning(context.diagnostics, "skill-exclusion-inactive", `Scope ${scope.path} excludes ${excluded}, but that scope does not enable it`);
     }
   }
@@ -424,13 +433,26 @@ async function planInstructions(context: PlannerContext, scope: ScopeInput, pack
       continue;
     }
     let full: LayerRender;
+    const lenient = context.mode === "project" && personalSourcesUnavailable(context.sources);
+    const fullDiagnostics: Diagnostic[] = [];
     try {
-      full = await renderInstruction(context, context.sources, scope, packs, variants, context.diagnostics);
+      full = await renderInstruction(context, context.sources, scope, packs, variants, fullDiagnostics);
     } catch (cause) {
       if (!isPersonalSkip(cause)) throw cause;
       context.skipped.push({ kind: cause.kind, selection: cause.selection });
       continue;
     }
+    const emptyRequired = lenient ? fullDiagnostics.filter((item) => item.code === "required-slot-empty") : [];
+    if (emptyRequired.length > 0) {
+      warning(
+        context.diagnostics,
+        "instruction-layer-skipped-required-slot",
+        `Skipped ${destination}: ${emptyRequired.map((item) => item.message).join(" ")} Without a Source Repository, personal packs that may fill it are unavailable.`,
+        destination,
+      );
+      continue;
+    }
+    context.diagnostics.push(...fullDiagnostics);
     for (const harness of members) {
       context.diagnostics.push(...(getHarnessAdapter(harness).preflightInstruction?.(destination, context.ownedPaths) ?? []));
     }
@@ -575,10 +597,18 @@ async function planSkills(context: PlannerContext, scope: ScopeInput, packs: Loa
   const usedContributionPaths = new Set<string>();
   const location = skillLocation(context, scope);
 
+  const lenient = context.mode === "project" && personalSourcesUnavailable(context.sources);
   for (const enabled of skills) {
     const skill = enabled.identity;
     const sourceId = skill.sourceId;
     const skillDir = skill.sourceDir;
+    const before = {
+      diagnostics: context.diagnostics.length,
+      writes: context.writes.length,
+      explanations: context.explanations.length,
+      placements: context.skillPlacements.length,
+      slotTargets: context.slotTargets.length,
+    };
     const { placements, unplaceable } = placeSkill(enabled.harnesses, location);
     for (const harness of unplaceable) {
       const readable = skillReadRoots(harness, location);
@@ -712,6 +742,23 @@ async function planSkills(context: PlannerContext, scope: ScopeInput, packs: Loa
         supportBytes,
         files: fileExplanations,
       });
+    }
+
+    // Without a Source Repository, a required slot may be empty only because the personal packs that fill it are
+    // missing; the skill is left out instead of failing the run.
+    const emptyRequired = lenient ? context.diagnostics.slice(before.diagnostics).filter((item) => item.code === "required-slot-empty") : [];
+    if (emptyRequired.length > 0) {
+      context.diagnostics.length = before.diagnostics;
+      context.writes.length = before.writes;
+      context.explanations.length = before.explanations;
+      context.skillPlacements.length = before.placements;
+      context.slotTargets.length = before.slotTargets;
+      warning(
+        context.diagnostics,
+        "skill-skipped-required-slot",
+        `Skipped skill ${skill.name}: ${emptyRequired.map((item) => item.message).join(" ")} Without a Source Repository, personal packs that may fill it are unavailable.`,
+        skillDir,
+      );
     }
   }
 
@@ -921,6 +968,21 @@ function coalesceWrites(context: PlannerContext): void {
   context.writes = [...byDestination.values()].sort((a, b) => (a.destination < b.destination ? -1 : a.destination > b.destination ? 1 : 0));
 }
 
+/** One notice per personal source left out because no Source Repository is configured. */
+function reportSkippedSources(context: PlannerContext): void {
+  const seen = new Set<string>();
+  for (const item of context.skipped) {
+    const key = `${item.kind}\0${item.selection}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    notice(
+      context.diagnostics,
+      "personal-input-skipped",
+      `Skipped ${item.kind} ${JSON.stringify(item.selection)}: it is not a shared project input, and no Source Repository is configured to provide it`,
+    );
+  }
+}
+
 async function planScopes(context: PlannerContext, scopes: ScopeInput[]): Promise<void> {
   const sorted = [...scopes].sort((a, b) => scopeDepth(a.path) - scopeDepth(b.path) || (a.path < b.path ? -1 : 1));
   const loadedScopes = sorted.map((scope) => ({
@@ -957,6 +1019,7 @@ async function planScopes(context: PlannerContext, scopes: ScopeInput[]): Promis
     await planInstructions(context, scope, packs, sharedPacks);
     await planSkills(context, scope, packs);
   }
+  reportSkippedSources(context);
   validatePlannedSkillCollisions(context);
   await findExclusiveUnmanagedSkills(context, sorted);
   await validateUnmanagedSkillCollisions(context, sorted);

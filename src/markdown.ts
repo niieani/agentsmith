@@ -171,7 +171,11 @@ async function expandIncludes(lines: string[], path: string, context: RenderCont
       });
       continue;
     }
-    if (resolved === null) continue;
+    if (resolved === null) {
+      // Left out on purpose: drop one of the blank lines around it so the paragraph spacing stays as written.
+      if ((output.at(-1) ?? "").trim() === "" && (lines[index + 1] ?? "").trim() === "") index += 1;
+      continue;
+    }
     if (!resolved) {
       context.diagnostics.push({
         severity: "error",

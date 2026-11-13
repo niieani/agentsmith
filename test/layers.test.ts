@@ -213,4 +213,71 @@ describe("shared and personal project layers", () => {
     expect((await f.asmith("project", "generate")).exitCode).toBe(0);
     expect(existsSync(join(f.project, "app", "AGENTS.override.md"))).toBeTrue();
   });
+
+  test("a fresh clone without a machine config renders the shared layer and shared skills, skipping personal inputs with notices", async () => {
+    const f = await layeredFixture();
+    // A project skill whose required slot only the personal pack fills, and one with an optional slot.
+    await put(join(f.config, "skills", "tracker", "SKILL.md"), `${skillMd("tracker")}\n<!-- agentsmith:required-slot tracker -->\n`);
+    await put(join(f.config, "skills", "notes", "SKILL.md"), `${skillMd("notes")}\n<!-- agentsmith:slot tracker -->\n`);
+    await put(join(f.config, "packs", "team", "pack.toml"), 'skills = ["team-skill", "tracker", "notes"]\n');
+    await put(join(f.source, "packs", "mine", "skill-slots", "tracker", "10-mine.md"), "Use my tracker.\n");
+    await put(join(f.source, "partials", "personal.md"), "Personal partial.\n");
+    await put(
+      join(f.config, "templates", "guide", "default.md"),
+      "# Guide\n\n<!-- agentsmith:include source:personal.md -->\n\n<!-- agentsmith:slot notes -->\n",
+    );
+    await put(
+      join(f.config, "config.toml"),
+      (await readFile(join(f.config, "config.toml"), "utf8")).replace(
+        'packs = ["team", "mine"]',
+        'packs = ["team", "mine"]\nskills_enable = ["personal-skill"]',
+      ),
+    );
+
+    // With the Source Repository, everything renders.
+    const full = await f.asmith("project", "generate");
+    expect(full.exitCode, full.stderr).toBe(0);
+    expect(await readFile(join(f.project, ".agents", "skills", "tracker", "SKILL.md"), "utf8")).toContain("Use my tracker.");
+    expect(await readFile(join(f.project, "AGENTS.override.md"), "utf8")).toContain("Personal partial.");
+    const shared = await readFile(join(f.project, "AGENTS.md"), "utf8");
+    expect(shared).toBe("# Guide\n\nTeam note.\n");
+    await commitAll(f, "shared layer");
+
+    // A fresh clone: same repository, no machine config.
+    await rm(f.machine);
+    const clone = await f.asmith("project", "generate");
+    expect(clone.exitCode, clone.stderr).toBe(0);
+    expect(clone.stderr).toContain('NOTICE personal-input-skipped: Skipped pack "mine"');
+    expect(clone.stderr).toContain('NOTICE personal-input-skipped: Skipped skill "personal-skill"');
+    expect(clone.stderr).toContain('NOTICE personal-input-skipped: Skipped partial "source:personal.md"');
+    expect(clone.stderr).toContain("WARNING skill-skipped-required-slot: Skipped skill tracker");
+    expect(await readFile(join(f.project, "AGENTS.md"), "utf8")).toBe(shared);
+    expect(await readFile(join(f.project, "CLAUDE.md"), "utf8")).toBe("@AGENTS.md\n");
+    expect(existsSync(join(f.project, "AGENTS.override.md"))).toBeFalse();
+    expect(existsSync(join(f.project, "CLAUDE.local.md"))).toBeFalse();
+    expect((await settings(f)).claudeMdExcludes).toEqual(["/elsewhere/CLAUDE.md"]);
+    expect(existsSync(join(f.project, ".agents", "skills", "team-skill", "SKILL.md"))).toBeTrue();
+    expect(existsSync(join(f.project, ".agents", "skills", "personal-skill"))).toBeFalse();
+    expect(existsSync(join(f.project, ".agents", "skills", "tracker"))).toBeFalse();
+    expect(await readFile(join(f.project, ".agents", "skills", "notes", "SKILL.md"), "utf8")).toBe(skillMd("notes"));
+    expect(await f.git("status", "--porcelain")).toBe("?? .claude/\n");
+
+    // Notices never fail a lint, even with --warnings-as-errors; the skipped-skill warning does.
+    const lint = await f.asmith("project", "lint", "--warnings-as-errors");
+    expect(lint.exitCode).toBe(2);
+    expect(lint.stderr).toContain("skill-skipped-required-slot");
+    expect(lint.stderr).not.toMatch(/^NOTICE.*\n.*ERROR/m);
+  });
+
+  test("a project-qualified source stays an error without a Source Repository", async () => {
+    const f = await layeredFixture();
+    await rm(f.machine);
+    await put(
+      join(f.config, "config.toml"),
+      (await readFile(join(f.config, "config.toml"), "utf8")).replace('packs = ["team", "mine"]', 'packs = ["team", "project:missing"]'),
+    );
+    const result = await f.asmith("project", "generate");
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('missing pack source "project:missing"');
+  });
 });

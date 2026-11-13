@@ -183,7 +183,11 @@ Each `harness_skills.<harness>` table accepts only `enable` and `disable`. Unkno
 
 ## Source IDs
 
-Source IDs are slash-separated logical names, not filesystem paths. Unqualified names are preferred. In project mode, templates, skills, and partials resolve project-first with Source Repository fallback; packs compose Source Repository and project matches in that order. `source:` and `project:` restrict resolution to one owner. Global profiles resolve only Source Repository sources and reject `project:` references. A name missing from every eligible owner is an error.
+Source IDs are slash-separated logical names, not filesystem paths. Unqualified names are preferred. In project mode, templates, skills, and partials resolve project-first with Source Repository fallback; packs compose Source Repository and project matches in that order. `source:` and `project:` restrict resolution to one owner. Global profiles resolve only Source Repository sources and reject `project:` references. A name missing from every eligible owner is an error, except in a project without a machine config: then a name the project does not provide is skipped with a notice (see [projects without a Source Repository](#projects-without-a-source-repository)).
+
+### Projects without a Source Repository
+
+A fresh clone, a CI job, or a teammate without agentsmith set up has no machine config. `asmith project generate` still renders everything shared inputs define, and skips each personal input with a `NOTICE personal-input-skipped` line: Source Repository packs (with their snippets and skills), skills, templates, and partials. A project skill whose required slot only a skipped pack fills is skipped with a warning; an empty optional slot renders empty. A missing `project:`-qualified source is still an error. Notices never fail a run, even with `--warnings-as-errors`.
 
 ## Harness destinations
 
