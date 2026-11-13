@@ -570,8 +570,8 @@ export function unifiedDiff(before: string, after: string, path = "artifact"): s
   const oldStart = prefix + 1;
   const newStart = prefix + 1;
   return [
-    `--- a/${path}`,
-    `+++ b/${path}`,
+    `--- a/${path.replace(/^\/+/, "")}`,
+    `+++ b/${path.replace(/^\/+/, "")}`,
     `@@ -${oldStart},${oldChanged.length} +${newStart},${newChanged.length} @@`,
     ...oldChanged.map((line) => `-${line}`),
     ...newChanged.map((line) => `+${line}`),

@@ -169,7 +169,7 @@ function globalStateWrite(statePath: string, plan: BuiltPlan): PlannedWrite {
 async function pruneEmptySkillDirectories(deletions: PlannedDelete[], report?: RunReport): Promise<void> {
   for (const deletion of deletions) {
     const normalized = resolve(deletion.destination);
-    const markers = [`${sep}.agents${sep}skills${sep}`, `${sep}.claude${sep}skills${sep}`];
+    const markers = [".agents", ".claude", ".codex"].map((root) => `${sep}${root}${sep}skills${sep}`);
     const marker = markers.find((candidate) => normalized.includes(candidate));
     if (!marker) continue;
     const markerIndex = normalized.indexOf(marker);

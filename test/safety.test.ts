@@ -211,6 +211,7 @@ describe("application", () => {
 
 test("unifiedDiff emits headers and changed lines", () => {
   expect(unifiedDiff("one\ntwo\n", "one\nthree\n", "AGENTS.md")).toContain("--- a/AGENTS.md\n+++ b/AGENTS.md");
+  expect(unifiedDiff("one\n", "two\n", "/work/AGENTS.md")).toContain("--- a/work/AGENTS.md\n+++ b/work/AGENTS.md");
   expect(unifiedDiff("one\ntwo\n", "one\nthree\n")).toContain("-two\n+three");
   expect(unifiedDiff("same", "same")).toBe("");
 });
