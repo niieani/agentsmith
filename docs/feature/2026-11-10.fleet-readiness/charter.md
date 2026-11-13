@@ -86,3 +86,32 @@ Three independent features; one worktree, landed in this order.
 - Exclusive mode reports an unmanaged skill, leaves an allowed one alone, quarantines with `--on-modified=backup`, and `global adopt --skill` turns it into a managed skill that regenerates byte-identically.
 - `clean` dry-runs, deletes with `-y`, refuses a modified artifact, and a following `generate` recreates the same tree.
 - Docs: configuration reference, commands reference, SPEC, troubleshooting, and a guide section for each feature.
+
+## Slice G: shared and personal project layers
+
+### Decisions
+
+- **Inputs, not files, decide what is shared.** A project input is shared when it lives in the project's committed `.config/agentsmith/` tree and is not a `*.local.md` snippet. Everything else is personal: Source Repository skills, packs, templates and partials, and `*.local.md` snippets.
+- **Instructions are committed; skills are not.** Every project generation renders two layers:
+  - Shared layer, from shared inputs only: `<scope>/AGENTS.md` and `<scope>/CLAUDE.md` (or its `@AGENTS.md` import). Meant to be committed. Adding a personal input never changes it.
+  - Personal layer, from all inputs, written only when it differs from the shared layer: `<scope>/AGENTS.override.md` (Codex reads it instead of `AGENTS.md`) and `<scope>/CLAUDE.local.md`, plus an entry for `<scope>/CLAUDE.md` in `claudeMdExcludes` in `<project>/.claude/settings.local.json` (Claude then loads only `CLAUDE.local.md` for that folder, and does not fall back to `AGENTS.md`; verified on Claude Code 2.1.322). agentsmith owns only its own `claudeMdExcludes` entries and preserves every other key. Generic tools see the shared layer.
+  - Skills are generated and never committed: shared and personal skills land in the same skill roots.
+- **Git ignores.** `project init` adds to `.gitignore`: each skill root with a kept placeholder (`/.claude/skills/*`, `!/.claude/skills/.gitkeep`, the same for `.agents/skills` and `.codex/skills`). Claude Code only reloads skill folders that existed when the session started, so the placeholder lets skills generated mid-session appear on the next turn. Personal instruction files (`AGENTS.override.md`, `CLAUDE.local.md`) go in `.git/info/exclude`, so the repository never mentions a personal layer.
+- **Generation without a Source Repository.** Without a machine config, `project generate` renders what shared inputs define and skips everything personal with a notice instead of failing: Source Repository skills, packs (their instruction and skill-slot snippets), templates and partials. A project skill whose required slot only personal packs fill is skipped with a warning; an empty optional slot renders empty.
+- **Ownership of ignored files.** Project state records a content hash for every artifact (global state already does), so a stale or regenerated artifact that Git does not track can still be checked for hand edits before it is replaced or deleted. Removing a personal artifact also removes its `.git/info/exclude` entry and `claudeMdExcludes` entry.
+- **Name collisions.** A generated skill whose name matches a skill directory agentsmith does not own (committed by the repository's authors, or hand-written) is an error naming that path; rename the skill.
+- **Third-party repositories.** `upstream = "keep" | "replace"` (default `keep`) in the project config, or in a profile entry matching the repository path or remote URL when the repository has no agentsmith config of its own. agentsmith never writes the committed files of such a repository.
+  - `keep`: `AGENTS.override.md` is the upstream `AGENTS.md` followed by the personal layer; `CLAUDE.local.md` holds only the personal layer, and no `claudeMdExcludes` entry is written.
+  - `replace`: both files hold only the personal layer, and the upstream `CLAUDE.md` is excluded. Upstream skills stay visible; generic tools still read the upstream `AGENTS.md`.
+- **`project init`.** Writes `.config/agentsmith/config.toml` with harnesses detected from existing `.claude/`, `.codex/` and `.agents/` directories, the ignore entries above, and with `--prepare`:
+  - Detects the package manager from the `packageManager` field in `package.json`, then the lockfile in the repository root (`bun.lock`/`bun.lockb` → bun, `pnpm-lock.yaml` → pnpm, `yarn.lock` → yarn, `package-lock.json` → npm), falling back to npm. It uses that package manager's command to add `asmith` as a dev dependency and in every command it prints (`bunx`, `pnpm exec`/`pnpm dlx`, `yarn`, `npx`).
+  - Sets `scripts.prepare` to `asmith project generate`; npm-compatible scripts resolve the project's installed `asmith`, so the pinned version runs. An existing `prepare` that already runs `asmith project generate` is left as is. Any other existing `prepare` is preserved unchanged, with a warning that prints the chained command to add by hand.
+- **No hooks.** agentsmith installs no SessionStart hooks: they would run on every start, resume, compaction and subagent, and neither harness loads instruction files or skills that a hook creates during the same turn. The documentation gives an optional instruction snippet ("if `.agents/skills/` is empty, run `<pm> install`; skills appear from the next turn") and a hook recipe for users who want one.
+
+### Acceptance
+
+- A project with personal inputs produces a committed shared layer that does not change when a personal snippet is added, and personal override files that Codex and Claude load instead of it.
+- A fresh clone without a machine config generates the shared layer and shared skills, skipping personal inputs with notices.
+- Removing a skill from the configuration deletes its generated, ignored directory on the next generation, and refuses to when it was edited by hand.
+- `upstream = keep` and `replace` produce the documented files without modifying any committed upstream file.
+- `project init --prepare` picks the right package manager, preserves a foreign `prepare` script with a warning, and is idempotent.
