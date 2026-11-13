@@ -438,9 +438,11 @@ export async function runRecordedGlobal(action: "sync" | "generate", options: Co
 }
 
 async function diffPlan(plan: BuiltPlan): Promise<void> {
+  let entries: ProjectEntries | undefined;
   if (plan.mode === "project") {
     try {
-      await prepareProjectPlan(plan);
+      const prepared = await prepareProjectPlan(plan);
+      entries = await projectEntries(plan, prepared.worktree.root, prepared.previous);
     } catch (cause) {
       const unavailable = cause instanceof CommandError && /not a git repository/i.test(`${cause.result.stderr}\n${cause.result.stdout}`);
       if (!unavailable) throw cause;
@@ -473,6 +475,16 @@ async function diffPlan(plan: BuiltPlan): Promise<void> {
       output += `Binary file deleted: ${deletion.destination}\n`;
     }
   }
+  if (entries !== undefined) {
+    const changes = (label: string, desired: readonly string[], previous: readonly string[]) => [
+      ...desired.filter((entry) => !previous.includes(entry)).map((entry) => `+ ${label}: ${entry}\n`),
+      ...previous.filter((entry) => !desired.includes(entry)).map((entry) => `- ${label}: ${entry}\n`),
+    ];
+    output += [
+      ...changes(`claudeMdExcludes in ${entries.settingsPath}`, entries.claudeMdExcludes, entries.previousClaudeMdExcludes),
+      ...changes(entries.excludePath, entries.excludes, entries.previousExcludes),
+    ].join("");
+  }
   process.stdout.write(output || "No changes.\n");
 }
 
@@ -498,6 +510,7 @@ function explainHuman(plan: BuiltPlan): string {
     const label = artifact.kind === "skill" ? `skill ${artifact.name}` : "instruction layer";
     lines.push(`${artifact.harness} ${artifact.scope}: ${label}`);
     lines.push(`  destination: ${artifact.destination}`);
+    if (artifact.layer) lines.push(`  layer: ${artifact.layer}`);
     if (artifact.template) lines.push(`  template: ${artifact.template}`);
     if (artifact.templateSourceId) {
       lines.push(`  template source: ${artifact.templateSourceId} (selected as ${artifact.templateSelection ?? "(unknown)"})`);

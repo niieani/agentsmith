@@ -52,8 +52,14 @@ const settings = async (f: ProjectFixture) => JSON.parse(await readFile(join(f.p
 describe("shared and personal project layers", () => {
   test("commits a shared layer that personal inputs never change, and personal files Codex and Claude read instead", async () => {
     const f = await layeredFixture();
+    const preview = await f.asmith("project", "diff");
+    expect(preview.exitCode, preview.stderr).toBe(0);
+    expect(preview.stdout).toContain(`+ claudeMdExcludes in ${join(f.project, ".claude", "settings.local.json")}: ${join(f.project, "CLAUDE.md")}`);
+    expect(preview.stdout).toContain(`: /AGENTS.override.md`);
+    expect((await f.asmith("project", "explain")).stdout).toContain("layer: personal");
     const first = await f.asmith("project", "generate");
     expect(first.exitCode, first.stderr).toBe(0);
+    expect((await f.asmith("project", "diff")).stdout).toBe("No changes.\n");
 
     // Shared layer: committed files from shared inputs only.
     expect(await readFile(join(f.project, "AGENTS.md"), "utf8")).toBe("# Guide\n\nTeam note.\n");
@@ -279,5 +285,18 @@ describe("shared and personal project layers", () => {
     const result = await f.asmith("project", "generate");
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain('missing pack source "project:missing"');
+  });
+
+  test("exclusive mode treats generated skills, placeholders, and personal files as managed", async () => {
+    const f = await layeredFixture();
+    await put(join(f.config, "config.toml"), `exclusive = true\n${await readFile(join(f.config, "config.toml"), "utf8")}`);
+    await put(join(f.project, ".claude", "skills", ".gitkeep"), "");
+    expect((await f.asmith("project", "generate")).exitCode).toBe(0);
+    const lint = await f.asmith("project", "lint");
+    expect(lint.exitCode, lint.stderr).toBe(0);
+    await put(join(f.project, ".claude", "skills", "stray", "SKILL.md"), skillMd("stray"));
+    const stray = await f.asmith("project", "lint");
+    expect(stray.exitCode).toBe(5);
+    expect(stray.stderr).toContain(join(f.project, ".claude", "skills", "stray"));
   });
 });
