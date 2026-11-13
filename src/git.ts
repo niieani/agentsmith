@@ -140,3 +140,9 @@ export async function gitIsIgnored(root: string, path: string): Promise<boolean>
   if (result.exitCode > 1) throw new Error(`git check-ignore failed: ${result.stderr.trim() || `exit status ${result.exitCode}`}`);
   return result.exitCode === 0;
 }
+
+/** Whether Git tracks a path in the index. */
+export async function gitIsTracked(root: string, path: string): Promise<boolean> {
+  const result = await runCommand("git", ["ls-files", "--error-unmatch", "--", path], { cwd: root, allowFailure: true });
+  return result.exitCode === 0;
+}

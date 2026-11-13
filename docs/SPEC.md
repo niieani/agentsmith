@@ -7,6 +7,7 @@
 - Machine configuration: `~/.agents/agentsmith/config.toml`
 - Project configuration: `.config/agentsmith/config.toml`
 - Project state: stored under the worktree's actual Git directory, never in generated artifacts
+- Personal project files: `<scope>/AGENTS.override.md`, `<scope>/CLAUDE.local.md`, excluded through the repository's `info/exclude`, plus `claudeMdExcludes` entries in `<project>/.claude/settings.local.json`
 - Global state: `~/.agents/agentsmith/state.toml`
 - Stored global artifact content: `~/.agents/agentsmith/blobs/<sha256>`
 - Last global run status: `~/.agents/agentsmith/status.json`
@@ -219,16 +220,18 @@ No harness reads `~/.agents/AGENTS.md`, so `generic` emits no global Instruction
 | Artifact | Global destination | Scoped destination |
 |---|---|---|
 | Instruction Layer | `$CODEX_HOME/AGENTS.md`, default `~/.codex/AGENTS.md` | `<scope>/AGENTS.md` |
+| Personal Instruction Layer | none | `<scope>/AGENTS.override.md` |
 | Skill Root | none | `<scope>/.codex/skills` |
 | Skill roots read | `~/.agents/skills`, `$CODEX_HOME/skills` | `<dir>/.agents/skills`, `<dir>/.codex/skills` |
 
-Codex marks `$CODEX_HOME/skills` deprecated, so global Codex skills come from `generic`. An existing `AGENTS.override.md` at a generated layer is a hard preflight error because it shadows `AGENTS.md`. The adapter models global then repository-to-working-directory instruction order. It warns when a project instruction chain exceeds Codex's documented default 32 KiB cap and labels the cap as configurable.
+Codex marks `$CODEX_HOME/skills` deprecated, so global Codex skills come from `generic`. Codex reads `AGENTS.override.md` instead of `AGENTS.md` in the same directory; agentsmith writes it for the personal layer (section 5.5). An existing `AGENTS.override.md` that agentsmith did not record writing is a hard preflight error (`codex-override-shadow`) because it shadows the generated `AGENTS.md`; so is `$CODEX_HOME/AGENTS.override.md` beside the global layer. The adapter models global then repository-to-working-directory instruction order. It warns when a project instruction chain exceeds Codex's documented default 32 KiB cap and labels the cap as configurable.
 
 ### 5.3 Claude Code adapter
 
 | Artifact | Global destination | Scoped destination |
 |---|---|---|
 | Instruction Layer | `~/.claude/CLAUDE.md` | `<scope>/CLAUDE.md` |
+| Personal Instruction Layer | none | `<scope>/CLAUDE.local.md`, with `<scope>/CLAUDE.md` in `claudeMdExcludes` |
 | Skill Root | `~/.claude/skills` | `<scope>/.claude/skills` |
 | Skill roots read | `~/.claude/skills` | `<dir>/.claude/skills` |
 
@@ -240,11 +243,28 @@ Harnesses whose adapters resolve to the same instruction destination share one a
 
 - the template is the first existing of `codex.md` (when `codex` is selected), `generic.md` (when `generic` is selected), and `default.md`;
 - common instruction snippets render first, then `instructions/generic/` snippets when `generic` is selected, then `instructions/codex/` snippets when `codex` is selected;
-- the `AGENTS.override.md` preflight applies when `codex` is selected.
+- the `AGENTS.override.md` preflight and personal file apply when `codex` is selected.
 
 In general, the selected harness with the highest adapter precedence supplies the template variant, and harness snippets render in ascending precedence.
 
-### 5.5 Physical destination collisions
+### 5.5 Shared and personal project layers
+
+A project input is **shared** when it lives in the project's own `.config/agentsmith/` tree and is not a `*.local.md` file. Every other input is **personal**: Source Repository templates, packs (their instruction and skill-slot snippets), skills, and partials, and project `*.local.md` snippets and partials.
+
+Each project Instruction Layer renders twice:
+
+- The **shared layer** renders from shared inputs only and is written to the adapter's Instruction Layer file (`<scope>/AGENTS.md`, `<scope>/CLAUDE.md` or its `@AGENTS.md` import). It is meant to be committed, and adding or changing a personal input never changes it. A personal include renders as nothing; a personal pack contributes nothing. When the template itself is personal, the shared file is not written (notice `shared-layer-unavailable`). When shared inputs alone fail to render, for example a required slot only a personal pack fills, the shared file is not written (warning `shared-layer-incomplete`).
+- The **personal layer** renders from every input and is written only when it differs from the shared layer (or no shared file is written), to each sharing harness's personal file: `<scope>/AGENTS.override.md` for `codex` and `<scope>/CLAUDE.local.md` for `claude`. `generic` has no personal file: generic tools read the shared layer. With `claude_import_agents_md`, a `CLAUDE.local.md` byte-identical to the `AGENTS.override.md` planned beside it contains only `@AGENTS.override.md`.
+
+When both `<scope>/CLAUDE.md` and `<scope>/CLAUDE.local.md` are written, the absolute path of `<scope>/CLAUDE.md` is added to `claudeMdExcludes` in `<project>/.claude/settings.local.json`, so Claude Code loads only `CLAUDE.local.md` for that directory and does not fall back to `AGENTS.md`. agentsmith never writes an exclude without the local file beside it: stale entries are removed before personal files are deleted, and new ones are added after personal files are written.
+
+agentsmith owns only the entries it recorded in project state. Every other key of `settings.local.json`, and every other `claudeMdExcludes` entry, is preserved; an emptied `claudeMdExcludes` loses its key, and a file left as `{}` is removed. Invalid JSON, a non-object, or a non-string-list `claudeMdExcludes` is a configuration error before anything is written. A `settings.local.json` tracked by Git is a configuration error when entries are needed, since they hold this machine's paths.
+
+Personal files are excluded from Git through the repository's `info/exclude` (`git rev-parse --git-path info/exclude`) as anchored lines (`/AGENTS.override.md`, `/app/CLAUDE.local.md`), so the repository never mentions a personal layer. `/.claude/settings.local.json` is added too while agentsmith keeps `claudeMdExcludes` entries and Git does not already ignore the file. Lines are recorded in project state and removed when no longer needed; other lines are kept. `info/exclude` is shared by every worktree of a repository.
+
+Skills are not layered: shared and personal skills render once, with every input, into the same Skill Roots, which are meant to be ignored (`project init`, section 11).
+
+### 5.6 Physical destination collisions
 
 If adapters plan the same physical destination outside a shared instruction artifact, agentsmith coalesces byte-identical content into one write. Different content for the same destination is a planning error.
 
@@ -431,6 +451,7 @@ Adopted text is written to snippets in `<source>/packs/<pack>/instructions/<harn
 
 - Global candidates are the recorded artifacts in global state that exist. One is unchanged when it is a regular file whose SHA-256 equals the recorded hash. Project candidates are the recorded project paths that exist, limited with `--scope` to paths whose deepest containing declared scope is that scope. One is unchanged when it is a regular file whose SHA-256 equals the recorded hash, or whose bytes equal the current project plan's write for that path, or when Git reports it `tracked-clean`; if the project plan cannot be built, only Git is consulted (with a warning).
 - Any changed candidate fails the command with `artifact-modified` (exit 5) before anything is removed, in dry runs too, unless `--on-modified=backup` or `--force`. With `backup`, changed global artifacts are backed up as in section 8.2 (an instruction file beside itself, a skill file's whole skill directory under the backup root) and changed project artifacts are moved to `<Git directory>/agentsmith/backups/<UTC timestamp>/<original absolute path>`; then they are removed. With `--force` they are removed without a backup.
+- Project clean also removes the `claudeMdExcludes` entries (before the files) and `info/exclude` lines (after them) recorded for the removed paths, and the `/.claude/settings.local.json` line once no `claudeMdExcludes` entry remains.
 - Then the mode's state is removed: global `state.toml`, `status.json`, and `blobs/`; project state, unless `--scope` leaves other recorded paths, in which case state is rewritten without the removed paths.
 - Each now-empty parent directory of a removed path is removed, up to but excluding the home (global; the sandbox home when set), the worktree root (project artifacts), or the Git directory (project state).
 - The machine configuration, Source Repository, backups, logs, and the installed schedule are not touched. Removed tracked project files remain Git worktree deletions.
@@ -536,7 +557,7 @@ Exit status:
 | 5 | `artifact-modified` | Modified or unrecorded global artifact, unowned global content in a transition, an exclusive-mode unmanaged skill, a modified artifact during `clean`, refused adoption, or `global init` not confirmed |
 | 6 | `status-stale` | `global status`: no recorded run, or older than `--max-age` |
 
-Warnings alone succeed unless `--warnings-as-errors` is active. `global status` exits with the recorded exit code when the last run failed, otherwise 6 when stale, otherwise 0. `--max-age` takes one or more `<number><unit>` terms with units `s`, `m`, `h`, `d`, `w`.
+Warnings alone succeed unless `--warnings-as-errors` is active. Notices report inputs deliberately left out and never fail a run, even with `--warnings-as-errors`. `global status` exits with the recorded exit code when the last run failed, otherwise 6 when stale, otherwise 0. `--max-age` takes one or more `<number><unit>` terms with units `s`, `m`, `h`, `d`, `w`.
 
 ## 12. Determinism
 

@@ -209,7 +209,27 @@ Codex reads both `.agents/skills` and `.codex/skills` and keeps every copy, so o
 
 Harness-specific content renders only where exactly one harness reads the skill. Collision checks consider every root each selected harness reads, so a planned or unmanaged skill in `.codex/skills` collides with one of the same name in `.agents/skills` when `codex` is selected.
 
-An existing `AGENTS.override.md` at a generated Codex layer is a preflight error because it would shadow `AGENTS.md`.
+Codex reads `AGENTS.override.md` instead of `AGENTS.md`. agentsmith writes that file for the [personal layer](#shared-and-personal-layers); an `AGENTS.override.md` it did not write is a preflight error because it would shadow the generated `AGENTS.md`.
+
+### Shared and personal layers
+
+In a project, what is committed depends on where each input lives, not on which file it ends up in:
+
+- **Shared inputs** live in the project's own `.config/agentsmith/` tree: its templates, packs, skills, and partials, except `*.local.md` files.
+- **Personal inputs** are everything else: Source Repository templates, packs, skills, and partials, and the project's `*.local.md` snippets and partials.
+
+Every project Instruction Layer is rendered twice:
+
+| Layer | Rendered from | Files | Committed |
+| --- | --- | --- | --- |
+| Shared | shared inputs only | `<scope>/AGENTS.md`, `<scope>/CLAUDE.md` (or `@AGENTS.md`) | yes |
+| Personal | every input | `<scope>/AGENTS.override.md` for `codex`, `<scope>/CLAUDE.local.md` for `claude` | no, excluded through `.git/info/exclude` |
+
+The personal files are written only when they differ from the shared layer. Codex reads `AGENTS.override.md` instead of `AGENTS.md`. For Claude, agentsmith adds `<scope>/CLAUDE.md` to `claudeMdExcludes` in `<project>/.claude/settings.local.json`, so Claude loads only `CLAUDE.local.md` for that folder. agentsmith owns only the `claudeMdExcludes` entries it added and keeps every other setting. `generic` has no personal file; other agents read the shared `AGENTS.md`.
+
+Adding a personal snippet or pack never changes the shared layer, so teammates never see your personal instructions in a diff. A Source Repository partial included by a project template renders as nothing in the shared layer. When the template itself comes from the Source Repository, no shared file is written and only the personal files carry the scope's instructions.
+
+Skills are not layered. Shared and personal skills are generated into the same skill roots, which `asmith project init` adds to `.gitignore`.
 
 ### Migrating to the `.agents` layout
 

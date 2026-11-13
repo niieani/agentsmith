@@ -78,7 +78,8 @@ export interface ProjectConfig {
   scopes: ScopeConfig[];
 }
 
-export type DiagnosticSeverity = "warning" | "error";
+/** `notice` reports something deliberately left out; it never fails a run, even with `--warnings-as-errors`. */
+export type DiagnosticSeverity = "notice" | "warning" | "error";
 
 export interface Diagnostic {
   severity: DiagnosticSeverity;
@@ -114,6 +115,9 @@ export interface RenderResult {
   diagnostics: Diagnostic[];
 }
 
+/** A project Instruction Layer file: committed shared content, or a personal file read instead of it. */
+export type InstructionLayerKind = "shared" | "personal";
+
 export interface PlannedWrite {
   destination: string;
   content: Uint8Array;
@@ -124,6 +128,8 @@ export interface PlannedWrite {
   provenance: string[];
   /** Skill files: the skill directory the file belongs to. */
   skillDirectory?: string;
+  /** Project instruction files: which layer the file holds. */
+  layer?: InstructionLayerKind;
 }
 
 export interface PlannedDelete {

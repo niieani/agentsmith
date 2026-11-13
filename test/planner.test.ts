@@ -77,8 +77,12 @@ describe("generation planning", () => {
     const setup = await fixture();
     const plan = await buildProjectPlan(setup.project, setup.machine);
     expect(plan.diagnostics.filter((item) => item.severity === "error")).toEqual([]);
-    expect(plan.writes.some((write) => write.destination === join(setup.project, "AGENTS.md"))).toBeTrue();
-    expect(plan.writes.some((write) => write.destination === join(setup.project, "CLAUDE.md"))).toBeTrue();
+    // Every instruction input is personal (Source Repository), so only personal files carry them.
+    expect(plan.writes.some((write) => write.destination === join(setup.project, "AGENTS.md"))).toBeFalse();
+    expect(plan.writes.some((write) => write.destination === join(setup.project, "CLAUDE.md"))).toBeFalse();
+    expect(writeText(plan, join(setup.project, "AGENTS.override.md"))).toContain("Be kind.");
+    expect(writeText(plan, join(setup.project, "CLAUDE.local.md"))).toBe("@AGENTS.override.md\n");
+    expect(plan.claudeMdExcludes).toEqual([]);
     const skill = plan.writes.find((write) => write.destination === join(setup.project, ".agents", "skills", setup.skill, "SKILL.md"));
     expect(skill).toBeDefined();
     expect(new TextDecoder().decode(skill!.content)).toContain("Check the work carefully.");
@@ -107,11 +111,15 @@ describe("generation planning", () => {
 
     const plan = await buildProjectPlan(setup.project, setup.machine);
     expect(plan.diagnostics.filter((item) => item.severity === "error")).toEqual([]);
-    const instructions = new TextDecoder().decode(plan.writes.find((write) => write.destination === join(setup.project, "AGENTS.md"))!.content);
+    const instructions = writeText(plan, join(setup.project, "AGENTS.override.md"));
     expect(instructions).toContain("# Project Instructions");
     expect(instructions).toContain("Project evidence.");
     expect(instructions).not.toContain("Source evidence.");
     expect(instructions.indexOf("Be kind.")).toBeLessThan(instructions.indexOf("Be project-aware."));
+    // The shared layer leaves out the Source Repository pack.
+    const shared = writeText(plan, join(setup.project, "AGENTS.md"));
+    expect(shared).toContain("Be project-aware.");
+    expect(shared).not.toContain("Be kind.");
 
     const skill = new TextDecoder().decode(
       plan.writes.find((write) => write.destination === join(setup.project, ".agents", "skills", setup.skill, "SKILL.md"))!.content,
@@ -122,8 +130,11 @@ describe("generation planning", () => {
     expect(plan.writes.filter((write) => write.destination.endsWith(`/${projectSkill}/SKILL.md`))).toHaveLength(2);
 
     const explanation = plan.explanation as { artifacts: Array<Record<string, unknown>> };
-    const instruction = explanation.artifacts.find((artifact) => artifact.kind === "instruction" && artifact.destination === join(setup.project, "AGENTS.md"))!;
-    expect(instruction.harnesses).toEqual(["generic", "codex"]);
+    const instruction = explanation.artifacts.find(
+      (artifact) => artifact.kind === "instruction" && artifact.destination === join(setup.project, "AGENTS.override.md"),
+    )!;
+    expect(instruction.harnesses).toEqual(["codex"]);
+    expect(instruction.layer).toBe("personal");
     expect(instruction).toMatchObject({ templateSelection: "base", templateSourceId: "project:base" });
     expect(instruction.packSources).toEqual([
       { selection: "base", sourceId: "source:base", directory: join(setup.source, "packs", "base") },
@@ -141,7 +152,7 @@ describe("generation planning", () => {
     );
 
     const plan = await buildProjectPlan(setup.project, setup.machine);
-    const instructions = new TextDecoder().decode(plan.writes.find((write) => write.destination === join(setup.project, "AGENTS.md"))!.content);
+    const instructions = writeText(plan, join(setup.project, "AGENTS.override.md"));
     expect(instructions).toContain("# Instructions");
     expect(instructions).toContain("Project-only greeting.");
     expect(instructions).not.toContain("Be kind.");
@@ -159,17 +170,20 @@ describe("generation planning", () => {
     );
 
     let plan = await buildProjectPlan(setup.project, setup.machine);
-    let instructions = writeText(plan, join(setup.project, "AGENTS.md"));
+    let instructions = writeText(plan, join(setup.project, "AGENTS.override.md"));
     expect(instructions).toContain("Source evidence.");
+    // A Source Repository partial is personal: the shared layer leaves the include out.
+    expect(writeText(plan, join(setup.project, "AGENTS.md"))).toBe("# Local\n");
 
     await put(projectPartial, "Project evidence.\n");
     plan = await buildProjectPlan(setup.project, setup.machine);
     instructions = writeText(plan, join(setup.project, "AGENTS.md"));
     expect(instructions).toContain("Project evidence.");
+    expect(plan.writes.some((write) => write.destination === join(setup.project, "AGENTS.override.md"))).toBeFalse();
 
     await put(template, "# Local\n\n<!-- agentsmith:include source:evidence.md -->\n");
     plan = await buildProjectPlan(setup.project, setup.machine);
-    instructions = writeText(plan, join(setup.project, "AGENTS.md"));
+    instructions = writeText(plan, join(setup.project, "AGENTS.override.md"));
     expect(instructions).toContain("Source evidence.");
   });
 
@@ -308,12 +322,32 @@ describe("generation planning", () => {
 
   test("CLAUDE.md imports an identical sibling AGENTS.md by default", async () => {
     const setup = await fixture();
-    const plan = await buildProjectPlan(setup.project, setup.machine);
+    await put(join(setup.project, ".config", "agentsmith", "templates", "shared", "default.md"), "# Shared\n");
+    await put(
+      join(setup.project, ".config", "agentsmith", "config.toml"),
+      ['harnesses = ["generic", "codex", "claude"]', "", "[[scopes]]", 'path = "."', 'template = "shared"', "packs = []", ""].join("\n"),
+    );
+    let plan = await buildProjectPlan(setup.project, setup.machine);
     expect(writeText(plan, join(setup.project, "CLAUDE.md"))).toBe("@AGENTS.md\n");
-    expect(writeText(plan, join(setup.project, "AGENTS.md"))).toContain("Be kind.");
-    const explanation = plan.explanation as { artifacts: Array<Record<string, unknown>> };
+    expect(writeText(plan, join(setup.project, "AGENTS.md"))).toBe("# Shared\n");
+    let explanation = plan.explanation as { artifacts: Array<Record<string, unknown>> };
     expect(explanation.artifacts.find((artifact) => artifact.destination === join(setup.project, "CLAUDE.md"))).toMatchObject({
       importsFrom: join(setup.project, "AGENTS.md"),
+      layer: "shared",
+    });
+
+    // Identical personal files import each other the same way.
+    await put(
+      join(setup.project, ".config", "agentsmith", "config.toml"),
+      ['harnesses = ["codex", "claude"]', "", "[[scopes]]", 'path = "."', 'template = "base"', 'packs = ["base"]', ""].join("\n"),
+    );
+    plan = await buildProjectPlan(setup.project, setup.machine);
+    expect(writeText(plan, join(setup.project, "CLAUDE.local.md"))).toBe("@AGENTS.override.md\n");
+    expect(writeText(plan, join(setup.project, "AGENTS.override.md"))).toContain("Be kind.");
+    explanation = plan.explanation as { artifacts: Array<Record<string, unknown>> };
+    expect(explanation.artifacts.find((artifact) => artifact.destination === join(setup.project, "CLAUDE.local.md"))).toMatchObject({
+      importsFrom: join(setup.project, "AGENTS.override.md"),
+      layer: "personal",
     });
   });
 
@@ -321,7 +355,7 @@ describe("generation planning", () => {
     const setup = await fixture();
     await put(join(setup.source, "packs", "base", "instructions", "claude", "greeting", "20-claude.md"), "Claude only.\n");
     let plan = await buildProjectPlan(setup.project, setup.machine);
-    expect(writeText(plan, join(setup.project, "CLAUDE.md"))).toContain("Claude only.");
+    expect(writeText(plan, join(setup.project, "CLAUDE.local.md"))).toContain("Claude only.");
 
     const optOut = await fixture();
     await put(
@@ -331,28 +365,22 @@ describe("generation planning", () => {
       ),
     );
     plan = await buildProjectPlan(optOut.project, optOut.machine);
-    expect(writeText(plan, join(optOut.project, "CLAUDE.md"))).toBe(writeText(plan, join(optOut.project, "AGENTS.md")));
-    expect(writeText(plan, join(optOut.project, "CLAUDE.md"))).toContain("Be kind.");
+    expect(writeText(plan, join(optOut.project, "CLAUDE.local.md"))).toBe(writeText(plan, join(optOut.project, "AGENTS.override.md")));
+    expect(writeText(plan, join(optOut.project, "CLAUDE.local.md"))).toContain("Be kind.");
   });
 
   test("renders one shared AGENTS.md with Codex variants only when Codex is selected", async () => {
     const setup = await fixture();
-    await put(join(setup.source, "templates", "base", "codex.md"), "# Codex\n\n<!-- agentsmith:required-slot greeting -->\n");
-    await put(join(setup.source, "templates", "base", "generic.md"), "# Generic\n\n<!-- agentsmith:required-slot greeting -->\n");
-    await put(join(setup.source, "packs", "base", "instructions", "codex", "greeting", "20-codex.md"), "Codex only.\n");
-    await put(join(setup.source, "packs", "base", "instructions", "generic", "greeting", "20-generic.md"), "Generic only.\n");
+    const own = join(setup.project, ".config", "agentsmith");
+    await put(join(own, "templates", "base", "codex.md"), "# Codex\n\n<!-- agentsmith:required-slot greeting -->\n");
+    await put(join(own, "templates", "base", "generic.md"), "# Generic\n\n<!-- agentsmith:required-slot greeting -->\n");
+    await put(join(own, "packs", "proj", "instructions", "greeting", "10-hello.md"), "Be kind.\n");
+    await put(join(own, "packs", "proj", "instructions", "codex", "greeting", "20-codex.md"), "Codex only.\n");
+    await put(join(own, "packs", "proj", "instructions", "generic", "greeting", "20-generic.md"), "Generic only.\n");
     const config = (harnesses: string) =>
       put(
         join(setup.project, ".config", "agentsmith", "config.toml"),
-        [
-          `harnesses = ${harnesses}`,
-          "[[scopes]]",
-          'path = "."',
-          'template = "base"',
-          'packs = ["base"]',
-          'skills_disable = ["agentsmith-fixture-review"]',
-          "",
-        ].join("\n"),
+        [`harnesses = ${harnesses}`, "[[scopes]]", 'path = "."', 'template = "base"', 'packs = ["proj"]', ""].join("\n"),
       );
 
     await config('["generic", "codex"]');

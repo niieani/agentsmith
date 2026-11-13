@@ -13,16 +13,22 @@ import {
   parseSourceId,
 } from "./config.ts";
 import { canonicalRoot, walkFiles } from "./fs.ts";
+import { gitWorktree } from "./git.ts";
+import { loadProjectState, projectStatePath } from "./safety.ts";
 import { getHarnessAdapter, placeSkill, skillReadRoots, skillWriteRoot, type SkillLocation } from "./harness.ts";
 import { RESERVED_EDGE_SLOTS, renderMarkdown } from "./markdown.ts";
 import {
+  isLocalSource,
   loadInstructionContributions,
   loadPacks,
   loadSkill,
   loadSkillContributions,
   loadTemplate,
+  PersonalSourceSkipped,
   resolvePartial,
   type LoadedPack,
+  type LoadedTemplate,
+  type SkippedSource,
   type SourceContext,
 } from "./source.ts";
 import { parseSkillIdentity, scanSkillRoot } from "./skills.ts";
@@ -34,8 +40,10 @@ import {
   type GenerationPlan,
   type HarnessName,
   type HarnessSkills,
+  type InstructionLayerKind,
   type PlannedWrite,
   type ProjectConfig,
+  type RenderTrace,
   type ScopeConfig,
   type SkillIdentity,
 } from "./types.ts";
@@ -57,6 +65,10 @@ export interface BuiltPlan extends GenerationPlan {
    * does not write and `exclusive_allow` does not match. Callers drop those holding recorded artifacts.
    */
   unmanagedSkills: UnmanagedSkill[];
+  /** Project: absolute `<scope>/CLAUDE.md` paths Claude must skip because a personal `CLAUDE.local.md` replaces them. */
+  claudeMdExcludes: string[];
+  /** Project: directories Git must ignore through `info/exclude` because the repository's own ignores cannot be edited. */
+  personalExcludes: string[];
 }
 
 /** A skill directory that exclusive mode reports because agentsmith does not manage it. */
@@ -119,6 +131,13 @@ interface EnabledSkill {
 interface PlannerContext {
   mode: "global" | "project";
   sources: SourceContext;
+  /** Project: the same sources restricted to shared inputs. */
+  sharedSources?: SourceContext;
+  /** Personal sources left out because no Source Repository is available. */
+  skipped: SkippedSource[];
+  /** Absolute paths agentsmith recorded writing (project state), used to tell its own files from foreign ones. */
+  ownedPaths: ReadonlySet<string>;
+  claudeMdExcludes: string[];
   projectRoot?: string;
   /** Sandbox home from the machine config; undefined means the real home. */
   home?: string;
@@ -149,6 +168,10 @@ function mergeBudgets(base: Budgets, override: Budgets): Budgets {
 
 function warning(diagnostics: Diagnostic[], code: string, message: string, path?: string): void {
   diagnostics.push({ severity: "warning", code, message, path });
+}
+
+function notice(diagnostics: Diagnostic[], code: string, message: string, path?: string): void {
+  diagnostics.push({ severity: "notice", code, message, path });
 }
 
 function error(diagnostics: Diagnostic[], code: string, message: string, path?: string): void {
@@ -200,15 +223,31 @@ function toScope(input: ScopeConfig, project: ProjectConfig): ScopeInput {
   };
 }
 
-async function renderContent(context: PlannerContext, content: string, path: string, contributions: Contribution[], edgeSlots = false) {
+async function renderContent(
+  context: PlannerContext,
+  content: string,
+  path: string,
+  contributions: Contribution[],
+  edgeSlots = false,
+  target: { sources: SourceContext; diagnostics: Diagnostic[] } = { sources: context.sources, diagnostics: context.diagnostics },
+) {
   const rendered = await renderMarkdown({
     content,
     templatePath: path,
     contributions,
     edgeSlots,
-    resolveInclude: async (sourceId) => resolvePartial(context.sources, sourceId),
+    resolveInclude: async (sourceId) => {
+      try {
+        return await resolvePartial(target.sources, sourceId);
+      } catch (cause) {
+        if (!(cause instanceof PersonalSourceSkipped)) throw cause;
+        // A personal partial is left out; outside the shared layer the run reports it.
+        if (!target.sources.sharedOnly) context.skipped.push({ kind: cause.kind, selection: cause.selection });
+        return null;
+      }
+    },
   });
-  context.diagnostics.push(...rendered.diagnostics);
+  target.diagnostics.push(...rendered.diagnostics);
   return rendered;
 }
 
@@ -290,29 +329,73 @@ function harnessLabel(harnesses: readonly HarnessName[]): string {
   return HARNESS_NAMES.filter((harness) => harnesses.includes(harness)).join("+");
 }
 
-interface RenderedInstruction {
+interface LayerRender {
+  content: string;
+  template: LoadedTemplate;
+  trace: RenderTrace;
+}
+
+interface InstructionGroup {
+  /** The Instruction Layer file the harnesses share, such as `<scope>/AGENTS.md`. */
   destination: string;
   harnesses: HarnessName[];
-  content: string;
-  template: Awaited<ReturnType<typeof loadTemplate>>;
-  trace: Awaited<ReturnType<typeof renderContent>>["trace"];
+  /** Rendered from every input. */
+  full: LayerRender;
+  /** Project mode: rendered from shared inputs only, or undefined when shared inputs cannot render it. */
+  shared?: LayerRender;
+  /** Project mode: the personal file a sharing harness reads instead, such as `AGENTS.override.md` for Codex. */
+  personalDestination?: string;
+  /** The harness reading `personalDestination`. */
+  personalHarness?: HarnessName;
+}
+
+/** One instruction file this plan writes. */
+interface InstructionOutput {
+  group: InstructionGroup;
+  layer?: InstructionLayerKind;
+  destination: string;
+  render: LayerRender;
   importsFrom?: string;
+}
+
+function isPersonalSkip(cause: unknown): cause is PersonalSourceSkipped {
+  return cause instanceof PersonalSourceSkipped;
+}
+
+async function renderInstruction(
+  context: PlannerContext,
+  sources: SourceContext,
+  scope: ScopeInput,
+  packs: LoadedPack[],
+  variants: HarnessName[],
+  diagnostics: Diagnostic[],
+): Promise<LayerRender> {
+  const snippetOrder = [...variants].reverse();
+  let contributions = (await Promise.all(packs.map((pack) => loadInstructionContributions(pack, snippetOrder)))).flat();
+  if (sources.sharedOnly) contributions = contributions.filter((item) => !isLocalSource(item.path));
+  const template = await loadTemplate(sources, scope.template!, variants);
+  const result = await renderContent(context, template.content, template.path, contributions, true, { sources, diagnostics });
+  return { content: result.content, template, trace: result.trace };
 }
 
 /**
  * Plans the Instruction Layers of one scope. Harnesses whose adapters resolve to the same destination share one
  * artifact: the highest-precedence harness's template variant wins, and every sharing harness's snippets render.
+ *
+ * In a project, each layer renders twice: the shared layer from shared inputs only goes to the committed file
+ * (`AGENTS.md`, `CLAUDE.md`), and the personal layer from every input goes to the file the harness reads instead
+ * (`AGENTS.override.md`, `CLAUDE.local.md`), only when it differs.
  */
-async function planInstructions(context: PlannerContext, scope: ScopeInput, packs: LoadedPack[]): Promise<void> {
-  const groups = new Map<string, HarnessName[]>();
+async function planInstructions(context: PlannerContext, scope: ScopeInput, packs: LoadedPack[], sharedPacks: LoadedPack[]): Promise<void> {
+  const membersByDestination = new Map<string, HarnessName[]>();
   for (const harness of scope.harnesses) {
     const adapter = getHarnessAdapter(harness);
     const destination = context.mode === "global" ? adapter.globalInstruction(context.home) : adapter.projectInstruction(context.projectRoot!, scope.path);
     if (destination === undefined) continue;
     const key = resolve(destination);
-    groups.set(key, [...(groups.get(key) ?? []), harness]);
+    membersByDestination.set(key, [...(membersByDestination.get(key) ?? []), harness]);
   }
-  if (groups.size === 0) {
+  if (membersByDestination.size === 0) {
     if (scope.template) {
       warning(
         context.diagnostics,
@@ -323,15 +406,14 @@ async function planInstructions(context: PlannerContext, scope: ScopeInput, pack
     return;
   }
 
-  const rendered: RenderedInstruction[] = [];
-  for (const [destination, members] of groups) {
+  const groups: InstructionGroup[] = [];
+  for (const [destination, members] of membersByDestination) {
     // Most specific template variant first; harness snippets render least specific first.
     const variants = [...members].sort(
       (a, b) => getHarnessAdapter(b).instructionPrecedence - getHarnessAdapter(a).instructionPrecedence || HARNESS_NAMES.indexOf(a) - HARNESS_NAMES.indexOf(b),
     );
-    const snippetOrder = [...variants].reverse();
-    const contributions = (await Promise.all(packs.map((pack) => loadInstructionContributions(pack, snippetOrder)))).flat();
     if (!scope.template) {
+      const contributions = (await Promise.all(packs.map((pack) => loadInstructionContributions(pack, [...variants].reverse())))).flat();
       if (contributions.length > 0) {
         warning(
           context.diagnostics,
@@ -341,65 +423,139 @@ async function planInstructions(context: PlannerContext, scope: ScopeInput, pack
       }
       continue;
     }
-    const template = await loadTemplate(context.sources, scope.template, variants);
-    const result = await renderContent(context, template.content, template.path, contributions, true);
-    for (const harness of members) context.diagnostics.push(...(getHarnessAdapter(harness).preflightInstruction?.(destination) ?? []));
-    rendered.push({ destination, harnesses: members, content: result.content, template, trace: result.trace });
+    let full: LayerRender;
+    try {
+      full = await renderInstruction(context, context.sources, scope, packs, variants, context.diagnostics);
+    } catch (cause) {
+      if (!isPersonalSkip(cause)) throw cause;
+      context.skipped.push({ kind: cause.kind, selection: cause.selection });
+      continue;
+    }
+    for (const harness of members) {
+      context.diagnostics.push(...(getHarnessAdapter(harness).preflightInstruction?.(destination, context.ownedPaths) ?? []));
+    }
+    const group: InstructionGroup = { destination, harnesses: members, full };
+    if (context.mode === "project") {
+      const sharedDiagnostics: Diagnostic[] = [];
+      try {
+        const shared = await renderInstruction(context, context.sharedSources!, scope, sharedPacks, variants, sharedDiagnostics);
+        const failure = sharedDiagnostics.find((item) => item.severity === "error");
+        if (failure === undefined) group.shared = shared;
+        else
+          warning(
+            context.diagnostics,
+            "shared-layer-incomplete",
+            `Shared inputs alone cannot render ${destination} (${failure.code}: ${failure.message}); only personal files carry scope ${scope.path}'s instructions`,
+            destination,
+          );
+      } catch (cause) {
+        if (!isPersonalSkip(cause)) throw cause;
+        notice(
+          context.diagnostics,
+          "shared-layer-unavailable",
+          `${destination} is not written because template ${scope.template} is not a shared project input; only personal files carry scope ${scope.path}'s instructions`,
+          destination,
+        );
+      }
+      for (const harness of HARNESS_NAMES.filter((item) => members.includes(item))) {
+        const personal = getHarnessAdapter(harness).projectPersonalInstruction?.(context.projectRoot!, scope.path);
+        if (personal === undefined) continue;
+        group.personalDestination = resolve(personal);
+        group.personalHarness = harness;
+      }
+    }
+    groups.push(group);
     context.slotTargets.push({
       kind: "instruction",
       scope: scope.path,
       destination,
       harnesses: HARNESS_NAMES.filter((harness) => members.includes(harness)),
-      slots: [...new Set([...Object.keys(result.trace.slots), ...RESERVED_EDGE_SLOTS])].sort(),
+      slots: [...new Set([...Object.keys(full.trace.slots), ...RESERVED_EDGE_SLOTS])].sort(),
     });
   }
 
+  const outputs: InstructionOutput[] = [];
+  for (const group of groups) {
+    if (context.mode === "global") {
+      outputs.push({ group, destination: group.destination, render: group.full });
+      continue;
+    }
+    if (group.shared !== undefined) outputs.push({ group, layer: "shared", destination: group.destination, render: group.shared });
+    if (group.personalDestination !== undefined && group.full.content !== group.shared?.content) {
+      outputs.push({ group, layer: "personal", destination: group.personalDestination, render: group.full });
+    }
+  }
+
   if (context.mode === "project" && context.claudeImportAgentsMd) {
-    for (const item of rendered) {
-      const importer = item.harnesses.length === 1 ? getHarnessAdapter(item.harnesses[0]!).instructionImport : undefined;
+    for (const item of outputs) {
+      const importer = item.group.harnesses.length === 1 ? getHarnessAdapter(item.group.harnesses[0]!).instructionImport : undefined;
       if (!importer) continue;
-      const sibling = rendered.find(
-        (other) => other !== item && dirname(other.destination) === dirname(item.destination) && other.content === item.content && !other.importsFrom,
+      const sibling = outputs.find(
+        (other) =>
+          other !== item &&
+          other.layer === item.layer &&
+          dirname(other.destination) === dirname(item.destination) &&
+          other.render.content === item.render.content &&
+          !other.importsFrom,
       );
       if (sibling) item.importsFrom = sibling.destination;
     }
   }
 
-  for (const item of rendered) {
-    const bytes = utf8Bytes(item.content);
-    for (const harness of item.harnesses) context.instructionSizes.push({ harness, scope: scope.path, bytes });
+  // Claude reads CLAUDE.local.md beside CLAUDE.md; excluding the shared file leaves only the personal one.
+  for (const item of outputs) {
+    if (item.layer !== "personal" || item.group.personalHarness !== "claude") continue;
+    if (outputs.some((other) => other.layer === "shared" && other.destination === item.group.destination)) {
+      context.claudeMdExcludes.push(item.group.destination);
+    }
+  }
+
+  for (const group of groups) {
+    const bytes = utf8Bytes(group.full.content);
+    for (const harness of group.harnesses) context.instructionSizes.push({ harness, scope: scope.path, bytes });
     if (context.budgets.instructionLayerBytes && bytes > context.budgets.instructionLayerBytes) {
       warning(
         context.diagnostics,
         "instruction-layer-budget",
-        `${item.destination} is ${bytes} bytes, exceeding the ${context.budgets.instructionLayerBytes}-byte instruction layer budget`,
-        item.destination,
+        `${group.destination} is ${bytes} bytes, exceeding the ${context.budgets.instructionLayerBytes}-byte instruction layer budget`,
+        group.destination,
       );
     }
-    const content = item.importsFrom ? getHarnessAdapter(item.harnesses[0]!).instructionImport!(basename(item.importsFrom)) : item.content;
-    const provenance = [item.template.path, ...Object.values(item.trace.slots).flat(), ...item.trace.includes];
+  }
+
+  for (const item of outputs) {
+    const harnesses = item.layer === "personal" ? [item.group.personalHarness!] : item.group.harnesses;
+    const importer = getHarnessAdapter(item.group.harnesses[0]!).instructionImport;
+    const content = item.importsFrom && importer ? importer(basename(item.importsFrom)) : item.render.content;
+    const provenance = [item.render.template.path, ...Object.values(item.render.trace.slots).flat(), ...item.render.trace.includes];
     context.writes.push({
       destination: item.destination,
       content: encoder.encode(content),
       kind: "instruction",
-      harness: item.harnesses[0],
+      harness: harnesses[0],
       scope: scope.path,
       provenance,
+      ...(item.layer ? { layer: item.layer } : {}),
     });
     context.explanations.push({
       kind: "instruction",
-      harness: harnessLabel(item.harnesses),
-      harnesses: HARNESS_NAMES.filter((harness) => item.harnesses.includes(harness)),
+      ...(item.layer ? { layer: item.layer } : {}),
+      harness: harnessLabel(harnesses),
+      harnesses: HARNESS_NAMES.filter((harness) => harnesses.includes(harness)),
       scope: scope.path,
       destination: item.destination,
       ...(item.importsFrom ? { importsFrom: item.importsFrom } : {}),
-      template: item.template.path,
-      templateSelection: item.template.selection,
-      templateSourceId: item.template.sourceId,
-      packs: packs.map((pack) => pack.sourceId),
-      packSources: packs.map((pack) => ({ selection: pack.selection, sourceId: pack.sourceId, directory: pack.directory })),
-      trace: item.trace,
-      bytes,
+      template: item.render.template.path,
+      templateSelection: item.render.template.selection,
+      templateSourceId: item.render.template.sourceId,
+      packs: (item.layer === "shared" ? sharedPacks : packs).map((pack) => pack.sourceId),
+      packSources: (item.layer === "shared" ? sharedPacks : packs).map((pack) => ({
+        selection: pack.selection,
+        sourceId: pack.sourceId,
+        directory: pack.directory,
+      })),
+      trace: item.render.trace,
+      bytes: utf8Bytes(item.render.content),
     });
   }
 }
@@ -767,7 +923,11 @@ function coalesceWrites(context: PlannerContext): void {
 
 async function planScopes(context: PlannerContext, scopes: ScopeInput[]): Promise<void> {
   const sorted = [...scopes].sort((a, b) => scopeDepth(a.path) - scopeDepth(b.path) || (a.path < b.path ? -1 : 1));
-  const loadedScopes = sorted.map((scope) => ({ scope, packs: loadPacks(context.sources, scope.packs) }));
+  const loadedScopes = sorted.map((scope) => ({
+    scope,
+    packs: loadPacks(context.sources, scope.packs, context.skipped),
+    sharedPacks: context.sharedSources === undefined ? [] : loadPacks(context.sharedSources, scope.packs),
+  }));
   for (let ancestorIndex = 0; ancestorIndex < loadedScopes.length; ancestorIndex += 1) {
     const ancestor = loadedScopes[ancestorIndex]!;
     const inherited = new Set(ancestor.packs.map((pack) => pack.sourceId));
@@ -782,7 +942,7 @@ async function planScopes(context: PlannerContext, scopes: ScopeInput[]): Promis
       }
     }
   }
-  for (const { scope, packs } of loadedScopes) {
+  for (const { scope, packs, sharedPacks } of loadedScopes) {
     for (const pack of packs) {
       const coupledSkillRoot = join(pack.directory, "skills");
       if (existsSync(coupledSkillRoot)) {
@@ -794,7 +954,7 @@ async function planScopes(context: PlannerContext, scopes: ScopeInput[]): Promis
         );
       }
     }
-    await planInstructions(context, scope, packs);
+    await planInstructions(context, scope, packs, sharedPacks);
     await planSkills(context, scope, packs);
   }
   validatePlannedSkillCollisions(context);
@@ -831,6 +991,8 @@ function builtPlan(context: PlannerContext, configPath: string, profile?: Profil
     plannedPaths: context.writes.filter((write) => write.kind !== "state").map((write) => write.destination),
     slotTargets: context.slotTargets,
     unmanagedSkills: context.unmanagedSkills,
+    claudeMdExcludes: [...new Set(context.claudeMdExcludes)].sort(),
+    personalExcludes: [],
   };
 }
 
@@ -843,6 +1005,9 @@ export async function buildGlobalPlan(configPath = MACHINE_CONFIG_PATH): Promise
     mode: "global",
     sources: { sourceRoot: machine.source },
     home: machine.home,
+    skipped: [],
+    ownedPaths: new Set(),
+    claudeMdExcludes: [],
     budgets: mergeBudgets(root.budgets, profile.budgets),
     configuredHarnesses: profile.harnesses,
     claudeImportAgentsMd: false,
@@ -874,6 +1039,16 @@ export async function buildGlobalPlan(configPath = MACHINE_CONFIG_PATH): Promise
   });
 }
 
+/** Absolute paths recorded in the project's state, or none when Git or the state is unavailable. */
+async function ownedProjectPaths(projectRoot: string): Promise<Set<string>> {
+  try {
+    const worktree = await gitWorktree(projectRoot);
+    return new Set((await loadProjectState(projectStatePath(worktree))).paths.map((path) => resolve(worktree.root, path)));
+  } catch {
+    return new Set();
+  }
+}
+
 export async function buildProjectPlan(projectStart = process.cwd(), machineConfigPath = MACHINE_CONFIG_PATH): Promise<BuiltPlan> {
   const configPath = discoverProjectConfig(projectStart);
   const projectRoot = canonicalRoot(dirname(dirname(dirname(configPath))));
@@ -885,6 +1060,10 @@ export async function buildProjectPlan(projectStart = process.cwd(), machineConf
   const context: PlannerContext = {
     mode: "project",
     sources: { sourceRoot, projectRoot },
+    sharedSources: { projectRoot, sharedOnly: true },
+    skipped: [],
+    ownedPaths: await ownedProjectPaths(projectRoot),
+    claudeMdExcludes: [],
     projectRoot,
     home,
     budgets: project.budgets,
@@ -906,7 +1085,7 @@ export async function buildProjectPlan(projectStart = process.cwd(), machineConf
 }
 
 export function assertPlanValid(plan: GenerationPlan, warningsAsErrors = false): void {
-  const errors = plan.diagnostics.filter((item) => item.severity === "error" || warningsAsErrors);
+  const errors = plan.diagnostics.filter((item) => item.severity === "error" || (warningsAsErrors && item.severity === "warning"));
   if (errors.length > 0) {
     throw new Error(errors.map((item) => `${item.severity.toUpperCase()} ${item.code}: ${item.message}`).join("\n"));
   }

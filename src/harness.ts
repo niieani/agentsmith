@@ -31,7 +31,13 @@ export interface HarnessAdapter {
   globalSkillReadRoots(home?: string): string[];
   /** Every scope-relative skill directory the harness reads in each discovered directory. */
   projectSkillReadDirectories: readonly string[];
-  preflightInstruction?(destination: string): Diagnostic[];
+  /**
+   * Project file the harness reads instead of its shared instruction file, holding the personal layer, or undefined
+   * when the harness has none (generic tools read only the shared layer).
+   */
+  projectPersonalInstruction?(projectRoot: string, scopePath: string): string;
+  /** Diagnostics for an instruction destination; `owned` holds paths agentsmith recorded writing. */
+  preflightInstruction?(destination: string, owned: ReadonlySet<string>): Diagnostic[];
 }
 
 export function scopeDirectory(projectRoot: string, scopePath: string): string {
@@ -87,14 +93,19 @@ const codex: HarnessAdapter = {
     return [join(home ?? canonicalHome(), AGENTS_SKILLS), join(codexHome(home), "skills")];
   },
   projectSkillReadDirectories: [AGENTS_SKILLS, CODEX_SKILLS],
-  preflightInstruction(destination): Diagnostic[] {
+  projectPersonalInstruction(projectRoot, scopePath): string {
+    return join(scopeDirectory(projectRoot, scopePath), "AGENTS.override.md");
+  },
+  // Codex reads AGENTS.override.md instead of AGENTS.md. agentsmith owns the override it writes; any other one hides
+  // the generated layer.
+  preflightInstruction(destination, owned): Diagnostic[] {
     const override = join(resolve(destination, ".."), "AGENTS.override.md");
-    return existsSync(override)
+    return existsSync(override) && !owned.has(override)
       ? [
           {
             severity: "error",
             code: "codex-override-shadow",
-            message: `${override} shadows the generated ${destination}`,
+            message: `${override} was not written by agentsmith and shadows the generated ${destination}; move its content into a *.local.md snippet and delete it`,
             path: override,
           },
         ]
@@ -113,6 +124,9 @@ const claude: HarnessAdapter = {
   instructionPrecedence: 10,
   instructionImport(relativePath): string {
     return `@${relativePath}\n`;
+  },
+  projectPersonalInstruction(projectRoot, scopePath): string {
+    return join(scopeDirectory(projectRoot, scopePath), "CLAUDE.local.md");
   },
   globalSkillRoot(home = canonicalHome()): string {
     return join(home, CLAUDE_SKILLS);

@@ -153,6 +153,8 @@ asmith project clean --scope apps/web --yes
 - Directories left empty are removed; directories that hold other files stay.
 - The machine config, the Source Repository clone, backups, logs, and the schedule stay. Remove the schedule with `asmith global schedule uninstall`.
 
+`project clean` also removes the `claudeMdExcludes` entries and `.git/info/exclude` lines agentsmith added for the personal files it removes, and deletes `.claude/settings.local.json` if nothing else is left in it.
+
 In a project, removed files that Git tracks show up as deletions for you to commit. A later `project generate` recreates them; Git treats a tracked file deleted only in the worktree as missing, so this works before or after you commit the deletion.
 
 ### Adding snippets
@@ -183,7 +185,7 @@ A global snippet that is not `--local` is committed by default, only the new fil
 
 | Command | Purpose |
 | --- | --- |
-| `asmith project generate [--project PATH] [--on-modified fail\|backup]` | Safely generate project artifacts. `backup` moves [exclusive mode](/reference/configuration#exclusive-mode) unmanaged skills aside. |
+| `asmith project generate [--project PATH] [--on-modified fail\|backup]` | Safely generate project artifacts: the committed shared layer, the [personal layer](/reference/configuration#shared-and-personal-layers), and skills. `backup` moves [exclusive mode](/reference/configuration#exclusive-mode) unmanaged skills aside. |
 | `asmith project adopt --skill NAME [--project PATH] [--scope PATH] [--pack NAME] [--dry-run]` | Copy an unmanaged project skill into the project's source tree. See [adopting unmanaged skills](#adopting-unmanaged-skills). |
 | `asmith project diff [--project PATH]` | Show prospective project changes without writing. |
 | `asmith project clean [--project PATH] [--scope PATH] [-y\|--yes] [--force] [--on-modified fail\|backup]` | List, or with `--yes` remove, the project's generated artifacts and agentsmith's project state. |
@@ -205,6 +207,6 @@ Starting from `--project` or the current directory, agentsmith searches ancestor
 | 5 | `artifact-modified` | A global artifact was modified or unrecorded, exclusive mode found an unmanaged skill, `clean` found a modified artifact, `global adopt` refused an edit, or `global init` needs confirmation to replace existing files. |
 | 6 | `status-stale` | `global status` found no recorded run, or one older than `--max-age`. |
 
-Warnings succeed unless `--warnings-as-errors` is set.
+Warnings succeed unless `--warnings-as-errors` is set. Notices, such as personal inputs skipped without a Source Repository, never fail a run.
 
 `diff`, `lint`, and `explain` do not write generated artifacts. Project commands never pull Git.

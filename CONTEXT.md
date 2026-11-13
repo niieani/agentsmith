@@ -64,6 +64,22 @@ _Avoid_: Generated context, merged scope
 A complete instruction artifact associated with one scope and combined with instruction layers from broader applicable scopes. Harnesses that read the same file, such as Codex and the Generic Harness with `AGENTS.md`, share one Instruction Layer.
 _Avoid_: Instructions target, AGENTS target
 
+**Shared Input**:
+Project source material in the project's committed `.config/agentsmith/` tree, other than a `*.local.md` file.
+_Avoid_: Team input, committed source
+
+**Personal Input**:
+Any input that is not a Shared Input: Source Repository material and project `*.local.md` files.
+_Avoid_: Private input, local input
+
+**Shared Layer**:
+A project Instruction Layer rendered from Shared Inputs only and meant to be committed, such as `<scope>/AGENTS.md`.
+_Avoid_: Team layer, base layer
+
+**Personal Layer**:
+A project Instruction Layer rendered from every input into the file a harness reads instead of the Shared Layer, such as `AGENTS.override.md` or `CLAUDE.local.md`, and excluded from Git.
+_Avoid_: Override layer, local layer
+
 **Skill Root**:
 The collection of skill artifacts associated with one scope.
 _Avoid_: Skills target, skill catalog

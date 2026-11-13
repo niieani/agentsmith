@@ -4,6 +4,7 @@ import { discoverProjectConfig, loadProjectConfig, MACHINE_CONFIG_PATH, requireM
 import { AgentsmithError, classify, errorMessage } from "./errors.ts";
 import { agentsmithHome, canonicalRoot, isWithin } from "./fs.ts";
 import { gitPathStatus, gitWorktree } from "./git.ts";
+import { claudeLocalSettingsPath, excludeEntry, infoExcludePath, readClaudeSettings, updateClaudeMdExcludes, updateInfoExclude } from "./personal.ts";
 import { buildProjectPlan } from "./planner.ts";
 import {
   type ArtifactBackup,
@@ -213,18 +214,43 @@ export async function cleanProject(options: CleanOptions): Promise<void> {
   }
   const remaining = state.paths.filter((path) => !selected.includes(path));
   if (remaining.length === 0 && (await present(statePath))) plan.stateFiles.push(statePath);
+
+  // Entries agentsmith added to files it shares with the user go with the artifacts they serve.
+  const inScope = (path: string) => scope === undefined || owningScope(path, scopes) === scope;
+  const settingsPath = claudeLocalSettingsPath(projectRoot);
+  const settingsEntry = excludeEntry(worktree.root, settingsPath);
+  const claudeEntries = (state.claudeMdExcludes ?? []).filter((entry) => inScope(relative(worktree.root, entry).split(sep).join("/")));
+  const remainingClaude = (state.claudeMdExcludes ?? []).filter((entry) => !claudeEntries.includes(entry));
+  const excludeEntries = (state.excludes ?? []).filter((entry) =>
+    entry === settingsEntry ? remainingClaude.length === 0 : inScope(entry.replace(/^\//, "").replace(/\/$/, "")),
+  );
+  const excludePath = await infoExcludePath(worktree.root);
+  if (claudeEntries.length > 0) await classify("config", () => readClaudeSettings(settingsPath));
+
   if (plan.modified.length > 0 && !options.force && options.onModified !== "backup") throw refuseModified(plan);
   report(plan, options);
+  for (const entry of claudeEntries) console.log(`  claudeMdExcludes entry ${entry} in ${settingsPath}`);
+  for (const entry of excludeEntries) console.log(`  ${entry} in ${excludePath}`);
   if (remaining.length > 0) console.log(`  (state keeps ${remaining.length} recorded path(s) of other scopes)`);
   if (!options.yes) {
     if (plan.unchanged.length + plan.modified.length + plan.stateFiles.length > 0) console.log("Dry run; rerun with --yes to remove these files.");
     return;
   }
 
+  // CLAUDE.md must never stay excluded without its CLAUDE.local.md, so entries go before the files.
+  await updateClaudeMdExcludes(settingsPath, [], claudeEntries);
   const backups = options.onModified === "backup" ? await quarantinePaths(plan.modified, { backupRoot: plan.backupRoot, reason: "modified" }) : [];
   const artifacts = [...plan.unchanged, ...plan.modified];
   await removeAll(artifacts);
-  if (remaining.length > 0) await saveProjectState(statePath, { ...state, paths: remaining });
+  await updateInfoExclude(excludePath, [], excludeEntries);
+  if (claudeEntries.length > 0 && !(await present(settingsPath))) await pruneEmptyParents([settingsPath], worktree.root);
+  if (remaining.length > 0)
+    await saveProjectState(statePath, {
+      ...state,
+      paths: remaining,
+      claudeMdExcludes: remainingClaude,
+      excludes: (state.excludes ?? []).filter((entry) => !excludeEntries.includes(entry)),
+    });
   else {
     await removeAll(plan.stateFiles);
     await pruneEmptyParents(plan.stateFiles, worktree.gitDir);

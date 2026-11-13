@@ -8,7 +8,7 @@ import { adoptGlobal } from "./adopt.ts";
 import { adoptSkill } from "./adopt-skill.ts";
 import { cleanGlobal, cleanProject } from "./clean.ts";
 import { AgentsmithError, classify, errorCode, errorMessage, exitCodeFor } from "./errors.ts";
-import { CommandError, ensureCleanSource, gitHeadCommit, gitPullFfOnly, gitWorktree } from "./git.ts";
+import { CommandError, ensureCleanSource, gitHeadCommit, gitIsTracked, gitPathStatus, gitPullFfOnly, gitWorktree } from "./git.ts";
 import { assertPlanValid, buildGlobalPlan, buildProjectPlan, type BuiltPlan, type UnmanagedSkill } from "./planner.ts";
 import { isWithin } from "./fs.ts";
 import {
@@ -35,6 +35,15 @@ import {
   type ProjectState,
 } from "./safety.ts";
 import { globalInit } from "./init.ts";
+import {
+  claudeLocalSettingsPath,
+  desiredExcludes,
+  excludeEntry,
+  infoExcludePath,
+  readClaudeSettings,
+  updateClaudeMdExcludes,
+  updateInfoExclude,
+} from "./personal.ts";
 import { installSchedule, printScheduleStatus, uninstallSchedule } from "./schedule.ts";
 import { globalStatusPath, printGlobalStatus, writeGlobalStatus, type RunReport } from "./status.ts";
 import type { Diagnostic, GenerationPlan, HarnessName, PlannedDelete, PlannedWrite } from "./types.ts";
@@ -210,9 +219,50 @@ export interface ProjectGenerateOptions {
   onModified?: "fail" | "backup";
 }
 
+/** The `info/exclude` and `claudeMdExcludes` entries a project plan owns, and the ones its previous run owned. */
+export interface ProjectEntries {
+  excludePath: string;
+  settingsPath: string;
+  excludes: string[];
+  claudeMdExcludes: string[];
+  previousExcludes: string[];
+  previousClaudeMdExcludes: string[];
+}
+
+export async function projectEntries(plan: BuiltPlan, worktreeRoot: string, previous: ProjectState): Promise<ProjectEntries> {
+  const settingsPath = claudeLocalSettingsPath(plan.projectRoot!);
+  const previousExcludes = previous.excludes ?? [];
+  const previousClaudeMdExcludes = previous.claudeMdExcludes ?? [];
+  const personal = plan.writes.filter((write) => write.layer === "personal").map((write) => write.destination);
+  const entries: ProjectEntries = {
+    excludePath: await infoExcludePath(worktreeRoot),
+    settingsPath,
+    excludes: [
+      ...(await desiredExcludes(worktreeRoot, plan.projectRoot!, personal, plan.claudeMdExcludes, previousExcludes)),
+      ...plan.personalExcludes.map((path) => excludeEntry(worktreeRoot, path, true)),
+    ],
+    claudeMdExcludes: plan.claudeMdExcludes,
+    previousExcludes,
+    previousClaudeMdExcludes,
+  };
+  // Validate the settings file before anything is written.
+  if (entries.claudeMdExcludes.length > 0 || previousClaudeMdExcludes.length > 0) await readClaudeSettings(settingsPath);
+  if (
+    entries.claudeMdExcludes.length > 0 &&
+    (await gitPathStatus(worktreeRoot, settingsPath)) !== "missing" &&
+    (await gitIsTracked(worktreeRoot, settingsPath))
+  ) {
+    throw new AgentsmithError(
+      "config",
+      `${settingsPath} is tracked by Git, but agentsmith writes this machine's paths into its claudeMdExcludes; untrack it (git rm --cached) and ignore it`,
+    );
+  }
+  return entries;
+}
+
 export async function generateProject(plan: BuiltPlan, options: ProjectGenerateOptions = {}): Promise<void> {
   await classify("config", () => assertPlanValid(plan));
-  printDiagnostics(plan.diagnostics.filter((item) => item.severity === "warning"));
+  printDiagnostics(plan.diagnostics.filter((item) => item.severity !== "error"));
   const prepared = await prepareProjectPlan(plan);
   await preflightProjectPlan(plan, { projectRoot: plan.projectRoot!, state: prepared.previous });
   const unmanaged = exclusiveViolations(
@@ -220,20 +270,31 @@ export async function generateProject(plan: BuiltPlan, options: ProjectGenerateO
     prepared.previous.paths.map((path) => resolve(prepared.worktree.root, path)),
   );
   if (unmanaged.length > 0 && options.onModified !== "backup") throw unmanagedSkillsError("project", unmanaged);
+  const entries = await projectEntries(plan, prepared.worktree.root, prepared.previous);
   const application: GenerationPlan = {
     ...plan,
-    writes: [...plan.writes, projectStateWrite(prepared.statePath, prepared.worktree.root, plan)],
+    writes: [
+      ...plan.writes,
+      projectStateWrite(prepared.statePath, prepared.worktree.root, plan, { excludes: entries.excludes, claudeMdExcludes: entries.claudeMdExcludes }),
+    ],
   };
   const quarantined = await quarantinePaths(
     unmanaged.map((skill) => skill.path),
     { backupRoot: projectBackupRoot(prepared.worktree) },
   );
+  // Never leave CLAUDE.md excluded without its CLAUDE.local.md: Claude would fall back to AGENTS.md. Stale entries go
+  // before their personal files are deleted, new ones after their files are written.
+  const staleClaude = entries.previousClaudeMdExcludes.filter((entry) => !entries.claudeMdExcludes.includes(entry));
   try {
+    await updateClaudeMdExcludes(entries.settingsPath, [], staleClaude);
     await applyPlan(application);
   } catch (cause) {
     await restoreBackups(quarantined);
+    await updateClaudeMdExcludes(entries.settingsPath, staleClaude, []).catch(() => undefined);
     throw cause;
   }
+  await updateClaudeMdExcludes(entries.settingsPath, entries.claudeMdExcludes, staleClaude);
+  await updateInfoExclude(entries.excludePath, entries.excludes, entries.previousExcludes);
   for (const backup of quarantined) console.error(`WARNING unmanaged-skill-backup: moved unmanaged skill ${backup.path} to ${backup.backup}`);
   await pruneEmptySkillDirectories(plan.deletes);
   console.log(`Generated ${plan.writes.length} file(s); removed ${plan.deletes.length} stale file(s).`);

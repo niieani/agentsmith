@@ -27,7 +27,7 @@ Researched November 2026. Codex facts come from the Codex CLI source (commit `ac
 
 - **Global:** Codex reads `$CODEX_HOME/AGENTS.override.md` if it exists and is not blank, otherwise `$CODEX_HOME/AGENTS.md`. Only one is used.
 - **Project:** Codex walks from the working directory up to the project root, the nearest directory containing `.git` by default. In each directory from the root down to the working directory it takes the first of `AGENTS.override.md`, `AGENTS.md`, and any configured fallback filenames that exists, then concatenates them root first.
-- **Override files shadow:** an `AGENTS.override.md` hides the `AGENTS.md` beside it. In a project directory even an *empty* override wins, because the choice is made on existence. agentsmith therefore treats an existing `AGENTS.override.md` next to a generated `AGENTS.md` as an error.
+- **Override files shadow:** an `AGENTS.override.md` hides the `AGENTS.md` beside it. In a project directory even an *empty* override wins, because the choice is made on existence. agentsmith uses this for the personal layer: it writes `AGENTS.override.md` with the shared layer plus personal inputs, and treats an `AGENTS.override.md` it did not write as an error.
 - **Below the working directory:** never read. A nested scope's `AGENTS.md` reaches Codex only when Codex starts at or below that scope.
 - **Order:** global instructions first, then project files from root to working directory.
 - **Size:** project files share one 32 KiB budget by default (`project_doc_max_bytes`). Codex truncates the file that overflows it and drops the rest. Untrusted projects, or a budget of 0, load no project files at all. agentsmith warns when a project chain exceeds 32 KiB.
@@ -67,7 +67,13 @@ Claude Code v2.1.277 and later can read `AGENTS.md`, controlled by the **Project
 
 The fallback is fragile: a parent repository's `CLAUDE.md`, a personal `CLAUDE.local.md`, a user setting, an older version, or a disabled built-in plugin all turn it off. A `CLAUDE.md` containing `@AGENTS.md` is never loaded twice under any setting.
 
-agentsmith always writes `CLAUDE.md` for a project scope that selects `claude`. When its content would equal the generated `AGENTS.md` beside it, the file contains only `@AGENTS.md`. Set `claude_import_agents_md = false` in the project configuration to write the full content instead.
+#### Excluding a `CLAUDE.md`
+
+`claudeMdExcludes` in a settings file lists `CLAUDE.md` files Claude Code skips, by absolute path (verified on Claude Code 2.1.322). For a directory whose `CLAUDE.md` is excluded and whose `CLAUDE.local.md` exists, Claude loads only `CLAUDE.local.md`, and does not fall back to `AGENTS.md`. Without the `CLAUDE.local.md`, excluding `CLAUDE.md` makes Claude fall back to `AGENTS.md`, so agentsmith never leaves an exclude behind without the local file. Nested directories behave the same way. A missing `@import` target is skipped silently.
+
+agentsmith uses this for the personal layer: it writes `CLAUDE.local.md` with every input and adds the `CLAUDE.md` beside it to `claudeMdExcludes` in `<project>/.claude/settings.local.json`.
+
+agentsmith always writes `CLAUDE.md` for a project scope that selects `claude` when the shared inputs define its template. When its content would equal the generated `AGENTS.md` beside it, the file contains only `@AGENTS.md`. Set `claude_import_agents_md = false` in the project configuration to write the full content instead.
 
 ### Skills
 
