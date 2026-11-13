@@ -103,7 +103,7 @@ asmith global sync
 
 ## Project setup
 
-Create `.config/agentsmith/config.toml` in the project root:
+Run `asmith project init --prepare` in the repository, or create `.config/agentsmith/config.toml` in the project root:
 
 ```toml
 harnesses = ["generic", "codex", "claude"]
@@ -127,7 +127,7 @@ asmith project diff
 asmith project generate
 ```
 
-Project generation never pulls Git. Existing outputs must be tracked and clean; newly generated outputs should be reviewed and committed before the next generation.
+Project generation never pulls Git. Inputs in `.config/agentsmith/` render the committed `AGENTS.md` and `CLAUDE.md`; Source Repository inputs and `*.local.md` snippets render personal `AGENTS.override.md` and `CLAUDE.local.md` files that Git never sees. Skills are generated, not committed. agentsmith replaces an existing output only when Git has it tracked and clean or it still holds what agentsmith last wrote.
 
 ## Composition syntax
 

@@ -6,7 +6,8 @@ export interface ResolvedInclude {
   content: string;
 }
 
-export type IncludeResolver = (sourceId: string, fromPath: string) => ResolvedInclude | undefined | Promise<ResolvedInclude | undefined>;
+/** Resolves an include: `undefined` reports a missing partial; `null` leaves the include out on purpose. */
+export type IncludeResolver = (sourceId: string, fromPath: string) => ResolvedInclude | undefined | null | Promise<ResolvedInclude | undefined | null>;
 
 export interface RenderMarkdownOptions {
   content: string;
@@ -158,7 +159,7 @@ async function expandIncludes(lines: string[], path: string, context: RenderCont
       continue;
     }
 
-    let resolved: ResolvedInclude | undefined;
+    let resolved: ResolvedInclude | undefined | null;
     try {
       resolved = await context.resolveInclude(directive.name, path);
     } catch (error) {
@@ -168,6 +169,11 @@ async function expandIncludes(lines: string[], path: string, context: RenderCont
         message: `Failed to resolve include \"${directive.name}\": ${errorMessage(error)}.`,
         path,
       });
+      continue;
+    }
+    if (resolved === null) {
+      // Left out on purpose: drop one of the blank lines around it so the paragraph spacing stays as written.
+      if ((output.at(-1) ?? "").trim() === "" && (lines[index + 1] ?? "").trim() === "") index += 1;
       continue;
     }
     if (!resolved) {

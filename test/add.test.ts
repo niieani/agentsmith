@@ -457,11 +457,12 @@ describe("project add", () => {
     expect(explicit.stdout).toContain(join(f.packs, "shared", "instructions", "notes", "50-root-again.md"));
     expect((await f.asmith(["project", "add", "notes", "Text.", "--scope", "missing"])).stderr).toContain("Scope missing is not declared");
 
-    // Generated outputs are untracked now, so project safety refuses regeneration; the snippet stays.
+    // A generated output edited by hand makes project safety refuse regeneration; the snippet stays.
+    await writeFile(join(f.project, "AGENTS.md"), "edited by hand\n");
     const refused = await f.asmith(["project", "add", "notes", "Second note.", "--pack", "local", "--project", f.project], { cwd: f.root });
     expect(refused.exitCode).toBe(1);
     expect(refused.stderr).toContain("regeneration failed; the snippet was kept");
-    expect(refused.stderr).toContain("untracked project destination");
+    expect(refused.stderr).toContain("untracked and edited project destination");
     expect(existsSync(join(f.packs, "local", "instructions", "notes", "51-second-note.md"))).toBeTrue();
 
     for (const flag of ["--push", "--local"]) {

@@ -32,6 +32,29 @@ export interface HarnessSkillSelection {
 
 export type HarnessSkills = Partial<Record<HarnessName, HarnessSkillSelection>>;
 
+/**
+ * How agentsmith treats a repository whose committed instruction files belong to someone else: `keep` puts the personal
+ * layer after the upstream instructions, `replace` puts it in their place. Either way agentsmith writes only personal,
+ * excluded files.
+ */
+export type UpstreamMode = "keep" | "replace";
+
+/** A profile entry that configures a repository without an agentsmith configuration of its own. */
+export interface ProfileProject {
+  /** Canonical repository root this entry matches. */
+  path?: string;
+  /** Remote URL this entry matches, as configured. */
+  remote?: string;
+  upstream: UpstreamMode;
+  harnesses?: HarnessName[];
+  template?: string;
+  packs: string[];
+  skillsEnable: string[];
+  skillsDisable: string[];
+  /** Profile file declaring the entry. */
+  file: string;
+}
+
 export interface ProfileConfig {
   harnesses: HarnessName[];
   template: string;
@@ -48,6 +71,8 @@ export interface ProfileConfig {
   chain: string[];
   /** The profile in the chain that contributed each pack. */
   packProfiles: Record<string, string>;
+  /** `[[projects]]` entries, nearest profile first: the first matching entry wins. */
+  projects: ProfileProject[];
 }
 
 export interface PackConfig {
@@ -75,10 +100,13 @@ export interface ProjectConfig {
   claudeImportAgentsMd: boolean;
   exclusive: boolean;
   exclusiveAllow: string[];
+  /** Set for a third-party repository: agentsmith writes only personal files and never the committed ones. */
+  upstream?: UpstreamMode;
   scopes: ScopeConfig[];
 }
 
-export type DiagnosticSeverity = "warning" | "error";
+/** `notice` reports something deliberately left out; it never fails a run, even with `--warnings-as-errors`. */
+export type DiagnosticSeverity = "notice" | "warning" | "error";
 
 export interface Diagnostic {
   severity: DiagnosticSeverity;
@@ -114,6 +142,9 @@ export interface RenderResult {
   diagnostics: Diagnostic[];
 }
 
+/** A project Instruction Layer file: committed shared content, or a personal file read instead of it. */
+export type InstructionLayerKind = "shared" | "personal";
+
 export interface PlannedWrite {
   destination: string;
   content: Uint8Array;
@@ -122,6 +153,10 @@ export interface PlannedWrite {
   harness?: HarnessName;
   scope?: string;
   provenance: string[];
+  /** Skill files: the skill directory the file belongs to. */
+  skillDirectory?: string;
+  /** Project instruction files: which layer the file holds. */
+  layer?: InstructionLayerKind;
 }
 
 export interface PlannedDelete {

@@ -8,7 +8,7 @@ import { adoptGlobal } from "./adopt.ts";
 import { adoptSkill } from "./adopt-skill.ts";
 import { cleanGlobal, cleanProject } from "./clean.ts";
 import { AgentsmithError, classify, errorCode, errorMessage, exitCodeFor } from "./errors.ts";
-import { CommandError, ensureCleanSource, gitHeadCommit, gitPullFfOnly, gitWorktree } from "./git.ts";
+import { CommandError, ensureCleanSource, gitHasTracked, gitHeadCommit, gitIsTracked, gitPathStatus, gitPullFfOnly, gitWorktree } from "./git.ts";
 import { assertPlanValid, buildGlobalPlan, buildProjectPlan, type BuiltPlan, type UnmanagedSkill } from "./planner.ts";
 import { isWithin } from "./fs.ts";
 import {
@@ -27,6 +27,7 @@ import {
   projectStatePath,
   quarantinePaths,
   restoreBackups,
+  serializeProjectState,
   storeBlobs,
   unifiedDiff,
   type ArtifactBackup,
@@ -34,6 +35,16 @@ import {
   type ProjectState,
 } from "./safety.ts";
 import { globalInit } from "./init.ts";
+import { projectInit } from "./project-init.ts";
+import {
+  claudeLocalSettingsPath,
+  desiredExcludes,
+  excludeEntry,
+  infoExcludePath,
+  readClaudeSettings,
+  updateClaudeMdExcludes,
+  updateInfoExclude,
+} from "./personal.ts";
 import { installSchedule, printScheduleStatus, uninstallSchedule } from "./schedule.ts";
 import { globalStatusPath, printGlobalStatus, writeGlobalStatus, type RunReport } from "./status.ts";
 import type { Diagnostic, GenerationPlan, HarnessName, PlannedDelete, PlannedWrite } from "./types.ts";
@@ -70,6 +81,7 @@ export interface CommandOptions {
   skipGenerate?: boolean;
   scope?: string;
   skill?: string;
+  prepare?: boolean;
 }
 
 export function diagnosticsText(diagnostics: Diagnostic[]): string {
@@ -122,14 +134,17 @@ export async function prepareGlobalPlan(plan: BuiltPlan): Promise<{
   return { statePath, previous };
 }
 
-function projectStateWrite(statePath: string, root: string, plan: BuiltPlan): PlannedWrite {
-  const state = {
+function projectStateWrite(statePath: string, root: string, plan: BuiltPlan, extra: Pick<ProjectState, "excludes" | "claudeMdExcludes"> = {}): PlannedWrite {
+  const artifacts = plan.writes.filter((write) => write.kind !== "state");
+  const state: ProjectState = {
     version: 1,
-    paths: [...new Set(plan.plannedPaths.map((path) => relativeStatePath(root, path)))].sort(),
+    paths: artifacts.map((write) => relativeStatePath(root, write.destination)),
+    hashes: Object.fromEntries(artifacts.map((write) => [relativeStatePath(root, write.destination), hashBytes(write.content)])),
+    ...extra,
   };
   return {
     destination: statePath,
-    content: encoder.encode(stringify(state)),
+    content: encoder.encode(serializeProjectState(state)),
     kind: "state",
     provenance: [plan.configPath],
   };
@@ -206,30 +221,105 @@ export interface ProjectGenerateOptions {
   onModified?: "fail" | "backup";
 }
 
+/** The `info/exclude` and `claudeMdExcludes` entries a project plan owns, and the ones its previous run owned. */
+export interface ProjectEntries {
+  excludePath: string;
+  settingsPath: string;
+  excludes: string[];
+  claudeMdExcludes: string[];
+  previousExcludes: string[];
+  previousClaudeMdExcludes: string[];
+}
+
+async function untrackedDirectories(root: string, paths: readonly string[]): Promise<string[]> {
+  const untracked: string[] = [];
+  for (const path of paths) if (!(await gitHasTracked(root, path))) untracked.push(path);
+  return untracked;
+}
+
+/** A third-party repository's committed files belong to its authors; agentsmith writes only untracked personal files. */
+async function refuseCommittedUpstreamWrites(plan: BuiltPlan, root: string): Promise<void> {
+  if (plan.upstream === undefined) return;
+  const committed: string[] = [];
+  for (const write of plan.writes) if (await gitIsTracked(root, write.destination)) committed.push(write.destination);
+  if (committed.length > 0) {
+    throw new AgentsmithError(
+      "config",
+      [
+        `upstream = "${plan.upstream}": agentsmith never writes a repository's committed files, but the plan would replace:`,
+        ...committed.map((path) => `  ${path}`),
+      ].join("\n"),
+    );
+  }
+}
+
+export async function projectEntries(plan: BuiltPlan, worktreeRoot: string, previous: ProjectState): Promise<ProjectEntries> {
+  const settingsPath = claudeLocalSettingsPath(plan.projectRoot!);
+  const previousExcludes = previous.excludes ?? [];
+  const previousClaudeMdExcludes = previous.claudeMdExcludes ?? [];
+  const personal = plan.writes.filter((write) => write.layer === "personal").map((write) => write.destination);
+  const entries: ProjectEntries = {
+    excludePath: await infoExcludePath(worktreeRoot),
+    settingsPath,
+    excludes: [
+      ...(await desiredExcludes(worktreeRoot, plan.projectRoot!, personal, plan.claudeMdExcludes, previousExcludes)),
+      ...(await untrackedDirectories(worktreeRoot, plan.personalExcludes)).map((path) => excludeEntry(worktreeRoot, path, true)),
+    ],
+    claudeMdExcludes: plan.claudeMdExcludes,
+    previousExcludes,
+    previousClaudeMdExcludes,
+  };
+  // Validate the settings file before anything is written.
+  if (entries.claudeMdExcludes.length > 0 || previousClaudeMdExcludes.length > 0) await readClaudeSettings(settingsPath);
+  if (
+    entries.claudeMdExcludes.length > 0 &&
+    (await gitPathStatus(worktreeRoot, settingsPath)) !== "missing" &&
+    (await gitIsTracked(worktreeRoot, settingsPath))
+  ) {
+    throw new AgentsmithError(
+      "config",
+      `${settingsPath} is tracked by Git, but agentsmith writes this machine's paths into its claudeMdExcludes; untrack it (git rm --cached) and ignore it`,
+    );
+  }
+  return entries;
+}
+
 export async function generateProject(plan: BuiltPlan, options: ProjectGenerateOptions = {}): Promise<void> {
   await classify("config", () => assertPlanValid(plan));
-  printDiagnostics(plan.diagnostics.filter((item) => item.severity === "warning"));
+  printDiagnostics(plan.diagnostics.filter((item) => item.severity !== "error"));
   const prepared = await prepareProjectPlan(plan);
+  await refuseCommittedUpstreamWrites(plan, prepared.worktree.root);
   await preflightProjectPlan(plan, { projectRoot: plan.projectRoot!, state: prepared.previous });
   const unmanaged = exclusiveViolations(
     plan,
     prepared.previous.paths.map((path) => resolve(prepared.worktree.root, path)),
   );
   if (unmanaged.length > 0 && options.onModified !== "backup") throw unmanagedSkillsError("project", unmanaged);
+  const entries = await projectEntries(plan, prepared.worktree.root, prepared.previous);
   const application: GenerationPlan = {
     ...plan,
-    writes: [...plan.writes, projectStateWrite(prepared.statePath, prepared.worktree.root, plan)],
+    writes: [
+      ...plan.writes,
+      projectStateWrite(prepared.statePath, prepared.worktree.root, plan, { excludes: entries.excludes, claudeMdExcludes: entries.claudeMdExcludes }),
+    ],
   };
   const quarantined = await quarantinePaths(
     unmanaged.map((skill) => skill.path),
     { backupRoot: projectBackupRoot(prepared.worktree) },
   );
+  // Never leave CLAUDE.md excluded without its CLAUDE.local.md: Claude would fall back to AGENTS.md. Stale entries go
+  // before their personal files are deleted, new ones after their files are written.
+  const staleClaude = entries.previousClaudeMdExcludes.filter((entry) => !entries.claudeMdExcludes.includes(entry));
   try {
+    await updateClaudeMdExcludes(entries.settingsPath, [], staleClaude);
     await applyPlan(application);
   } catch (cause) {
     await restoreBackups(quarantined);
+    await updateClaudeMdExcludes(entries.settingsPath, staleClaude, []).catch(() => undefined);
     throw cause;
   }
+  await updateClaudeMdExcludes(entries.settingsPath, entries.claudeMdExcludes, staleClaude);
+  await updateInfoExclude(entries.excludePath, entries.excludes, entries.previousExcludes);
   for (const backup of quarantined) console.error(`WARNING unmanaged-skill-backup: moved unmanaged skill ${backup.path} to ${backup.backup}`);
   await pruneEmptySkillDirectories(plan.deletes);
   console.log(`Generated ${plan.writes.length} file(s); removed ${plan.deletes.length} stale file(s).`);
@@ -348,9 +438,11 @@ export async function runRecordedGlobal(action: "sync" | "generate", options: Co
 }
 
 async function diffPlan(plan: BuiltPlan): Promise<void> {
+  let entries: ProjectEntries | undefined;
   if (plan.mode === "project") {
     try {
-      await prepareProjectPlan(plan);
+      const prepared = await prepareProjectPlan(plan);
+      entries = await projectEntries(plan, prepared.worktree.root, prepared.previous);
     } catch (cause) {
       const unavailable = cause instanceof CommandError && /not a git repository/i.test(`${cause.result.stderr}\n${cause.result.stdout}`);
       if (!unavailable) throw cause;
@@ -383,6 +475,16 @@ async function diffPlan(plan: BuiltPlan): Promise<void> {
       output += `Binary file deleted: ${deletion.destination}\n`;
     }
   }
+  if (entries !== undefined) {
+    const changes = (label: string, desired: readonly string[], previous: readonly string[]) => [
+      ...desired.filter((entry) => !previous.includes(entry)).map((entry) => `+ ${label}: ${entry}\n`),
+      ...previous.filter((entry) => !desired.includes(entry)).map((entry) => `- ${label}: ${entry}\n`),
+    ];
+    output += [
+      ...changes(`claudeMdExcludes in ${entries.settingsPath}`, entries.claudeMdExcludes, entries.previousClaudeMdExcludes),
+      ...changes(entries.excludePath, entries.excludes, entries.previousExcludes),
+    ].join("");
+  }
   process.stdout.write(output || "No changes.\n");
 }
 
@@ -408,6 +510,7 @@ function explainHuman(plan: BuiltPlan): string {
     const label = artifact.kind === "skill" ? `skill ${artifact.name}` : "instruction layer";
     lines.push(`${artifact.harness} ${artifact.scope}: ${label}`);
     lines.push(`  destination: ${artifact.destination}`);
+    if (artifact.layer) lines.push(`  layer: ${artifact.layer}`);
     if (artifact.template) lines.push(`  template: ${artifact.template}`);
     if (artifact.templateSourceId) {
       lines.push(`  template source: ${artifact.templateSourceId} (selected as ${artifact.templateSelection ?? "(unknown)"})`);
@@ -471,7 +574,7 @@ export type CommandAction =
   | "schedule-status"
   | "clean";
 
-const GLOBAL_ONLY_ACTIONS: ReadonlySet<CommandAction> = new Set(["status", "init", "schedule-install", "schedule-uninstall", "schedule-status"]);
+const GLOBAL_ONLY_ACTIONS: ReadonlySet<CommandAction> = new Set(["status", "schedule-install", "schedule-uninstall", "schedule-status"]);
 
 /** Execute one CLI command and return its process exit code. */
 export async function executeCommand(mode: "global" | "project", action: CommandAction, options: CommandOptions): Promise<number> {
@@ -496,6 +599,10 @@ export async function executeCommand(mode: "global" | "project", action: Command
     if (mode === "project") throw new AgentsmithError("config", "project adopt requires --skill NAME");
     if (options.push || options.noCommit) throw new AgentsmithError("config", "--push and --no-commit apply only to global adopt --skill");
     await adoptGlobal(options);
+    return 0;
+  }
+  if (action === "init" && mode === "project") {
+    await projectInit({ project: options.project, prepare: options.prepare });
     return 0;
   }
   if (action === "init") {

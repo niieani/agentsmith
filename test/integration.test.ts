@@ -50,10 +50,18 @@ describe("CLI project workflow", () => {
     ]);
     expect(firstCode, firstErr).toBe(0);
     expect(firstOut).toContain("Generated 4 file(s)");
-    expect(await readFile(join(project, "AGENTS.md"), "utf8")).toContain("Use the fixture.");
+    // Every input comes from the Source Repository, so it is personal: override files, excluded from Git.
+    expect(await readFile(join(project, "AGENTS.override.md"), "utf8")).toContain("Use the fixture.");
     expect(await readFile(join(project, ".claude", "skills", skill, "SKILL.md"), "utf8")).toContain("Fixture workflow");
     expect(await readFile(join(project, ".agents", "skills", skill, "SKILL.md"), "utf8")).toContain("Fixture workflow");
-    expect(await readFile(join(project, "CLAUDE.md"), "utf8")).toBe("@AGENTS.md\n");
+    expect(await readFile(join(project, "CLAUDE.local.md"), "utf8")).toBe("@AGENTS.override.md\n");
+    expect(await readFile(join(project, ".git", "info", "exclude"), "utf8")).toContain("/AGENTS.override.md\n/CLAUDE.local.md\n");
+    expect(
+      await access(join(project, "AGENTS.md")).then(
+        () => true,
+        () => false,
+      ),
+    ).toBeFalse();
     expect(
       await access(join(project, ".codex")).then(
         () => true,
@@ -64,8 +72,17 @@ describe("CLI project workflow", () => {
     const second = Bun.spawn(args, { cwd: project, env, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
     const secondCode = await second.exited;
     const secondError = await new Response(second.stderr).text();
-    expect(secondCode).toBe(1);
-    expect(secondError).toContain("untracked project destination");
+    // Untracked output agentsmith recorded and nobody edited may be regenerated over.
+    expect(secondCode, secondError).toBe(0);
+
+    // A hand edit to an untracked generated file is refused.
+    await writeFile(join(project, ".agents", "skills", skill, "SKILL.md"), "edited by hand\n");
+    const edited = Bun.spawn(args, { cwd: project, env, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+    const [editedError, editedCode] = await Promise.all([new Response(edited.stderr).text(), edited.exited]);
+    expect(editedCode).toBe(1);
+    expect(editedError).toContain("untracked and edited project destination");
+    expect(await readFile(join(project, ".agents", "skills", skill, "SKILL.md"), "utf8")).toBe("edited by hand\n");
+    await rm(join(project, ".agents", "skills", skill, "SKILL.md"));
 
     await run(["git", "add", "."], project);
     expect((await run(["git", "commit", "-m", "generated"], project)).exitCode).toBe(0);

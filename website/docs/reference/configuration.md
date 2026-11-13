@@ -78,6 +78,7 @@ Profile budgets override matching Source Repository defaults. See [per-harness s
 | `budgets` | No | Same keys as the Source Repository root. |
 | `exclusive` | No | `true` reports every skill agentsmith did not write. See [exclusive mode](#exclusive-mode). Default `false`. |
 | `exclusive_allow` | No | Skill directory name globs that exclusive mode leaves alone. |
+| `projects` | No | `[[projects]]` entries that configure [third-party repositories](#third-party-repositories). |
 
 ### Extending a profile
 
@@ -96,6 +97,7 @@ A profile may extend one parent, which may extend another. agentsmith merges the
 | `harness_skills.<harness>.enable`, `.disable` | Ordered union per harness, parent entries first. Each configured harness must be selected by the resolved profile. |
 | `harnesses`, `template`, `exclusive` | The child's value replaces the parent's when set. |
 | `exclusive_allow` | Ordered union, parent entries first. |
+| `projects` | The child's entries first, then the parent's; the first matching entry wins. |
 | `budgets` | Per key; the child's value wins. The result then overrides Source Repository defaults. |
 
 Packs are additive only; a child cannot remove a parent's pack. A base profile may list only packs; the selected profile must end up with `harnesses` and `template`, set directly or inherited. Cycles and missing parents are errors. `asmith global explain` shows the resolved chain and which profile contributed each pack.
@@ -142,13 +144,49 @@ skills_disable = []
 disable = ["publish"]
 ```
 
-Top-level project keys are `harnesses`, `claude_import_agents_md`, `budgets`, `exclusive`, `exclusive_allow`, and `scopes`. Scope keys are `path`, `template`, `packs`, `harnesses`, `skills_enable`, `skills_disable`, `harness_skills`, `exclusive`, and `exclusive_allow`. A `[scopes.harness_skills.<harness>]` table applies to the most recent `[[scopes]]` entry.
+Top-level project keys are `harnesses`, `claude_import_agents_md`, `budgets`, `exclusive`, `exclusive_allow`, `upstream`, and `scopes`. Scope keys are `path`, `template`, `packs`, `harnesses`, `skills_enable`, `skills_disable`, `harness_skills`, `exclusive`, and `exclusive_allow`. A `[scopes.harness_skills.<harness>]` table applies to the most recent `[[scopes]]` entry.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `claude_import_agents_md` | `true` | When a scope's generated `CLAUDE.md` would be byte-identical to the `AGENTS.md` generated beside it, write `CLAUDE.md` containing only `@AGENTS.md`. Set `false` to always write the full content. |
 | `exclusive` | `false` | Turn on [exclusive mode](#exclusive-mode) for every scope. A scope's own `exclusive` overrides it. |
 | `exclusive_allow` | `[]` | Skill directory name globs that exclusive mode leaves alone. A scope's own list is added to this one. |
+| `upstream` | unset | `"keep"` or `"replace"` marks a [third-party repository](#third-party-repositories): agentsmith writes only personal files. |
+
+## Third-party repositories
+
+Some repositories already commit their own `AGENTS.md`, `CLAUDE.md`, or skills, and you cannot or should not change them. Mark such a repository with `upstream`, and agentsmith never writes its committed files: every input is personal, and only the personal files and skills are written, all excluded through `.git/info/exclude`.
+
+| `upstream` | `AGENTS.override.md` (Codex) | `CLAUDE.local.md` (Claude) | Upstream `CLAUDE.md` |
+| --- | --- | --- | --- |
+| `keep` (default) | upstream `AGENTS.md`, then your layer | your layer only | still loaded |
+| `replace` | your layer only | your layer only | excluded through `claudeMdExcludes` |
+
+With `keep`, a directory that has an upstream `AGENTS.md` but no `CLAUDE.md` gets `@AGENTS.md` at the top of `CLAUDE.local.md`, because a `CLAUDE.local.md` turns off Claude's fallback to `AGENTS.md`. Upstream skills stay visible; one with the same name as a generated skill is an error. Generic tools keep reading the upstream `AGENTS.md`.
+
+You can put `upstream` in a `.config/agentsmith/config.toml` you add to the repository yourself; agentsmith excludes `/.config/agentsmith/` through `.git/info/exclude` so it stays out of `git status`. Without any project config, add an entry to your profile instead:
+
+```toml title="profiles/laptop.toml"
+[[projects]]
+remote = "github.com/acme/tool"   # matches git@github.com:acme/tool.git, https://github.com/acme/tool, ...
+upstream = "replace"
+packs = ["base", "review"]
+template = "personal"
+
+[[projects]]
+path = "~/src/vendor-sdk"
+packs = ["base"]
+template = "personal"
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `path` or `remote` | required, exactly one | The repository root, or any of its remote URLs. Remotes compare by host and path, ignoring the scheme, user, and `.git`. |
+| `upstream` | `"keep"` | As in the table above. |
+| `harnesses` | the profile's | Harnesses for this repository. |
+| `template`, `packs`, `skills_enable`, `skills_disable` | none | As in a project scope at `.`. Source IDs cannot be `project:`-qualified. |
+
+`asmith project generate`, `diff`, `lint`, `explain`, and `clean` use the first matching entry when they find no `.config/agentsmith/config.toml`.
 
 ## Exclusive mode
 
@@ -183,7 +221,11 @@ Each `harness_skills.<harness>` table accepts only `enable` and `disable`. Unkno
 
 ## Source IDs
 
-Source IDs are slash-separated logical names, not filesystem paths. Unqualified names are preferred. In project mode, templates, skills, and partials resolve project-first with Source Repository fallback; packs compose Source Repository and project matches in that order. `source:` and `project:` restrict resolution to one owner. Global profiles resolve only Source Repository sources and reject `project:` references. A name missing from every eligible owner is an error.
+Source IDs are slash-separated logical names, not filesystem paths. Unqualified names are preferred. In project mode, templates, skills, and partials resolve project-first with Source Repository fallback; packs compose Source Repository and project matches in that order. `source:` and `project:` restrict resolution to one owner. Global profiles resolve only Source Repository sources and reject `project:` references. A name missing from every eligible owner is an error, except in a project without a machine config: then a name the project does not provide is skipped with a notice (see [projects without a Source Repository](#projects-without-a-source-repository)).
+
+### Projects without a Source Repository
+
+A fresh clone, a CI job, or a teammate without agentsmith set up has no machine config. `asmith project generate` still renders everything shared inputs define, and skips each personal input with a `NOTICE personal-input-skipped` line: Source Repository packs (with their snippets and skills), skills, templates, and partials. A project skill whose required slot only a skipped pack fills is skipped with a warning; an empty optional slot renders empty. A missing `project:`-qualified source is still an error. Notices never fail a run, even with `--warnings-as-errors`.
 
 ## Harness destinations
 
@@ -209,7 +251,27 @@ Codex reads both `.agents/skills` and `.codex/skills` and keeps every copy, so o
 
 Harness-specific content renders only where exactly one harness reads the skill. Collision checks consider every root each selected harness reads, so a planned or unmanaged skill in `.codex/skills` collides with one of the same name in `.agents/skills` when `codex` is selected.
 
-An existing `AGENTS.override.md` at a generated Codex layer is a preflight error because it would shadow `AGENTS.md`.
+Codex reads `AGENTS.override.md` instead of `AGENTS.md`. agentsmith writes that file for the [personal layer](#shared-and-personal-layers); an `AGENTS.override.md` it did not write is a preflight error because it would shadow the generated `AGENTS.md`.
+
+### Shared and personal layers
+
+In a project, what is committed depends on where each input lives, not on which file it ends up in:
+
+- **Shared inputs** live in the project's own `.config/agentsmith/` tree: its templates, packs, skills, and partials, except `*.local.md` files.
+- **Personal inputs** are everything else: Source Repository templates, packs, skills, and partials, and the project's `*.local.md` snippets and partials.
+
+Every project Instruction Layer is rendered twice:
+
+| Layer | Rendered from | Files | Committed |
+| --- | --- | --- | --- |
+| Shared | shared inputs only | `<scope>/AGENTS.md`, `<scope>/CLAUDE.md` (or `@AGENTS.md`) | yes |
+| Personal | every input | `<scope>/AGENTS.override.md` for `codex`, `<scope>/CLAUDE.local.md` for `claude` | no, excluded through `.git/info/exclude` |
+
+The personal files are written only when they differ from the shared layer. Codex reads `AGENTS.override.md` instead of `AGENTS.md`. For Claude, agentsmith adds `<scope>/CLAUDE.md` to `claudeMdExcludes` in `<project>/.claude/settings.local.json`, so Claude loads only `CLAUDE.local.md` for that folder. agentsmith owns only the `claudeMdExcludes` entries it added and keeps every other setting. `generic` has no personal file; other agents read the shared `AGENTS.md`.
+
+Adding a personal snippet or pack never changes the shared layer, so teammates never see your personal instructions in a diff. A Source Repository partial included by a project template renders as nothing in the shared layer. When the template itself comes from the Source Repository, no shared file is written and only the personal files carry the scope's instructions.
+
+Skills are not layered. Shared and personal skills are generated into the same skill roots, which `asmith project init` adds to `.gitignore`.
 
 ### Migrating to the `.agents` layout
 

@@ -1,10 +1,12 @@
 import { lstat, readFile, rm, rmdir } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
-import { discoverProjectConfig, loadProjectConfig, MACHINE_CONFIG_PATH, requireMachineHome, resolveConfiguredPath } from "./config.ts";
+import { MACHINE_CONFIG_PATH, requireMachineHome, resolveConfiguredPath } from "./config.ts";
 import { AgentsmithError, classify, errorMessage } from "./errors.ts";
-import { agentsmithHome, canonicalRoot, isWithin } from "./fs.ts";
+import { agentsmithHome, isWithin } from "./fs.ts";
 import { gitPathStatus, gitWorktree } from "./git.ts";
+import { claudeLocalSettingsPath, excludeEntry, infoExcludePath, readClaudeSettings, updateClaudeMdExcludes, updateInfoExclude } from "./personal.ts";
 import { buildProjectPlan } from "./planner.ts";
+import { resolveProject } from "./project.ts";
 import {
   type ArtifactBackup,
   backupGlobalArtifacts,
@@ -168,9 +170,7 @@ export function owningScope(path: string, scopes: readonly string[]): string {
  */
 export async function cleanProject(options: CleanOptions): Promise<void> {
   const start = options.project ?? process.cwd();
-  const configPath = await classify("config", () => discoverProjectConfig(start));
-  const config = await classify("config", () => loadProjectConfig(configPath));
-  const projectRoot = canonicalRoot(dirname(dirname(dirname(configPath))));
+  const { project: config, projectRoot } = await classify("config", () => resolveProject(start, options.config ?? MACHINE_CONFIG_PATH));
   const worktree = await gitWorktree(projectRoot);
   const statePath = projectStatePath(worktree);
   const state = await loadProjectState(statePath);
@@ -180,7 +180,7 @@ export async function cleanProject(options: CleanOptions): Promise<void> {
     scope = normalizeScope(options.scope);
     if (!scopes.includes(scope)) throw new AgentsmithError("config", `Scope ${scope} is not declared (scopes: ${scopes.join(", ")})`);
   }
-  // Project state records paths only, so "unchanged" means what this configuration generates, or what Git has committed.
+  // Unchanged means the content agentsmith recorded, what this configuration generates, or what Git has committed.
   const planned = new Map<string, Uint8Array>();
   try {
     const built = await buildProjectPlan(start, options.config ?? MACHINE_CONFIG_PATH);
@@ -206,24 +206,50 @@ export async function cleanProject(options: CleanOptions): Promise<void> {
     const content = (await lstat(absolute)).isFile() ? new Uint8Array(await readFile(absolute)) : undefined;
     const expected = planned.get(absolute);
     const matchesPlan = content !== undefined && expected !== undefined && Buffer.from(content).equals(Buffer.from(expected));
+    const matchesRecorded = content !== undefined && state.hashes?.[path] === hashBytes(content);
     if (status === "tracked-clean") tracked.push(absolute);
-    if (content !== undefined && (matchesPlan || status === "tracked-clean")) plan.unchanged.push(absolute);
+    if (content !== undefined && (matchesRecorded || matchesPlan || status === "tracked-clean")) plan.unchanged.push(absolute);
     else plan.modified.push(absolute);
   }
   const remaining = state.paths.filter((path) => !selected.includes(path));
   if (remaining.length === 0 && (await present(statePath))) plan.stateFiles.push(statePath);
+
+  // Entries agentsmith added to files it shares with the user go with the artifacts they serve.
+  const inScope = (path: string) => scope === undefined || owningScope(path, scopes) === scope;
+  const settingsPath = claudeLocalSettingsPath(projectRoot);
+  const settingsEntry = excludeEntry(worktree.root, settingsPath);
+  const claudeEntries = (state.claudeMdExcludes ?? []).filter((entry) => inScope(relative(worktree.root, entry).split(sep).join("/")));
+  const remainingClaude = (state.claudeMdExcludes ?? []).filter((entry) => !claudeEntries.includes(entry));
+  const excludeEntries = (state.excludes ?? []).filter((entry) =>
+    entry === settingsEntry ? remainingClaude.length === 0 : inScope(entry.replace(/^\//, "").replace(/\/$/, "")),
+  );
+  const excludePath = await infoExcludePath(worktree.root);
+  if (claudeEntries.length > 0) await classify("config", () => readClaudeSettings(settingsPath));
+
   if (plan.modified.length > 0 && !options.force && options.onModified !== "backup") throw refuseModified(plan);
   report(plan, options);
+  for (const entry of claudeEntries) console.log(`  claudeMdExcludes entry ${entry} in ${settingsPath}`);
+  for (const entry of excludeEntries) console.log(`  ${entry} in ${excludePath}`);
   if (remaining.length > 0) console.log(`  (state keeps ${remaining.length} recorded path(s) of other scopes)`);
   if (!options.yes) {
     if (plan.unchanged.length + plan.modified.length + plan.stateFiles.length > 0) console.log("Dry run; rerun with --yes to remove these files.");
     return;
   }
 
+  // CLAUDE.md must never stay excluded without its CLAUDE.local.md, so entries go before the files.
+  await updateClaudeMdExcludes(settingsPath, [], claudeEntries);
   const backups = options.onModified === "backup" ? await quarantinePaths(plan.modified, { backupRoot: plan.backupRoot, reason: "modified" }) : [];
   const artifacts = [...plan.unchanged, ...plan.modified];
   await removeAll(artifacts);
-  if (remaining.length > 0) await saveProjectState(statePath, { version: 1, paths: remaining });
+  await updateInfoExclude(excludePath, [], excludeEntries);
+  if (claudeEntries.length > 0 && !(await present(settingsPath))) await pruneEmptyParents([settingsPath], worktree.root);
+  if (remaining.length > 0)
+    await saveProjectState(statePath, {
+      ...state,
+      paths: remaining,
+      claudeMdExcludes: remainingClaude,
+      excludes: (state.excludes ?? []).filter((entry) => !excludeEntries.includes(entry)),
+    });
   else {
     await removeAll(plan.stateFiles);
     await pruneEmptyParents(plan.stateFiles, worktree.gitDir);

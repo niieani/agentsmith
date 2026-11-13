@@ -9,7 +9,17 @@ import { gitPathStatus, gitWorktree, type GitWorktree } from "./git.ts";
 
 export interface ProjectState {
   version: 1;
+  /** Recorded artifacts, relative to the worktree root. */
   paths: string[];
+  /**
+   * SHA-256 of each recorded artifact's generated content, keyed by its relative path. A path without a hash was
+   * recorded by an older agentsmith; only Git can vouch for it.
+   */
+  hashes?: Record<string, string>;
+  /** Lines agentsmith added to the repository's `info/exclude`. */
+  excludes?: string[];
+  /** Absolute paths agentsmith added to `claudeMdExcludes` in `<project>/.claude/settings.local.json`. */
+  claudeMdExcludes?: string[];
 }
 
 export interface GlobalState {
@@ -72,17 +82,66 @@ export async function collectBlobs(blobDirectory: string, state: GlobalState): P
   return removed;
 }
 
+function stringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
 export async function loadProjectState(path: string): Promise<ProjectState> {
-  if (!(await exists(path))) return { version: 1, paths: [] };
+  if (!(await exists(path))) return { version: 1, paths: [], hashes: {}, excludes: [], claudeMdExcludes: [] };
   const value = parse(await readFile(path, "utf8")) as Record<string, unknown>;
-  if (value.version !== 1 || !Array.isArray(value.paths) || value.paths.some((item) => typeof item !== "string")) {
-    throw new Error(`Invalid project state: ${path}`);
+  if (value.version !== 1 || !stringArray(value.paths)) throw new Error(`Invalid project state: ${path}`);
+  const paths = [...new Set(value.paths)].sort();
+  const hashes: Record<string, string> = {};
+  if (value.hashes !== undefined) {
+    if (value.hashes === null || typeof value.hashes !== "object" || Array.isArray(value.hashes)) throw new Error(`Invalid project state: ${path}`);
+    for (const [key, hash] of Object.entries(value.hashes as Record<string, unknown>)) {
+      if (typeof hash !== "string" || !/^[a-f0-9]{64}$/.test(hash)) throw new Error(`Invalid project artifact hash in ${path}`);
+      if (paths.includes(key)) hashes[key] = hash;
+    }
   }
-  return { version: 1, paths: [...new Set(value.paths as string[])].sort() };
+  for (const key of ["excludes", "claude_md_excludes"]) {
+    if (value[key] !== undefined && !stringArray(value[key])) throw new Error(`Invalid project state ${key}: ${path}`);
+  }
+  return {
+    version: 1,
+    paths,
+    hashes,
+    excludes: [...new Set((value.excludes as string[] | undefined) ?? [])],
+    claudeMdExcludes: [...new Set((value.claude_md_excludes as string[] | undefined) ?? [])],
+  };
+}
+
+/** Serialized project state; keys stay compatible with readers that only know `version` and `paths`. */
+export function serializeProjectState(state: ProjectState): string {
+  const paths = [...new Set(state.paths)].sort();
+  const hashes = Object.fromEntries(
+    Object.entries(state.hashes ?? {})
+      .filter(([key]) => paths.includes(key))
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+  );
+  return stringify({
+    version: 1,
+    paths,
+    hashes,
+    excludes: [...new Set(state.excludes ?? [])],
+    claude_md_excludes: [...new Set(state.claudeMdExcludes ?? [])],
+  });
 }
 
 export async function saveProjectState(path: string, state: ProjectState): Promise<void> {
-  await atomicWrite(path, new TextEncoder().encode(stringify({ version: 1, paths: [...new Set(state.paths)].sort() })));
+  await atomicWrite(path, new TextEncoder().encode(serializeProjectState(state)));
+}
+
+/** Whether a recorded project artifact still holds exactly the content agentsmith last generated. */
+export async function matchesRecordedHash(state: ProjectState, root: string, path: string): Promise<boolean> {
+  const hash = state.hashes?.[relative(resolve(root), resolve(path)).replaceAll("\\", "/")];
+  if (hash === undefined) return false;
+  try {
+    const stats = await lstat(path);
+    return stats.isFile() && hashBytes(await readFile(path)) === hash;
+  } catch {
+    return false;
+  }
 }
 
 export async function loadGlobalState(path = globalStatePath()): Promise<GlobalState> {
@@ -157,11 +216,56 @@ function inside(root: string, path: string): boolean {
   return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
+/**
+ * Whether agentsmith may overwrite or delete a project path: Git has it (missing, or tracked and clean), or agentsmith
+ * recorded it and its content still matches the recorded hash, whatever Git thinks of it (ignored skills, untracked
+ * personal files, or a generated change not yet committed). Conflicted paths are never touched.
+ */
+async function projectPathReplaceable(root: string, state: ProjectState, destination: string): Promise<{ ok: boolean; status: string }> {
+  const status = await gitPathStatus(root, destination);
+  if (status === "missing" || status === "tracked-clean") return { ok: true, status };
+  if (status !== "conflicted" && (await matchesRecordedHash(state, root, destination))) return { ok: true, status };
+  return { ok: false, status: state.paths.includes(relative(root, destination).replaceAll("\\", "/")) ? `${status} and edited` : status };
+}
+
+/**
+ * Skill directories a project plan writes that already hold content agentsmith does not own: a file that is neither
+ * recorded in state nor planned with identical bytes. Such a directory was committed by the repository's authors or
+ * written by hand, and generating over it would silently replace it.
+ */
+async function unownedSkillDirectories(plan: GenerationPlan, root: string, state: ProjectState): Promise<string[]> {
+  const recorded = new Set(state.paths.map((path) => resolve(root, path)));
+  const planned = new Map(plan.writes.map((write) => [resolve(write.destination), write.content]));
+  const directories = new Set(plan.writes.flatMap((write) => (write.skillDirectory === undefined ? [] : [resolve(write.skillDirectory)])));
+  const unowned: string[] = [];
+  for (const directory of [...directories].sort()) {
+    for (const file of await filesBelow(directory)) {
+      if (recorded.has(file)) continue;
+      const content = planned.get(file);
+      if (content !== undefined && Buffer.from(await readFile(file)).equals(Buffer.from(content))) continue;
+      unowned.push(directory);
+      break;
+    }
+  }
+  return unowned;
+}
+
 export async function preflightProjectPlan(plan: GenerationPlan, options: { projectRoot: string; state: ProjectState }): Promise<void> {
   assertUniqueDestinations(plan);
   const expected = await gitWorktree(options.projectRoot);
   const recorded = new Set(options.state.paths.map((path) => resolve(expected.root, path)));
   const plannedDeletions = new Set(plan.deletes.map((item) => resolve(item.destination)));
+  const unowned = await unownedSkillDirectories(plan, expected.root, options.state);
+  if (unowned.length > 0) {
+    throw new AgentsmithError(
+      "config",
+      [
+        `Generated skill(s) would replace skill directories agentsmith does not own:`,
+        ...unowned.map((path) => `  ${path}`),
+        "They were committed by the repository's authors or written by hand. Rename the generated skill, or adopt the directory with `asmith project adopt --skill NAME`.",
+      ].join("\n"),
+    );
+  }
   for (const write of plan.writes) {
     const destination = resolve(write.destination);
     if (!inside(expected.root, destination)) throw new Error(`Project destination escapes its worktree: ${destination}`);
@@ -169,8 +273,8 @@ export async function preflightProjectPlan(plan: GenerationPlan, options: { proj
     const existing = await nearestExisting(destination);
     const owner = await gitWorktree((await stat(existing)).isDirectory() ? existing : dirname(existing));
     if (owner.root !== expected.root || owner.gitDir !== expected.gitDir) throw new Error(`Destination belongs to a different Git worktree: ${destination}`);
-    const status = await gitPathStatus(expected.root, destination);
-    if (status !== "missing" && status !== "tracked-clean") throw new Error(`Refusing to replace ${status} project destination: ${destination}`);
+    const replaceable = await projectPathReplaceable(expected.root, options.state, destination);
+    if (!replaceable.ok) throw new Error(`Refusing to replace ${replaceable.status} project destination: ${destination}`);
     for (const child of await filesBelow(destination)) {
       if (!recorded.has(child) || !plannedDeletions.has(child)) {
         throw new Error(`Refusing file/directory transition over unowned project content: ${child}`);
@@ -182,8 +286,8 @@ export async function preflightProjectPlan(plan: GenerationPlan, options: { proj
     if (!recorded.has(destination)) throw new Error(`Refusing to delete unrecorded project artifact: ${destination}`);
     if (!inside(expected.root, destination)) throw new Error(`Project deletion escapes its worktree: ${destination}`);
     await rejectSymlink(destination);
-    const status = await gitPathStatus(expected.root, destination);
-    if (status !== "missing" && status !== "tracked-clean") throw new Error(`Refusing to delete ${status} stale project artifact: ${destination}`);
+    const replaceable = await projectPathReplaceable(expected.root, options.state, destination);
+    if (!replaceable.ok) throw new Error(`Refusing to delete ${replaceable.status} stale project artifact: ${destination}`);
   }
 }
 

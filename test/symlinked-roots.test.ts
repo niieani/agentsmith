@@ -38,7 +38,7 @@ async function linkedFixture() {
   await put(join(source, "packs", "base", "instructions", "notes", "10-note.md"), "Through a symlink.\n");
   await commitAll(source);
   const project = join(real, "project");
-  await put(join(project, ".config", "agentsmith", "config.toml"), 'harnesses = ["generic"]\n\n[[scopes]]\npath = "."\ntemplate = "base"\npacks = ["base"]\n');
+  await put(join(project, ".config", "agentsmith", "config.toml"), 'harnesses = ["codex"]\n\n[[scopes]]\npath = "."\ntemplate = "base"\npacks = ["base"]\n');
   await commitAll(project);
   const home = join(link, "home");
   await mkdir(join(real, "home"), { recursive: true });
@@ -54,7 +54,8 @@ describe("symlinked roots", () => {
     const project = join(setup.link, "project");
     const result = await run(["bun", cli, "project", "generate", "--project", project], project, setup.env);
     expect(result.exitCode, result.stderr).toBe(0);
-    expect(await readFile(join(setup.real, "project", "AGENTS.md"), "utf8")).toContain("Through a symlink.");
+    // Source Repository inputs are personal, so they land in Codex's personal override file.
+    expect(await readFile(join(setup.real, "project", "AGENTS.override.md"), "utf8")).toContain("Through a symlink.");
   });
 
   test("global sync works when home and source are reached through a symlinked ancestor", async () => {
