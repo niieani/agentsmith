@@ -64,8 +64,17 @@ describe("CLI project workflow", () => {
     const second = Bun.spawn(args, { cwd: project, env, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
     const secondCode = await second.exited;
     const secondError = await new Response(second.stderr).text();
-    expect(secondCode).toBe(1);
-    expect(secondError).toContain("untracked project destination");
+    // Untracked output agentsmith recorded and nobody edited may be regenerated over.
+    expect(secondCode, secondError).toBe(0);
+
+    // A hand edit to an untracked generated file is refused.
+    await writeFile(join(project, ".agents", "skills", skill, "SKILL.md"), "edited by hand\n");
+    const edited = Bun.spawn(args, { cwd: project, env, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+    const [editedError, editedCode] = await Promise.all([new Response(edited.stderr).text(), edited.exited]);
+    expect(editedCode).toBe(1);
+    expect(editedError).toContain("untracked and edited project destination");
+    expect(await readFile(join(project, ".agents", "skills", skill, "SKILL.md"), "utf8")).toBe("edited by hand\n");
+    await rm(join(project, ".agents", "skills", skill, "SKILL.md"));
 
     await run(["git", "add", "."], project);
     expect((await run(["git", "commit", "-m", "generated"], project)).exitCode).toBe(0);

@@ -27,6 +27,7 @@ import {
   projectStatePath,
   quarantinePaths,
   restoreBackups,
+  serializeProjectState,
   storeBlobs,
   unifiedDiff,
   type ArtifactBackup,
@@ -122,14 +123,17 @@ export async function prepareGlobalPlan(plan: BuiltPlan): Promise<{
   return { statePath, previous };
 }
 
-function projectStateWrite(statePath: string, root: string, plan: BuiltPlan): PlannedWrite {
-  const state = {
+function projectStateWrite(statePath: string, root: string, plan: BuiltPlan, extra: Pick<ProjectState, "excludes" | "claudeMdExcludes"> = {}): PlannedWrite {
+  const artifacts = plan.writes.filter((write) => write.kind !== "state");
+  const state: ProjectState = {
     version: 1,
-    paths: [...new Set(plan.plannedPaths.map((path) => relativeStatePath(root, path)))].sort(),
+    paths: artifacts.map((write) => relativeStatePath(root, write.destination)),
+    hashes: Object.fromEntries(artifacts.map((write) => [relativeStatePath(root, write.destination), hashBytes(write.content)])),
+    ...extra,
   };
   return {
     destination: statePath,
-    content: encoder.encode(stringify(state)),
+    content: encoder.encode(serializeProjectState(state)),
     kind: "state",
     provenance: [plan.configPath],
   };

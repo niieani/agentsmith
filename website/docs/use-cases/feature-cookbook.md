@@ -320,7 +320,7 @@ asmith project lint --warnings-as-errors
 
 **Problem:** someone edited generated `AGENTS.md` directly and then runs generation.
 
-Project generation checks Git status for each planned destination. A modified, staged, conflicted, untracked, or ignored existing output stops the entire plan. There is no project force flag.
+Project generation checks each planned destination. An existing output is replaced when Git reports it tracked and clean, or when agentsmith recorded it and its content still matches what agentsmith wrote, so ignored skills and untracked personal files regenerate freely. Any other modified, staged, conflicted, untracked, or ignored output stops the entire plan. There is no project force flag.
 
 Move the valuable change into its source template or pack, or resolve the generated file intentionally with Git, then regenerate.
 

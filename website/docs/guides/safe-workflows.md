@@ -14,7 +14,7 @@ asmith project generate
 
 ## Project safety
 
-Project outputs must belong to one Git worktree. Existing destinations are replaced only when Git reports them as tracked and clean. Modified, staged, conflicted, untracked, or ignored destinations stop the whole plan.
+Project outputs must belong to one Git worktree. Existing destinations are replaced only when Git reports them as tracked and clean, or when agentsmith recorded them and their content still matches the hash it recorded, which covers ignored skills and untracked personal files. Any other modified, staged, conflicted, untracked, or ignored destination stops the whole plan. A generated skill whose directory already holds files agentsmith did not write, such as a skill the repository commits, is an error: rename the skill.
 
 Missing outputs may be created. After generation, review and commit them so later runs can safely replace them.
 

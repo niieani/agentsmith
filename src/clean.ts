@@ -180,7 +180,7 @@ export async function cleanProject(options: CleanOptions): Promise<void> {
     scope = normalizeScope(options.scope);
     if (!scopes.includes(scope)) throw new AgentsmithError("config", `Scope ${scope} is not declared (scopes: ${scopes.join(", ")})`);
   }
-  // Project state records paths only, so "unchanged" means what this configuration generates, or what Git has committed.
+  // Unchanged means the content agentsmith recorded, what this configuration generates, or what Git has committed.
   const planned = new Map<string, Uint8Array>();
   try {
     const built = await buildProjectPlan(start, options.config ?? MACHINE_CONFIG_PATH);
@@ -206,8 +206,9 @@ export async function cleanProject(options: CleanOptions): Promise<void> {
     const content = (await lstat(absolute)).isFile() ? new Uint8Array(await readFile(absolute)) : undefined;
     const expected = planned.get(absolute);
     const matchesPlan = content !== undefined && expected !== undefined && Buffer.from(content).equals(Buffer.from(expected));
+    const matchesRecorded = content !== undefined && state.hashes?.[path] === hashBytes(content);
     if (status === "tracked-clean") tracked.push(absolute);
-    if (content !== undefined && (matchesPlan || status === "tracked-clean")) plan.unchanged.push(absolute);
+    if (content !== undefined && (matchesRecorded || matchesPlan || status === "tracked-clean")) plan.unchanged.push(absolute);
     else plan.modified.push(absolute);
   }
   const remaining = state.paths.filter((path) => !selected.includes(path));
@@ -223,7 +224,7 @@ export async function cleanProject(options: CleanOptions): Promise<void> {
   const backups = options.onModified === "backup" ? await quarantinePaths(plan.modified, { backupRoot: plan.backupRoot, reason: "modified" }) : [];
   const artifacts = [...plan.unchanged, ...plan.modified];
   await removeAll(artifacts);
-  if (remaining.length > 0) await saveProjectState(statePath, { version: 1, paths: remaining });
+  if (remaining.length > 0) await saveProjectState(statePath, { ...state, paths: remaining });
   else {
     await removeAll(plan.stateFiles);
     await pruneEmptyParents(plan.stateFiles, worktree.gitDir);

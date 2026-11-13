@@ -381,10 +381,12 @@ Project generation requires every destination to belong to the same Git worktree
 
 - Missing destinations are allowed. A tracked file deleted in the worktree but not in the index counts as missing.
 - Existing tracked-clean destinations may be replaced.
-- Modified, staged, conflicted, untracked, or ignored destinations fail the entire plan.
+- A recorded destination whose content still matches its recorded hash may be replaced whatever Git reports (ignored, untracked, modified, or staged), unless it is conflicted. This lets agentsmith regenerate ignored skills and untracked personal files, and generated changes not yet committed.
+- Any other modified, staged, conflicted, untracked, or ignored destination fails the entire plan.
+- A planned skill directory that already holds a file agentsmith did not record, and that the plan does not write with identical bytes, fails the plan with a configuration error naming the directory: it was committed by the repository's authors or written by hand. Rename the generated skill or adopt the directory.
 - There is no force option.
 
-agentsmith records the paths it generated beneath the worktree's actual Git directory. Previously recorded paths absent from the next plan become stale deletions. A stale path is deleted only when Git reports it clean. Unrecorded paths are never deleted.
+agentsmith records the paths it generated, with the SHA-256 of each one's content, beneath the worktree's actual Git directory. Previously recorded paths absent from the next plan become stale deletions. A stale path is deleted only when Git reports it clean or missing, or when its content matches the recorded hash. Unrecorded paths are never deleted. State written by an older agentsmith has no hashes; its paths fall back to Git alone.
 
 ### 8.2 Global safety
 
@@ -427,7 +429,7 @@ Adopted text is written to snippets in `<source>/packs/<pack>/instructions/<harn
 
 `global clean [--config PATH]` and `project clean [--project PATH] [--scope PATH]` accept `-y`/`--yes`, `--force`, and `--on-modified=fail|backup`. Without `--yes` they validate and print every path that would be removed, and write nothing.
 
-- Global candidates are the recorded artifacts in global state that exist. One is unchanged when it is a regular file whose SHA-256 equals the recorded hash. Project candidates are the recorded project paths that exist, limited with `--scope` to paths whose deepest containing declared scope is that scope. One is unchanged when it is a regular file whose bytes equal the current project plan's write for that path, or when Git reports it `tracked-clean`; if the project plan cannot be built, only Git is consulted (with a warning).
+- Global candidates are the recorded artifacts in global state that exist. One is unchanged when it is a regular file whose SHA-256 equals the recorded hash. Project candidates are the recorded project paths that exist, limited with `--scope` to paths whose deepest containing declared scope is that scope. One is unchanged when it is a regular file whose SHA-256 equals the recorded hash, or whose bytes equal the current project plan's write for that path, or when Git reports it `tracked-clean`; if the project plan cannot be built, only Git is consulted (with a warning).
 - Any changed candidate fails the command with `artifact-modified` (exit 5) before anything is removed, in dry runs too, unless `--on-modified=backup` or `--force`. With `backup`, changed global artifacts are backed up as in section 8.2 (an instruction file beside itself, a skill file's whole skill directory under the backup root) and changed project artifacts are moved to `<Git directory>/agentsmith/backups/<UTC timestamp>/<original absolute path>`; then they are removed. With `--force` they are removed without a backup.
 - Then the mode's state is removed: global `state.toml`, `status.json`, and `blobs/`; project state, unless `--scope` leaves other recorded paths, in which case state is rewritten without the removed paths.
 - Each now-empty parent directory of a removed path is removed, up to but excluding the home (global; the sandbox home when set), the worktree root (project artifacts), or the Git directory (project state).

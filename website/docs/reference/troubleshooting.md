@@ -5,7 +5,7 @@ description: Resolve common configuration, Git safety, composition, and collisio
 
 ## Project output is dirty
 
-agentsmith will not overwrite a modified, staged, conflicted, untracked, or ignored destination. Review the file and either commit the intended version or move it out of the generated path. There is no project `--force` option.
+agentsmith will not overwrite a modified, staged, conflicted, untracked, or ignored destination unless it still holds exactly what agentsmith last wrote there. Review the file and either commit the intended version, restore the generated content, or move it out of the generated path. There is no project `--force` option.
 
 For a newly generated output, add and commit it before the next generation.
 

@@ -513,6 +513,7 @@ async function planSkills(context: PlannerContext, scope: ScopeInput, packs: Loa
             harness: writeHarness,
             scope: scope.path,
             provenance: [file.absolutePath, ...Object.values(rendered.trace.slots).flat(), ...rendered.trace.includes],
+            skillDirectory: destinationDir,
           });
           fileExplanations.push({ path: file.relativePath, trace: rendered.trace, bytes: content.byteLength });
         } else {
@@ -525,6 +526,7 @@ async function planSkills(context: PlannerContext, scope: ScopeInput, packs: Loa
             harness: writeHarness,
             scope: scope.path,
             provenance: [file.absolutePath],
+            skillDirectory: destinationDir,
           });
           fileExplanations.push({ path: file.relativePath, supportBytes: file.content.byteLength });
         }

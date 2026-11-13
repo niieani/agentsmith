@@ -148,7 +148,7 @@ asmith project clean --scope apps/web --yes
 ```
 
 - Only artifacts recorded in agentsmith's state are removed. Files agentsmith never wrote are never touched.
-- An artifact changed since agentsmith generated it is refused: nothing is removed and the command exits 5. `--on-modified=backup` backs it up first, the same way `global generate` does, then removes it. `--force` removes it without a backup. A project artifact counts as unchanged when it matches what the current configuration generates, or when Git reports it tracked and clean.
+- An artifact changed since agentsmith generated it is refused: nothing is removed and the command exits 5. `--on-modified=backup` backs it up first, the same way `global generate` does, then removes it. `--force` removes it without a backup. A project artifact counts as unchanged when it matches the content agentsmith recorded when it wrote it, or what the current configuration generates, or when Git reports it tracked and clean.
 - After the artifacts, `global clean` removes `state.toml`, `status.json`, and `blobs/` under `~/.agents/agentsmith/`, and `project clean` removes the project state under the Git directory. With `--scope`, `project clean` removes only the artifacts of that scope (not of deeper scopes) and keeps the state of the others.
 - Directories left empty are removed; directories that hold other files stay.
 - The machine config, the Source Repository clone, backups, logs, and the schedule stay. Remove the schedule with `asmith global schedule uninstall`.

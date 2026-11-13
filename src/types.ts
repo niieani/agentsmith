@@ -122,6 +122,8 @@ export interface PlannedWrite {
   harness?: HarnessName;
   scope?: string;
   provenance: string[];
+  /** Skill files: the skill directory the file belongs to. */
+  skillDirectory?: string;
 }
 
 export interface PlannedDelete {
