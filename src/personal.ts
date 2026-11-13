@@ -38,15 +38,37 @@ async function readText(path: string): Promise<string | undefined> {
   }
 }
 
-/** Remove `remove` lines and append missing `add` lines, keeping every other line as written. */
-export async function updateInfoExclude(path: string, add: readonly string[], remove: readonly string[]): Promise<void> {
+/** The first line of agentsmith's block in `info/exclude`. */
+export const EXCLUDE_BLOCK_START = "# BEGIN agentsmith: personal files, shared by every worktree. agentsmith adds lines here and never removes them.";
+/** The last line of agentsmith's block in `info/exclude`. */
+export const EXCLUDE_BLOCK_END = "# END agentsmith";
+
+/** Lines of `info/exclude` that are not comments or blank. */
+export async function readInfoExclude(path: string): Promise<string[]> {
+  const text = (await readText(path)) ?? "";
+  return text.split(/\r?\n/).filter((line) => line.trim() !== "" && !line.startsWith("#"));
+}
+
+/**
+ * Add missing `add` lines to agentsmith's block in `info/exclude`, creating the block at the end of the file when it does
+ * not exist. A line already present anywhere in the file is not added again, and every other line stays as written.
+ *
+ * Entries are never removed: `info/exclude` is shared by every worktree of the repository, while project state is per
+ * worktree, so removing a line one worktree no longer needs could make another worktree's personal file show up in Git.
+ * Returns the lines added.
+ */
+export async function updateInfoExclude(path: string, add: readonly string[]): Promise<string[]> {
   const before = (await readText(path)) ?? "";
-  const keep = new Set(add);
-  const lines = before === "" ? [] : before.replace(/\n$/, "").split("\n");
-  const kept = lines.filter((line) => !remove.includes(line) || keep.has(line));
-  for (const entry of add) if (!kept.includes(entry)) kept.push(entry);
-  const after = kept.length === 0 ? "" : `${kept.join("\n")}\n`;
-  if (after !== before) await atomicWrite(path, new TextEncoder().encode(after));
+  const lines = before === "" ? [] : before.replace(/\r?\n$/, "").split(/\r?\n/);
+  const present = new Set(lines);
+  const missing = [...new Set(add)].filter((entry) => !present.has(entry));
+  if (missing.length === 0) return [];
+  const start = lines.indexOf(EXCLUDE_BLOCK_START);
+  const end = start === -1 ? -1 : lines.indexOf(EXCLUDE_BLOCK_END, start + 1);
+  if (start !== -1 && end !== -1) lines.splice(end, 0, ...missing);
+  else lines.push(EXCLUDE_BLOCK_START, ...missing, EXCLUDE_BLOCK_END);
+  await atomicWrite(path, new TextEncoder().encode(`${lines.join("\n")}\n`));
+  return missing;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -96,21 +118,21 @@ export async function updateClaudeMdExcludes(path: string, add: readonly string[
 
 /**
  * The `info/exclude` lines a project needs: every personal file, and the Claude local settings file while agentsmith
- * keeps entries there and Git would otherwise show it. `previous` keeps an entry agentsmith already owns, since that
- * entry is what makes Git ignore the file now.
+ * keeps entries there and Git would otherwise show it. An entry `info/exclude` already has is kept, since that entry is
+ * what makes Git ignore the file now.
  */
 export async function desiredExcludes(
   worktreeRoot: string,
   projectRoot: string,
   personalPaths: readonly string[],
   claudeMdExcludes: readonly string[],
-  previous: readonly string[],
+  present: readonly string[],
 ): Promise<string[]> {
   const entries = personalPaths.map((path) => excludeEntry(worktreeRoot, path));
   if (claudeMdExcludes.length > 0) {
     const settings = claudeLocalSettingsPath(projectRoot);
     const entry = excludeEntry(worktreeRoot, settings);
-    if (previous.includes(entry) || !(await gitIsIgnored(worktreeRoot, settings))) entries.push(entry);
+    if (present.includes(entry) || !(await gitIsIgnored(worktreeRoot, settings))) entries.push(entry);
   }
   return [...new Set(entries)];
 }

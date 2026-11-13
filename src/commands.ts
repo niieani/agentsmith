@@ -41,6 +41,7 @@ import {
   desiredExcludes,
   excludeEntry,
   infoExcludePath,
+  readInfoExclude,
   readClaudeSettings,
   updateClaudeMdExcludes,
   updateInfoExclude,
@@ -221,13 +222,16 @@ export interface ProjectGenerateOptions {
   onModified?: "fail" | "backup";
 }
 
-/** The `info/exclude` and `claudeMdExcludes` entries a project plan owns, and the ones its previous run owned. */
+/**
+ * The `info/exclude` and `claudeMdExcludes` entries a project plan needs, the `claudeMdExcludes` entries its previous run
+ * owned, and the lines `info/exclude` already has. `info/exclude` lines are only ever added.
+ */
 export interface ProjectEntries {
   excludePath: string;
   settingsPath: string;
   excludes: string[];
   claudeMdExcludes: string[];
-  previousExcludes: string[];
+  presentExcludes: string[];
   previousClaudeMdExcludes: string[];
 }
 
@@ -255,18 +259,19 @@ async function refuseCommittedUpstreamWrites(plan: BuiltPlan, root: string): Pro
 
 export async function projectEntries(plan: BuiltPlan, worktreeRoot: string, previous: ProjectState): Promise<ProjectEntries> {
   const settingsPath = claudeLocalSettingsPath(plan.projectRoot!);
-  const previousExcludes = previous.excludes ?? [];
   const previousClaudeMdExcludes = previous.claudeMdExcludes ?? [];
   const personal = plan.writes.filter((write) => write.layer === "personal").map((write) => write.destination);
+  const excludePath = await infoExcludePath(worktreeRoot);
+  const presentExcludes = await readInfoExclude(excludePath);
   const entries: ProjectEntries = {
-    excludePath: await infoExcludePath(worktreeRoot),
+    excludePath,
     settingsPath,
     excludes: [
-      ...(await desiredExcludes(worktreeRoot, plan.projectRoot!, personal, plan.claudeMdExcludes, previousExcludes)),
+      ...(await desiredExcludes(worktreeRoot, plan.projectRoot!, personal, plan.claudeMdExcludes, presentExcludes)),
       ...(await untrackedDirectories(worktreeRoot, plan.personalExcludes)).map((path) => excludeEntry(worktreeRoot, path, true)),
     ],
     claudeMdExcludes: plan.claudeMdExcludes,
-    previousExcludes,
+    presentExcludes,
     previousClaudeMdExcludes,
   };
   // Validate the settings file before anything is written.
@@ -319,7 +324,7 @@ export async function generateProject(plan: BuiltPlan, options: ProjectGenerateO
     throw cause;
   }
   await updateClaudeMdExcludes(entries.settingsPath, entries.claudeMdExcludes, staleClaude);
-  await updateInfoExclude(entries.excludePath, entries.excludes, entries.previousExcludes);
+  await updateInfoExclude(entries.excludePath, entries.excludes);
   for (const backup of quarantined) console.error(`WARNING unmanaged-skill-backup: moved unmanaged skill ${backup.path} to ${backup.backup}`);
   await pruneEmptySkillDirectories(plan.deletes);
   console.log(`Generated ${plan.writes.length} file(s); removed ${plan.deletes.length} stale file(s).`);
@@ -482,7 +487,7 @@ async function diffPlan(plan: BuiltPlan): Promise<void> {
     ];
     output += [
       ...changes(`claudeMdExcludes in ${entries.settingsPath}`, entries.claudeMdExcludes, entries.previousClaudeMdExcludes),
-      ...changes(entries.excludePath, entries.excludes, entries.previousExcludes),
+      ...entries.excludes.filter((entry) => !entries.presentExcludes.includes(entry)).map((entry) => `+ ${entries.excludePath}: ${entry}\n`),
     ].join("");
   }
   process.stdout.write(output || "No changes.\n");

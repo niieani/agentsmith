@@ -76,7 +76,17 @@ When your personal inputs add something, `project generate` also writes:
 - `AGENTS.override.md`: the shared layer plus your inputs. Codex reads it instead of `AGENTS.md`.
 - `CLAUDE.local.md`: the same for Claude Code, plus an entry for `CLAUDE.md` in `claudeMdExcludes` in `.claude/settings.local.json`, so Claude reads only `CLAUDE.local.md`. agentsmith adds and removes only its own entries and keeps your other settings.
 
-Both files, and `.claude/settings.local.json` when Git does not already ignore it, are listed in `.git/info/exclude`, so the repository never mentions them. When your personal inputs stop changing anything, the files, their exclude lines, and the settings entry go away on the next generation. Generic tools read only `AGENTS.md`.
+Both files, and `.claude/settings.local.json` when Git does not already ignore it, are listed in `.git/info/exclude`, so the repository never mentions them. agentsmith keeps its lines there in one marked block:
+
+```text
+# BEGIN agentsmith: personal files, shared by every worktree. agentsmith adds lines here and never removes them.
+/AGENTS.override.md
+/CLAUDE.local.md
+/.claude/settings.local.json
+# END agentsmith
+```
+
+When your personal inputs stop changing anything, the files and the settings entry go away on the next generation. The exclude lines stay, even after `project clean`: every worktree of a repository shares `.git/info/exclude`, so removing a line could make another worktree's personal file show up in `git status`. A line for a file that does not exist does nothing; delete the block by hand if you no longer want it. Generic tools read only `AGENTS.md`.
 
 To add a personal note to one repository, write a `*.local.md` snippet in a project pack; `.gitignore` keeps it out of Git:
 

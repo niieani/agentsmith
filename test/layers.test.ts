@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { commitAll, projectFixture, put, skillMd, tree, type ProjectFixture } from "./support/project.ts";
+import { cli, commitAll, projectFixture, put, run, skillMd, tree, type ProjectFixture } from "./support/project.ts";
+import { EXCLUDE_BLOCK_END, EXCLUDE_BLOCK_START } from "../src/personal.ts";
 
 /**
  * A project with shared inputs (project template and pack, a project skill) and personal ones (a Source Repository pack
@@ -82,7 +83,7 @@ describe("shared and personal project layers", () => {
     }
     // Git sees only the shared layer; personal files are excluded through .git/info/exclude.
     const exclude = await readFile(join(f.project, ".git", "info", "exclude"), "utf8");
-    expect(exclude).toContain("\n/AGENTS.override.md\n/CLAUDE.local.md\n/.claude/settings.local.json\n");
+    expect(exclude).toContain(`\n${EXCLUDE_BLOCK_START}\n/AGENTS.override.md\n/CLAUDE.local.md\n/.claude/settings.local.json\n${EXCLUDE_BLOCK_END}\n`);
     expect((await f.git("status", "--porcelain")).split("\n").filter(Boolean).sort()).toEqual([
       "?? AGENTS.md",
       "?? CLAUDE.md",
@@ -100,7 +101,8 @@ describe("shared and personal project layers", () => {
     expect(await readFile(join(f.project, "AGENTS.override.md"), "utf8")).toBe("# Guide\n\nTeam note.\n\nLocal note.\n\nPersonal note.\n");
     expect(await f.git("status", "--porcelain")).toBe("");
 
-    // Without personal inputs, the personal files, their exclude lines, and the claudeMdExcludes entry go away.
+    // Without personal inputs, the personal files and the claudeMdExcludes entry go away. The exclude lines stay: every
+    // worktree of the repository shares .git/info/exclude.
     await rm(join(f.config, "packs", "team", "instructions", "notes", "20-me.local.md"));
     await put(join(f.config, "config.toml"), (await readFile(join(f.config, "config.toml"), "utf8")).replace('packs = ["team", "mine"]', 'packs = ["team"]'));
     await commitAll(f, "drop personal pack");
@@ -110,11 +112,8 @@ describe("shared and personal project layers", () => {
     expect(existsSync(join(f.project, "CLAUDE.local.md"))).toBeFalse();
     expect(existsSync(join(f.project, ".claude", "skills", "personal-skill"))).toBeFalse();
     expect(await settings(f)).toEqual({ permissions: { allow: ["Bash(ls)"] }, claudeMdExcludes: ["/elsewhere/CLAUDE.md"] });
-    const after = await readFile(join(f.project, ".git", "info", "exclude"), "utf8");
-    expect(after).not.toContain("AGENTS.override.md");
-    expect(after).not.toContain("settings.local.json");
-    // The user's own settings file is back to how Git saw it before agentsmith.
-    expect(await f.git("status", "--porcelain")).toBe("?? .claude/\n");
+    expect(await readFile(join(f.project, ".git", "info", "exclude"), "utf8")).toBe(exclude);
+    expect(await f.git("status", "--porcelain")).toBe("");
   });
 
   test("personal Claude content without a personal AGENTS layer gets its own flat CLAUDE.local.md, and nested scopes work the same way", async () => {
@@ -175,7 +174,7 @@ describe("shared and personal project layers", () => {
     expect(existsSync(join(f.project, "AGENTS.md"))).toBeFalse();
   });
 
-  test("clean removes personal files, their exclude lines, and claudeMdExcludes entries; a settings file left empty goes too", async () => {
+  test("clean removes personal files and claudeMdExcludes entries, keeps exclude lines, and removes a settings file left empty", async () => {
     const f = await layeredFixture();
     await rm(join(f.project, ".claude", "settings.local.json"));
     expect((await f.asmith("project", "generate")).exitCode).toBe(0);
@@ -185,14 +184,35 @@ describe("shared and personal project layers", () => {
     expect(dry.exitCode, dry.stderr).toBe(0);
     expect(dry.stdout).toContain(join(f.project, "AGENTS.override.md"));
     expect(dry.stdout).toContain(`claudeMdExcludes entry ${join(f.project, "CLAUDE.md")}`);
-    expect(dry.stdout).toContain("/CLAUDE.local.md in ");
+    expect(dry.stdout).toContain("keeps its agentsmith lines; every worktree shares that file");
+    const before = await readFile(join(f.project, ".git", "info", "exclude"), "utf8");
 
     const cleaned = await f.asmith("project", "clean", "--yes");
     expect(cleaned.exitCode, cleaned.stderr).toBe(0);
     for (const path of ["AGENTS.md", "CLAUDE.md", "AGENTS.override.md", "CLAUDE.local.md", ".claude"]) expect(existsSync(join(f.project, path))).toBeFalse();
-    const exclude = await readFile(join(f.project, ".git", "info", "exclude"), "utf8");
-    for (const entry of ["/AGENTS.override.md", "/CLAUDE.local.md", "/.claude/settings.local.json"]) expect(exclude).not.toContain(entry);
+    expect(await readFile(join(f.project, ".git", "info", "exclude"), "utf8")).toBe(before);
     expect(await f.git("status", "--porcelain")).toBe("");
+  });
+
+  test("worktrees share .git/info/exclude, so cleaning one never un-ignores another's personal files", async () => {
+    const f = await layeredFixture();
+    expect((await f.asmith("project", "generate")).exitCode).toBe(0);
+    await commitAll(f, "shared layer");
+    const other = join(f.root, "other");
+    await f.git("worktree", "add", "-q", other);
+    await put(join(other, ".claude", "settings.local.json"), "{}\n");
+    const generated = await run(["bun", cli, "project", "generate"], other, f.env);
+    expect(generated.exitCode, generated.stderr).toBe(0);
+    expect(existsSync(join(other, "AGENTS.override.md"))).toBeTrue();
+
+    const cleaned = await f.asmith("project", "clean", "--yes");
+    expect(cleaned.exitCode, cleaned.stderr).toBe(0);
+    expect(existsSync(join(f.project, "AGENTS.override.md"))).toBeFalse();
+    // The other worktree's personal files stay ignored, and the block lists each entry once.
+    expect((await run(["git", "status", "--porcelain"], other, f.env)).stdout).toBe("");
+    const exclude = await readFile(join(f.project, ".git", "info", "exclude"), "utf8");
+    expect(exclude.split("\n").filter((line) => line === "/AGENTS.override.md")).toHaveLength(1);
+    expect(exclude.split("\n").filter((line) => line === EXCLUDE_BLOCK_START)).toHaveLength(1);
   });
 
   test("clean --scope keeps the other scopes' entries", async () => {
@@ -212,7 +232,7 @@ describe("shared and personal project layers", () => {
     expect(existsSync(join(f.project, "AGENTS.override.md"))).toBeTrue();
     expect((await settings(f)).claudeMdExcludes).toEqual(["/elsewhere/CLAUDE.md", join(f.project, "CLAUDE.md")]);
     const exclude = await readFile(join(f.project, ".git", "info", "exclude"), "utf8");
-    expect(exclude).not.toContain("/app/AGENTS.override.md");
+    expect(exclude).toContain("/app/AGENTS.override.md\n");
     expect(exclude).toContain("/AGENTS.override.md\n");
     expect(exclude).toContain("/.claude/settings.local.json\n");
     await mkdir(join(f.project, "app"), { recursive: true });
@@ -266,7 +286,8 @@ describe("shared and personal project layers", () => {
     expect(existsSync(join(f.project, ".agents", "skills", "personal-skill"))).toBeFalse();
     expect(existsSync(join(f.project, ".agents", "skills", "tracker"))).toBeFalse();
     expect(await readFile(join(f.project, ".agents", "skills", "notes", "SKILL.md"), "utf8")).toBe(skillMd("notes"));
-    expect(await f.git("status", "--porcelain")).toBe("?? .claude/\n");
+    // The settings file stays ignored: the exclude line the first generation added is never removed.
+    expect(await f.git("status", "--porcelain")).toBe("");
 
     // Notices never fail a lint, even with --warnings-as-errors; the skipped-skill warning does.
     const lint = await f.asmith("project", "lint", "--warnings-as-errors");

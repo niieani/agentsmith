@@ -290,7 +290,15 @@ When both `<scope>/CLAUDE.md` and `<scope>/CLAUDE.local.md` are written, the abs
 
 agentsmith owns only the entries it recorded in project state. Every other key of `settings.local.json`, and every other `claudeMdExcludes` entry, is preserved; an emptied `claudeMdExcludes` loses its key, and a file left as `{}` is removed. Invalid JSON, a non-object, or a non-string-list `claudeMdExcludes` is a configuration error before anything is written. A `settings.local.json` tracked by Git is a configuration error when entries are needed, since they hold this machine's paths.
 
-Personal files are excluded from Git through the repository's `info/exclude` (`git rev-parse --git-path info/exclude`) as anchored lines (`/AGENTS.override.md`, `/app/CLAUDE.local.md`), so the repository never mentions a personal layer. `/.claude/settings.local.json` is added too while agentsmith keeps `claudeMdExcludes` entries and Git does not already ignore the file. Lines are recorded in project state and removed when no longer needed; other lines are kept. `info/exclude` is shared by every worktree of a repository.
+Personal files are excluded from Git through the repository's `info/exclude` (`git rev-parse --git-path info/exclude`) as anchored lines (`/AGENTS.override.md`, `/app/CLAUDE.local.md`), so the repository never mentions a personal layer. `/.claude/settings.local.json` is added too while agentsmith keeps `claudeMdExcludes` entries and Git does not already ignore the file. `info/exclude` is shared by every worktree of a repository while project state is per worktree, so agentsmith only ever adds lines, never removes them (not in `project generate` and not in `project clean`): removing a line one worktree no longer needs could un-ignore another worktree's file. Added lines go into one block, created at the end of the file when missing:
+
+```text
+# BEGIN agentsmith: personal files, shared by every worktree. agentsmith adds lines here and never removes them.
+/AGENTS.override.md
+# END agentsmith
+```
+
+A line already present anywhere in the file is not added again, and every other line is kept. Project state records the lines the worktree needs.
 
 Skills are not layered: shared and personal skills render once, with every input, into the same Skill Roots, which are meant to be ignored (`project init`, section 11.1).
 
@@ -492,7 +500,7 @@ Adopted text is written to snippets in `<source>/packs/<pack>/instructions/<harn
 
 - Global candidates are the recorded artifacts in global state that exist. One is unchanged when it is a regular file whose SHA-256 equals the recorded hash. Project candidates are the recorded project paths that exist, limited with `--scope` to paths whose deepest containing declared scope is that scope. One is unchanged when it is a regular file whose SHA-256 equals the recorded hash, or whose bytes equal the current project plan's write for that path, or when Git reports it `tracked-clean`; if the project plan cannot be built, only Git is consulted (with a warning).
 - Any changed candidate fails the command with `artifact-modified` (exit 5) before anything is removed, in dry runs too, unless `--on-modified=backup` or `--force`. With `backup`, changed global artifacts are backed up as in section 8.2 (an instruction file beside itself, a skill file's whole skill directory under the backup root) and changed project artifacts are moved to `<Git directory>/agentsmith/backups/<UTC timestamp>/<original absolute path>`; then they are removed. With `--force` they are removed without a backup.
-- Project clean also removes the `claudeMdExcludes` entries (before the files) and `info/exclude` lines (after them) recorded for the removed paths, and the `/.claude/settings.local.json` line once no `claudeMdExcludes` entry remains.
+- Project clean also removes the `claudeMdExcludes` entries recorded for the removed paths, before the files. It keeps every `info/exclude` line (section 5.5) and says so.
 - Then the mode's state is removed: global `state.toml`, `status.json`, and `blobs/`; project state, unless `--scope` leaves other recorded paths, in which case state is rewritten without the removed paths.
 - Each now-empty parent directory of a removed path is removed, up to but excluding the home (global; the sandbox home when set), the worktree root (project artifacts), or the Git directory (project state).
 - The machine configuration, Source Repository, backups, logs, and the installed schedule are not touched. Removed tracked project files remain Git worktree deletions.

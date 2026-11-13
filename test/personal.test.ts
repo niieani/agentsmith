@@ -3,19 +3,32 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { excludeEntry, readClaudeSettings, updateClaudeMdExcludes, updateInfoExclude } from "../src/personal.ts";
+import {
+  EXCLUDE_BLOCK_END,
+  EXCLUDE_BLOCK_START,
+  excludeEntry,
+  readClaudeSettings,
+  readInfoExclude,
+  updateClaudeMdExcludes,
+  updateInfoExclude,
+} from "../src/personal.ts";
 
 describe("info/exclude entries", () => {
-  test("adds missing lines and removes only owned ones, keeping everything else", async () => {
+  test("adds missing lines to its own block, never twice, and never removes any line", async () => {
     const root = await mkdtemp(join(tmpdir(), "agentsmith-exclude-"));
     const path = join(root, "info", "exclude");
-    await updateInfoExclude(path, ["/AGENTS.override.md"], []);
-    expect(await readFile(path, "utf8")).toBe("/AGENTS.override.md\n");
-    await writeFile(path, "# git ls-files --others --exclude-from=.git/info/exclude\n*.swp\n/AGENTS.override.md\n");
-    await updateInfoExclude(path, ["/AGENTS.override.md", "/CLAUDE.local.md"], []);
-    expect(await readFile(path, "utf8")).toBe("# git ls-files --others --exclude-from=.git/info/exclude\n*.swp\n/AGENTS.override.md\n/CLAUDE.local.md\n");
-    await updateInfoExclude(path, ["/CLAUDE.local.md"], ["/AGENTS.override.md", "/CLAUDE.local.md", "*.swp-not-owned"]);
-    expect(await readFile(path, "utf8")).toBe("# git ls-files --others --exclude-from=.git/info/exclude\n*.swp\n/CLAUDE.local.md\n");
+    const block = (...lines: string[]) => [EXCLUDE_BLOCK_START, ...lines, EXCLUDE_BLOCK_END].join("\n");
+    expect(await updateInfoExclude(path, ["/AGENTS.override.md", "/AGENTS.override.md"])).toEqual(["/AGENTS.override.md"]);
+    expect(await readFile(path, "utf8")).toBe(`${block("/AGENTS.override.md")}\n`);
+    // A line already present anywhere in the file is not added again; new lines go inside the existing block.
+    const header = "# git ls-files --others --exclude-from=.git/info/exclude\n*.swp\n/CLAUDE.local.md\n";
+    await writeFile(path, `${header}${block("/AGENTS.override.md")}\n# mine\n*.log\n`);
+    expect(await updateInfoExclude(path, ["/AGENTS.override.md", "/CLAUDE.local.md", "/app/AGENTS.override.md"])).toEqual(["/app/AGENTS.override.md"]);
+    expect(await readFile(path, "utf8")).toBe(`${header}${block("/AGENTS.override.md", "/app/AGENTS.override.md")}\n# mine\n*.log\n`);
+    // Nothing to add leaves the file untouched; dropping an entry from the desired list removes nothing.
+    expect(await updateInfoExclude(path, ["/app/AGENTS.override.md"])).toEqual([]);
+    expect(await readFile(path, "utf8")).toContain("/AGENTS.override.md\n/app/AGENTS.override.md\n");
+    expect(await readInfoExclude(path)).toEqual(["*.swp", "/CLAUDE.local.md", "/AGENTS.override.md", "/app/AGENTS.override.md", "*.log"]);
   });
 
   test("anchors entries at the worktree root", () => {

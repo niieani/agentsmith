@@ -85,13 +85,14 @@ describe("third-party repositories", () => {
     expect(existsSync(join(f.project, ".claude", "settings.local.json"))).toBeFalse();
     expect(await readFile(join(f.project, "AGENTS.override.md"), "utf8")).toStartWith("# Upstream");
 
-    // Clean removes everything agentsmith added and leaves the repository as it was.
+    // Clean removes the files agentsmith added; the shared exclude lines stay.
     const cleaned = await f.asmith("project", "clean", "--yes");
     expect(cleaned.exitCode, cleaned.stderr).toBe(0);
     expect(existsSync(join(f.project, "AGENTS.override.md"))).toBeFalse();
     expect(existsSync(join(f.project, ".claude", "skills", "my-skill"))).toBeFalse();
     expect(existsSync(join(f.project, ".claude", "skills", "upstream-skill", "SKILL.md"))).toBeTrue();
-    expect(await readFile(join(f.project, ".git", "info", "exclude"), "utf8")).not.toContain("my-skill");
+    expect(await readFile(join(f.project, ".git", "info", "exclude"), "utf8")).toContain("/.claude/skills/my-skill/\n");
+    expect(await f.git("status", "--porcelain")).toBe("");
   });
 
   test("keep imports an upstream AGENTS.md that Claude would otherwise stop reading", async () => {

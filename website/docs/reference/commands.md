@@ -153,7 +153,7 @@ asmith project clean --scope apps/web --yes
 - Directories left empty are removed; directories that hold other files stay.
 - The machine config, the Source Repository clone, backups, logs, and the schedule stay. Remove the schedule with `asmith global schedule uninstall`.
 
-`project clean` also removes the `claudeMdExcludes` entries and `.git/info/exclude` lines agentsmith added for the personal files it removes, and deletes `.claude/settings.local.json` if nothing else is left in it.
+`project clean` also removes the `claudeMdExcludes` entries agentsmith added for the personal files it removes, and deletes `.claude/settings.local.json` if nothing else is left in it. It keeps the lines agentsmith added to `.git/info/exclude`: every worktree of the repository shares that file, so a line one worktree no longer needs may still hide another worktree's personal file. A line for a file that no longer exists does nothing.
 
 In a project, removed files that Git tracks show up as deletions for you to commit. A later `project generate` recreates them; Git treats a tracked file deleted only in the worktree as missing, so this works before or after you commit the deletion.
 
