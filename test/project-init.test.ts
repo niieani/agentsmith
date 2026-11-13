@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, readFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { addDevDependency, detectHarnesses, detectPackageManager, ignoreEntries, runAsmith } from "../src/project-init.ts";
 import { cli, commitAll, projectFixture, put, run, skillMd, type ProjectFixture } from "./support/project.ts";
@@ -148,5 +148,134 @@ describe("project init helpers", () => {
     await mkdir(join(f.project, ".codex"));
     await mkdir(join(f.project, ".agents"));
     expect(detectHarnesses(f.project)).toEqual(["generic", "codex"]);
+  });
+});
+
+/** A Source Repository with a template family `team` that includes partials, one of them through another. */
+async function sourceTemplateFixture(): Promise<ProjectFixture> {
+  const f = await projectFixture("agentsmith-init-template-");
+  await put(join(f.source, "agentsmith.toml"), "");
+  await put(
+    join(f.source, "templates", "team", "default.md"),
+    "# Team\n\n<!-- agentsmith:include source:team/rules.md -->\n\n```md\n<!-- agentsmith:include source:not/copied.md -->\n```\n\n<!-- agentsmith:slot notes -->\n",
+  );
+  await put(join(f.source, "templates", "team", "claude.md"), "# Team\n\n<!-- agentsmith:include team/rules.md -->\n\nClaude only.\n");
+  await put(join(f.source, "templates", "other", "default.md"), "# Other\n");
+  await put(join(f.source, "partials", "team", "rules.md"), "# Rules\n\nBe kind.\n\n<!-- agentsmith:include team/more.md -->\n");
+  await put(join(f.source, "partials", "team", "more.md"), "More.\n");
+  await put(join(f.source, "partials", "unused.md"), "Unused.\n");
+  await put(f.machine, `source = ${JSON.stringify(f.source)}\nprofile = "unused"\n`);
+  await commitAll(f, "empty");
+  return f;
+}
+
+describe("project init --template", () => {
+  test("copies every variant of a Source Repository template and the partials it includes, and the shared layer renders the copy", async () => {
+    const f = await sourceTemplateFixture();
+    const first = await f.asmith("project", "init", "--template", "team");
+    expect(first.exitCode, first.stderr).toBe(0);
+    expect(first.stdout).toContain(
+      [
+        "Copied from the Source Repository:",
+        "  .config/agentsmith/templates/team/claude.md",
+        "  .config/agentsmith/templates/team/default.md",
+        "  .config/agentsmith/partials/team/rules.md",
+        "  .config/agentsmith/partials/team/more.md",
+      ].join("\n"),
+    );
+    expect(await readFile(join(f.config, "config.toml"), "utf8")).toContain('path = "."\ntemplate = "project:team"\npacks = []\n');
+    // source: includes now name the project copy; includes inside code fences are text and stay as written.
+    expect(await readFile(join(f.config, "templates", "team", "default.md"), "utf8")).toBe(
+      "# Team\n\n<!-- agentsmith:include project:team/rules.md -->\n\n```md\n<!-- agentsmith:include source:not/copied.md -->\n```\n\n<!-- agentsmith:slot notes -->\n",
+    );
+    expect(await readFile(join(f.config, "templates", "team", "claude.md"), "utf8")).toBe(
+      await readFile(join(f.source, "templates", "team", "claude.md"), "utf8"),
+    );
+    expect(existsSync(join(f.config, "partials", "unused.md"))).toBeFalse();
+    expect(existsSync(join(f.config, "templates", "other"))).toBeFalse();
+
+    // Rerunning changes nothing.
+    const again = await f.asmith("project", "init", "--template", "team");
+    expect(again.exitCode, again.stderr).toBe(0);
+    expect(again.stdout).toContain("The project already has project:team; nothing copied.");
+
+    // A fresh clone without a machine config renders the committed shared layer from the copy.
+    await rm(f.machine);
+    const generated = await f.asmith("project", "generate");
+    expect(generated.exitCode, generated.stderr).toBe(0);
+    expect(generated.stderr).not.toContain("personal-input-skipped");
+    expect(await readFile(join(f.project, "AGENTS.md"), "utf8")).toBe(
+      "# Team\n\n## Rules\n\nBe kind.\n\nMore.\n\n```md\n<!-- agentsmith:include source:not/copied.md -->\n```\n",
+    );
+    expect(await readFile(join(f.project, "CLAUDE.md"), "utf8")).toBe("# Team\n\n## Rules\n\nBe kind.\n\nMore.\n\nClaude only.\n");
+  });
+
+  test("never overwrites a project file that differs, and writes nothing then", async () => {
+    const f = await sourceTemplateFixture();
+    await put(join(f.config, "templates", "team", "codex.md"), "Unrelated, kept.\n");
+    await put(join(f.config, "templates", "team", "default.md"), "My own.\n");
+    const refused = await f.asmith("project", "init", "--template", "team");
+    expect(refused.exitCode).toBe(2);
+    expect(refused.stderr).toContain("never overwrites project files");
+    expect(refused.stderr).toContain("  .config/agentsmith/templates/team/default.md");
+    expect(existsSync(join(f.config, "config.toml"))).toBeFalse();
+    expect(existsSync(join(f.config, "templates", "team", "claude.md"))).toBeFalse();
+    expect(existsSync(join(f.config, "partials"))).toBeFalse();
+    expect(existsSync(join(f.project, ".gitignore"))).toBeFalse();
+  });
+
+  test("an unqualified include the project already provides is not copied", async () => {
+    const f = await sourceTemplateFixture();
+    await put(join(f.config, "partials", "team", "rules.md"), "# Rules\n\nProject rules.\n");
+    // The source: include in default.md still needs the Source Repository's rules.md, which differs.
+    const refused = await f.asmith("project", "init", "--template", "team");
+    expect(refused.exitCode).toBe(2);
+    await put(join(f.source, "templates", "team", "default.md"), "# Team\n\n<!-- agentsmith:include team/rules.md -->\n");
+    const result = await f.asmith("project", "init", "--template", "team");
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(await readFile(join(f.config, "partials", "team", "rules.md"), "utf8")).toBe("# Rules\n\nProject rules.\n");
+    expect(existsSync(join(f.config, "partials", "team", "more.md"))).toBeFalse();
+  });
+
+  test("points an existing config's root scope at the copy, or keeps a template it already names", async () => {
+    const f = await sourceTemplateFixture();
+    expect((await f.asmith("project", "init")).exitCode).toBe(0);
+    const added = await f.asmith("project", "init", "--template", "source:team");
+    expect(added.exitCode, added.stderr).toBe(0);
+    expect(added.stdout).toContain('Set template = "project:team" for scope "."');
+    const config = await readFile(join(f.config, "config.toml"), "utf8");
+    expect(config).toContain('path = "."\ntemplate = "project:team"\npacks = []\n');
+    expect(config).not.toContain("# template =");
+
+    const other = await f.asmith("project", "init", "--template", "other");
+    expect(other.exitCode, other.stderr).toBe(0);
+    expect(other.stderr).toBe("");
+    expect(other.stdout).toContain(
+      '.config/agentsmith/config.toml was left unchanged, since scope "." already has a template. To use the copy, set template = "project:other" in the [[scopes]] entry that needs it.',
+    );
+    expect(await readFile(join(f.config, "config.toml"), "utf8")).toBe(config);
+    expect(existsSync(join(f.config, "templates", "other", "default.md"))).toBeTrue();
+  });
+
+  test("hints at --template when a Source Repository has templates, and rejects what it cannot copy", async () => {
+    const f = await sourceTemplateFixture();
+    const hinted = await f.asmith("project", "init");
+    expect(hinted.exitCode, hinted.stderr).toBe(0);
+    expect(hinted.stdout).toContain("asmith project init --template <name>   (available: other, team)");
+
+    for (const [args, message] of [
+      [["--template", "project:team"], "already names a project template"],
+      [["--template", "missing"], 'missing template source "source:missing"'],
+    ] as const) {
+      const result = await f.asmith("project", "init", ...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain(message);
+    }
+    await rm(f.machine);
+    const noMachine = await f.asmith("project", "init", "--template", "team");
+    expect(noMachine.exitCode).toBe(2);
+    expect(noMachine.stderr).toContain("--template copies from your Source Repository, but there is no machine config");
+    const quiet = await f.asmith("project", "init");
+    expect(quiet.stdout).not.toContain("--template");
   });
 });

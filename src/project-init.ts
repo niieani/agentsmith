@@ -1,11 +1,22 @@
-import { existsSync, lstatSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join, relative, resolve, sep } from "node:path";
-import { loadProjectConfig, PROJECT_CONFIG_RELATIVE_PATH, projectConfigPath } from "./config.ts";
+import { dirname, join, relative, resolve, sep } from "node:path";
+import {
+  loadMachineConfig,
+  loadProjectConfig,
+  MACHINE_CONFIG_PATH,
+  PROJECT_CONFIG_RELATIVE_PATH,
+  PROJECT_SOURCE_RELATIVE_PATH,
+  parseSourceId,
+  projectConfigPath,
+  resolveConfiguredPath,
+} from "./config.ts";
 import { AgentsmithError, classify, errorMessage } from "./errors.ts";
 import { CommandError, gitHasTracked, gitWorktree, runCommand } from "./git.ts";
 import { getHarnessAdapter } from "./harness.ts";
+import { mapIncludes } from "./markdown.ts";
 import { atomicWrite } from "./safety.ts";
+import { loadTemplate, resolvePartial, type SourceContext } from "./source.ts";
 import { HARNESS_NAMES, type HarnessName } from "./types.ts";
 
 export type PackageManager = "bun" | "pnpm" | "yarn" | "npm";
@@ -13,6 +24,8 @@ export type PackageManager = "bun" | "pnpm" | "yarn" | "npm";
 export interface ProjectInitOptions {
   project?: string;
   prepare?: boolean;
+  /** A template family to copy from the Source Repository into the project. */
+  template?: string;
 }
 
 /** The command agentsmith adds to `scripts.prepare`; the project's installed, pinned `asmith` runs it. */
@@ -27,18 +40,154 @@ export function detectHarnesses(root: string): HarnessName[] {
   return found.length > 0 ? found : [...HARNESS_NAMES];
 }
 
-export function projectConfigContent(harnesses: readonly HarnessName[]): string {
+const TEMPLATE_COMMENT = ["# A template family in .config/agentsmith/templates/<name>/ writes the shared AGENTS.md and CLAUDE.md.", '# template = "project"'];
+
+/** The starter configuration; `template` is a project-owned Source ID for the root scope. */
+export function projectConfigContent(harnesses: readonly HarnessName[], template?: string): string {
   return [
     "# agentsmith project configuration: https://niieani.github.io/agentsmith/reference/configuration#project-config",
     `harnesses = [${harnesses.map((harness) => JSON.stringify(harness)).join(", ")}]`,
     "",
     "[[scopes]]",
     'path = "."',
-    "# A template family in .config/agentsmith/templates/<name>/ writes the shared AGENTS.md and CLAUDE.md.",
-    '# template = "project"',
+    ...(template === undefined ? TEMPLATE_COMMENT : [`template = ${JSON.stringify(template)}`]),
     "packs = []",
     "",
   ].join("\n");
+}
+
+/** A file `project init --template` copies into the project. */
+export interface VendoredFile {
+  /** The file in the Source Repository. */
+  from: string;
+  /** Its destination under the project's `.config/agentsmith/`. */
+  to: string;
+  content: string;
+}
+
+export interface VendoredTemplate {
+  /** The project-owned Source ID of the copy, `project:<name>`. */
+  sourceId: string;
+  files: VendoredFile[];
+}
+
+/** Turn a Source Repository reference into its project-owned twin; the copy then never depends on the Source Repository. */
+function projectOwned(sourceId: string): string {
+  const id = parseSourceId(sourceId);
+  return id.owner === "source" ? `project:${id.name}` : sourceId;
+}
+
+/**
+ * Plan copying a template family from the Source Repository into the project: every file of
+ * `templates/<name>/` (each harness variant and `default.md`), and every partial they include, transitively, that the
+ * project does not provide itself. Includes of `source:<name>` are rewritten to `project:<name>`, so the shared layer
+ * renders the copy. Writes nothing.
+ */
+export async function planTemplateCopy(sourceRoot: string, projectRoot: string, template: string): Promise<VendoredTemplate> {
+  const id = parseSourceId(template);
+  if (id.owner === "project") {
+    throw new AgentsmithError("config", `--template ${template} already names a project template; give the Source Repository template's name`);
+  }
+  const context: SourceContext = { sourceRoot, projectRoot };
+  const source = await classify("config", () => loadTemplate({ sourceRoot }, `source:${id.name}`, [...HARNESS_NAMES]));
+  const templateDirectory = dirname(source.path);
+  const projectSource = join(projectRoot, PROJECT_SOURCE_RELATIVE_PATH);
+  const files: VendoredFile[] = [];
+  const pending: string[] = [];
+  const copy = async (from: string, to: string) => {
+    if (files.some((file) => file.to === to)) return;
+    const content = mapIncludes(await readFile(from, "utf8"), (include) => {
+      pending.push(include);
+      return projectOwned(include);
+    });
+    files.push({ from, to, content });
+  };
+  for (const entry of readdirSync(templateDirectory, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
+    if (entry.isSymbolicLink()) throw new AgentsmithError("config", `Template files must not be symlinks: ${join(templateDirectory, entry.name)}`);
+    if (entry.isFile()) await copy(join(templateDirectory, entry.name), join(projectSource, "templates", ...id.name.split("/"), entry.name));
+  }
+  const seen = new Set<string>();
+  for (let include = pending.shift(); include !== undefined; include = pending.shift()) {
+    const includeId = parseSourceId(include);
+    const key = `${includeId.owner ?? ""}:${includeId.name}`;
+    if (includeId.owner === "project" || seen.has(key)) continue;
+    seen.add(key);
+    // Resolve the way generation does: the project's own partial wins over the Source Repository's.
+    const resolved = await classify("config", () =>
+      resolvePartial(includeId.owner === "source" ? { sourceRoot } : context, include).catch((cause: unknown) => {
+        throw new AgentsmithError("config", `template ${id.name} includes ${include}, which cannot be copied: ${errorMessage(cause)}`);
+      }),
+    );
+    if (!resolved.path.startsWith(`${resolve(sourceRoot)}${sep}`)) continue;
+    await copy(resolved.path, join(projectSource, "partials", ...includeId.name.split("/")));
+  }
+  return { sourceId: `project:${id.name}`, files };
+}
+
+/**
+ * The files of a planned template copy that the project does not have yet. A destination that already holds the same
+ * content is left alone, so rerunning is safe; any other existing file is an error.
+ */
+export async function missingTemplateFiles(plan: VendoredTemplate, root: string): Promise<VendoredFile[]> {
+  const conflicts: string[] = [];
+  const missing: VendoredFile[] = [];
+  for (const file of plan.files) {
+    if (!existsSync(file.to)) missing.push(file);
+    else if (!lstatSync(file.to).isFile() || (await readFile(file.to, "utf8")) !== file.content) conflicts.push(file.to);
+  }
+  if (conflicts.length > 0) {
+    throw new AgentsmithError(
+      "config",
+      [
+        "project init --template never overwrites project files, and these differ from the copy it would write:",
+        ...conflicts.map((path) => `  ${relative(root, path).split(sep).join("/")}`),
+        "Nothing was changed. Move them away to copy the template again, or keep editing the project copy.",
+      ].join("\n"),
+    );
+  }
+  return missing;
+}
+
+/** Template families in a Source Repository, by name. */
+function sourceTemplates(sourceRoot: string): string[] {
+  const root = join(sourceRoot, "templates");
+  if (!existsSync(root)) return [];
+  return readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+}
+
+/**
+ * Point an existing project configuration at the template copy: unless some scope already names it, a root scope
+ * without a template gets `template = "project:<name>"`, inserted as text so comments and layout stay. Returns "kept",
+ * changing nothing, when the root scope has another template or the file cannot be edited safely.
+ */
+async function useTemplateCopy(configPath: string, sourceId: string): Promise<"set" | "already" | "kept"> {
+  const name = parseSourceId(sourceId).name;
+  const scopes = loadProjectConfig(configPath).scopes;
+  if (scopes.some((scope) => scope.template === sourceId || scope.template === name)) return "already";
+  const root = scopes.find((scope) => scope.path === ".");
+  if (root === undefined || root.template !== undefined) return "kept";
+  const before = await readFile(configPath, "utf8");
+  const line = `template = ${JSON.stringify(sourceId)}`;
+  let after: string | undefined;
+  const comment = TEMPLATE_COMMENT.join("\n");
+  if (before.includes(comment)) after = before.replace(comment, line);
+  else {
+    const lines = before.split("\n");
+    const index = lines.findIndex((text) => /^\s*path\s*=\s*(["'])\.\1\s*(#.*)?$/.test(text));
+    if (index !== -1) after = [...lines.slice(0, index + 1), line, ...lines.slice(index + 1)].join("\n");
+  }
+  if (after === undefined) return "kept";
+  await atomicWrite(configPath, new TextEncoder().encode(after));
+  try {
+    if (loadProjectConfig(configPath).scopes.find((scope) => scope.path === ".")?.template === sourceId) return "set";
+  } catch {
+    // Fall through and restore the file as it was.
+  }
+  await atomicWrite(configPath, new TextEncoder().encode(before));
+  return "kept";
 }
 
 /** `.gitignore` lines for generated skills (keeping a placeholder so the folder exists) and personal snippets. */
@@ -156,7 +305,8 @@ async function prepare(root: string): Promise<PackageManager> {
 /**
  * Set up agentsmith in the current repository: a starter project configuration with harnesses detected from existing
  * `.agents/`, `.codex/`, and `.claude/` directories, `.gitignore` entries for generated skills and personal snippets,
- * placeholder files that keep each skill root, and with `--prepare` a dev dependency and `prepare` script. Safe to rerun.
+ * placeholder files that keep each skill root, with `--template` a copy of a Source Repository template, and with
+ * `--prepare` a dev dependency and `prepare` script. Safe to rerun.
  */
 export async function projectInit(options: ProjectInitOptions): Promise<void> {
   const start = resolve(options.project ?? process.cwd());
@@ -165,15 +315,64 @@ export async function projectInit(options: ProjectInitOptions): Promise<void> {
   });
   const root = worktree.root;
   const configPath = projectConfigPath(root);
+  const machinePath = resolveConfiguredPath(MACHINE_CONFIG_PATH, join(process.cwd(), "config.toml"));
+  let sourceRoot: string | undefined;
+  try {
+    sourceRoot = existsSync(machinePath) ? loadMachineConfig(machinePath).source : undefined;
+  } catch (cause) {
+    // Only --template needs the machine config; without it, the hint below is skipped.
+    if (options.template !== undefined) throw new AgentsmithError("config", errorMessage(cause));
+  }
+
+  // Plan the template copy first, so a conflict or a missing template leaves the repository untouched.
+  let copy: VendoredTemplate | undefined;
+  let missing: VendoredFile[] = [];
+  if (options.template !== undefined) {
+    if (sourceRoot === undefined) {
+      throw new AgentsmithError("config", `--template copies from your Source Repository, but there is no machine config at ${machinePath}`);
+    }
+    copy = await planTemplateCopy(sourceRoot, root, options.template);
+    missing = await missingTemplateFiles(copy, root);
+  }
+
   let harnesses: HarnessName[];
   if (existsSync(configPath)) {
-    console.log(`${PROJECT_CONFIG_RELATIVE_PATH} already exists; left unchanged.`);
+    if (copy === undefined) console.log(`${PROJECT_CONFIG_RELATIVE_PATH} already exists; left unchanged.`);
     harnesses = await classify("config", () => loadProjectConfig(configPath).harnesses);
   } else {
     harnesses = detectHarnesses(root);
     await mkdir(join(root, ".config", "agentsmith"), { recursive: true });
-    await writeFile(configPath, projectConfigContent(harnesses));
+    await writeFile(configPath, projectConfigContent(harnesses, copy?.sourceId));
     console.log(`Wrote ${PROJECT_CONFIG_RELATIVE_PATH} for ${harnesses.join(", ")}.`);
+  }
+
+  if (copy !== undefined) {
+    for (const file of missing) {
+      await mkdir(dirname(file.to), { recursive: true });
+      await writeFile(file.to, file.content);
+    }
+    if (missing.length > 0)
+      console.log(`Copied from the Source Repository:\n${missing.map((file) => `  ${relative(root, file.to).split(sep).join("/")}`).join("\n")}`);
+    else console.log(`The project already has ${copy.sourceId}; nothing copied.`);
+    const used = await classify("config", () => useTemplateCopy(configPath, copy.sourceId));
+    if (used === "set") console.log(`Set template = ${JSON.stringify(copy.sourceId)} for scope "." in ${PROJECT_CONFIG_RELATIVE_PATH}.`);
+    if (used === "kept") {
+      console.log(
+        `${PROJECT_CONFIG_RELATIVE_PATH} was left unchanged, since scope "." already has a template. To use the copy, set template = ${JSON.stringify(copy.sourceId)} in the [[scopes]] entry that needs it.`,
+      );
+    }
+  } else if (sourceRoot !== undefined) {
+    const available = sourceTemplates(sourceRoot);
+    const current = await classify("config", () => loadProjectConfig(configPath).scopes.find((scope) => scope.path === ".")?.template);
+    const projectHasIt =
+      current !== undefined &&
+      parseSourceId(current).owner !== "source" &&
+      existsSync(join(root, PROJECT_SOURCE_RELATIVE_PATH, "templates", parseSourceId(current).name));
+    if (available.length > 0 && !projectHasIt) {
+      console.log(
+        `Templates in your Source Repository are personal, so the committed AGENTS.md does not use them. To commit one with the project, run:\n  asmith project init --template <name>   (available: ${available.join(", ")})`,
+      );
+    }
   }
 
   const added = await ensureGitignore(root, ignoreEntries(harnesses));

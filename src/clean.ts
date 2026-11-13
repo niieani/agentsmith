@@ -4,7 +4,7 @@ import { MACHINE_CONFIG_PATH, requireMachineHome, resolveConfiguredPath } from "
 import { AgentsmithError, classify, errorMessage } from "./errors.ts";
 import { agentsmithHome, isWithin } from "./fs.ts";
 import { gitPathStatus, gitWorktree } from "./git.ts";
-import { claudeLocalSettingsPath, excludeEntry, infoExcludePath, readClaudeSettings, updateClaudeMdExcludes, updateInfoExclude } from "./personal.ts";
+import { claudeLocalSettingsPath, excludeEntry, infoExcludePath, readClaudeSettings, updateClaudeMdExcludes } from "./personal.ts";
 import { buildProjectPlan } from "./planner.ts";
 import { resolveProject } from "./project.ts";
 import {
@@ -220,6 +220,7 @@ export async function cleanProject(options: CleanOptions): Promise<void> {
   const settingsEntry = excludeEntry(worktree.root, settingsPath);
   const claudeEntries = (state.claudeMdExcludes ?? []).filter((entry) => inScope(relative(worktree.root, entry).split(sep).join("/")));
   const remainingClaude = (state.claudeMdExcludes ?? []).filter((entry) => !claudeEntries.includes(entry));
+  // info/exclude is shared by every worktree, so its lines stay; they only stop matching files once those are gone.
   const excludeEntries = (state.excludes ?? []).filter((entry) =>
     entry === settingsEntry ? remainingClaude.length === 0 : inScope(entry.replace(/^\//, "").replace(/\/$/, "")),
   );
@@ -229,7 +230,7 @@ export async function cleanProject(options: CleanOptions): Promise<void> {
   if (plan.modified.length > 0 && !options.force && options.onModified !== "backup") throw refuseModified(plan);
   report(plan, options);
   for (const entry of claudeEntries) console.log(`  claudeMdExcludes entry ${entry} in ${settingsPath}`);
-  for (const entry of excludeEntries) console.log(`  ${entry} in ${excludePath}`);
+  if (excludeEntries.length > 0) console.log(`  (${excludePath} keeps its agentsmith lines; every worktree shares that file)`);
   if (remaining.length > 0) console.log(`  (state keeps ${remaining.length} recorded path(s) of other scopes)`);
   if (!options.yes) {
     if (plan.unchanged.length + plan.modified.length + plan.stateFiles.length > 0) console.log("Dry run; rerun with --yes to remove these files.");
@@ -241,7 +242,6 @@ export async function cleanProject(options: CleanOptions): Promise<void> {
   const backups = options.onModified === "backup" ? await quarantinePaths(plan.modified, { backupRoot: plan.backupRoot, reason: "modified" }) : [];
   const artifacts = [...plan.unchanged, ...plan.modified];
   await removeAll(artifacts);
-  await updateInfoExclude(excludePath, [], excludeEntries);
   if (claudeEntries.length > 0 && !(await present(settingsPath))) await pruneEmptyParents([settingsPath], worktree.root);
   if (remaining.length > 0)
     await saveProjectState(statePath, {
