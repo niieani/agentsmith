@@ -45,6 +45,26 @@ const AGENTSMITH_DIRECTIVE = /<!--\s*agentsmith:/;
 const ATX_HEADING = /^(#{1,6})(?:[ \t]+|$)/;
 const SETEXT_UNDERLINE = /^(?:=+|-+)[ \t]*$/;
 
+/**
+ * Rewrite the Source ID of every include directive outside code fences with `rename`, which also sees each one; returns
+ * the content unchanged when `rename` returns the ID it was given. Line endings are kept as written.
+ */
+export function mapIncludes(content: string, rename: (sourceId: string) => string): string {
+  const lines = content.split("\n");
+  let fence: Fence | undefined;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    const transition = fenceTransition(line.replace(/\r$/, ""), fence);
+    if (transition.closed) fence = undefined;
+    else if (transition.opened) fence = transition.opened;
+    if (fence || transition.closed) continue;
+    const ending = line.endsWith("\r") ? "\r" : "";
+    const directive = parseDirective(line.slice(0, line.length - ending.length));
+    if (directive?.kind === "include") lines[index] = `<!-- agentsmith:include ${rename(directive.name)} -->${ending}`;
+  }
+  return lines.join("\n");
+}
+
 /** Normalize generated Markdown without otherwise reformatting authored content. */
 export function normalizeMarkdown(content: string): string {
   return content.replace(/\r\n?/g, "\n").replace(/\n*$/, "\n");

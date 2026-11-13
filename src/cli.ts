@@ -123,7 +123,15 @@ const globalCommands = or(
 );
 
 const projectCommands = or(
-  command("init", object({ action: constant("init"), project: projectOption, prepare: option("--prepare") })),
+  command(
+    "init",
+    object({
+      action: constant("init"),
+      project: projectOption,
+      prepare: option("--prepare"),
+      template: optional(option("--template", string({ metavar: "NAME" }))),
+    }),
+  ),
   command("add", object({ action: constant("add"), project: projectOption, scope: optional(option("--scope", string({ metavar: "PATH" }))), ...addOptions })),
   command("generate", object({ action: constant("generate"), project: projectOption, onModified: onModifiedOption })),
   command(

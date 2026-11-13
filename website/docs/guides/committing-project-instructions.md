@@ -43,6 +43,14 @@ Rerunning `project init` changes nothing that is already in place. Nested scopes
 
 Put what the team shares in `.config/agentsmith/`: a template family, project packs, partials, and skills.
 
+A template from your Source Repository is personal, so the committed `AGENTS.md` cannot use it. To start from one you already have, copy it into the project:
+
+```sh
+asmith project init --template project
+```
+
+This copies every variant of `templates/project/` and the partials it includes into `.config/agentsmith/`, and sets `template = "project:project"`. It never overwrites a project file. Once copied, the template is the team's: edit and review it with the rest of the repository.
+
 ```text
 .config/agentsmith/
 ├── config.toml

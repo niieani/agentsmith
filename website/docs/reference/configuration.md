@@ -269,7 +269,7 @@ Every project Instruction Layer is rendered twice:
 
 The personal files are written only when they differ from the shared layer. Codex reads `AGENTS.override.md` instead of `AGENTS.md`. For Claude, agentsmith adds `<scope>/CLAUDE.md` to `claudeMdExcludes` in `<project>/.claude/settings.local.json`, so Claude loads only `CLAUDE.local.md` for that folder. agentsmith owns only the `claudeMdExcludes` entries it added and keeps every other setting. `generic` has no personal file; other agents read the shared `AGENTS.md`.
 
-Adding a personal snippet or pack never changes the shared layer, so teammates never see your personal instructions in a diff. A Source Repository partial included by a project template renders as nothing in the shared layer. When the template itself comes from the Source Repository, no shared file is written and only the personal files carry the scope's instructions.
+Adding a personal snippet or pack never changes the shared layer, so teammates never see your personal instructions in a diff. A Source Repository partial included by a project template renders as nothing in the shared layer. When the template itself comes from the Source Repository, no shared file is written and only the personal files carry the scope's instructions. To commit such a template with the project, copy it into `.config/agentsmith/` with [`asmith project init --template NAME`](/reference/commands#copying-a-template-into-the-project), which sets `template = "project:NAME"`.
 
 Skills are not layered. Shared and personal skills are generated into the same skill roots, which `asmith project init` adds to `.gitignore`.
 

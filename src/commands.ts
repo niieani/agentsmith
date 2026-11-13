@@ -83,6 +83,7 @@ export interface CommandOptions {
   scope?: string;
   skill?: string;
   prepare?: boolean;
+  template?: string;
 }
 
 export function diagnosticsText(diagnostics: Diagnostic[]): string {
@@ -607,7 +608,7 @@ export async function executeCommand(mode: "global" | "project", action: Command
     return 0;
   }
   if (action === "init" && mode === "project") {
-    await projectInit({ project: options.project, prepare: options.prepare });
+    await projectInit({ project: options.project, prepare: options.prepare, template: options.template });
     return 0;
   }
   if (action === "init") {
