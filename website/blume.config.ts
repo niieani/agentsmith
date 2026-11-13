@@ -31,7 +31,16 @@ export default defineConfig({
           "/use-cases/feature-cookbook",
         ],
       },
-      { label: "Guides", items: ["/guides/projects-and-scopes", "/guides/packs-and-templates", "/guides/skills", "/guides/safe-workflows"] },
+      {
+        label: "Guides",
+        items: [
+          "/guides/projects-and-scopes",
+          "/guides/committing-project-instructions",
+          "/guides/packs-and-templates",
+          "/guides/skills",
+          "/guides/safe-workflows",
+        ],
+      },
       {
         label: "Reference",
         items: [

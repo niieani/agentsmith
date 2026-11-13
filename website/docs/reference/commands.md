@@ -185,6 +185,7 @@ A global snippet that is not `--local` is committed by default, only the new fil
 
 | Command | Purpose |
 | --- | --- |
+| `asmith project init [--project PATH] [--prepare]` | Set up a repository: config, `.gitignore` entries, skill folder placeholders, and with `--prepare` an install-time `prepare` script. See [initializing a project](#initializing-a-project). |
 | `asmith project generate [--project PATH] [--on-modified fail\|backup]` | Safely generate project artifacts: the committed shared layer, the [personal layer](/reference/configuration#shared-and-personal-layers), and skills. `backup` moves [exclusive mode](/reference/configuration#exclusive-mode) unmanaged skills aside. |
 | `asmith project adopt --skill NAME [--project PATH] [--scope PATH] [--pack NAME] [--dry-run]` | Copy an unmanaged project skill into the project's source tree. See [adopting unmanaged skills](#adopting-unmanaged-skills). |
 | `asmith project diff [--project PATH]` | Show prospective project changes without writing. |
@@ -192,6 +193,16 @@ A global snippet that is not `--local` is committed by default, only the new fil
 | `asmith project lint [--project PATH] [--warnings-as-errors]` | Validate project composition. |
 | `asmith project explain [--project PATH] [--json]` | Explain the project plan and provenance. |
 | `asmith project add SLOT [TEXT] [--project PATH] [--scope PATH] [--file PATH] [--skill-slot] [--harness NAME] [--pack NAME] [--placement gap\|first\|last] [--name NAME] [--skip-generate] [--dry-run]` | Write a new snippet into a project pack slot, lint, and regenerate. See [adding snippets](#adding-snippets). |
+
+### Initializing a project
+
+`asmith project init` works on the Git repository containing `--project` or the current directory:
+
+1. Writes `.config/agentsmith/config.toml` unless it exists, with `harnesses` detected from existing `.agents/` (`generic`), `.codex/` (`codex`), and `.claude/` (`claude`) directories, or all three when none exists, and one repository scope without a template.
+2. Appends missing `.gitignore` lines for each selected harness's skill folder with a kept placeholder (`/.claude/skills/*`, `!/.claude/skills/.gitkeep`, and the same for `.agents/skills` and `.codex/skills`), and `/.config/agentsmith/**/*.local.md`. Creates the `.gitkeep` placeholders. A skill the repository already commits stays tracked and is reported with a warning.
+3. With `--prepare`, requires `package.json`. It picks the package manager from the `packageManager` field, then the lockfile (`bun.lock` or `bun.lockb`: bun, `pnpm-lock.yaml`: pnpm, `yarn.lock`: yarn, `package-lock.json`: npm), then npm, and runs its command to add `asmith` as a dev dependency (`bun add -d`, `pnpm add -D`, `yarn add -D`, `npm install -D`) unless `asmith` is already a dependency. Then it sets `scripts.prepare` to `asmith project generate`. A `prepare` script that already runs it is left alone; any other one is kept unchanged with a `WARNING prepare-script-kept` that prints the chained command. Printed commands use the package manager's runner: `bunx asmith`, `pnpm exec asmith`, `yarn asmith`, or `npx asmith`.
+
+Rerunning it changes nothing that is already in place. See [committing project instructions](/guides/committing-project-instructions).
 
 Starting from `--project` or the current directory, agentsmith searches ancestors for `.config/agentsmith/config.toml`. In a Git repository without one, it uses the first `[[projects]]` entry of your profile that matches the repository's path or a remote URL (see [third-party repositories](/reference/configuration#third-party-repositories)).
 

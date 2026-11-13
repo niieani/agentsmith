@@ -35,6 +35,7 @@ import {
   type ProjectState,
 } from "./safety.ts";
 import { globalInit } from "./init.ts";
+import { projectInit } from "./project-init.ts";
 import {
   claudeLocalSettingsPath,
   desiredExcludes,
@@ -80,6 +81,7 @@ export interface CommandOptions {
   skipGenerate?: boolean;
   scope?: string;
   skill?: string;
+  prepare?: boolean;
 }
 
 export function diagnosticsText(diagnostics: Diagnostic[]): string {
@@ -559,7 +561,7 @@ export type CommandAction =
   | "schedule-status"
   | "clean";
 
-const GLOBAL_ONLY_ACTIONS: ReadonlySet<CommandAction> = new Set(["status", "init", "schedule-install", "schedule-uninstall", "schedule-status"]);
+const GLOBAL_ONLY_ACTIONS: ReadonlySet<CommandAction> = new Set(["status", "schedule-install", "schedule-uninstall", "schedule-status"]);
 
 /** Execute one CLI command and return its process exit code. */
 export async function executeCommand(mode: "global" | "project", action: CommandAction, options: CommandOptions): Promise<number> {
@@ -584,6 +586,10 @@ export async function executeCommand(mode: "global" | "project", action: Command
     if (mode === "project") throw new AgentsmithError("config", "project adopt requires --skill NAME");
     if (options.push || options.noCommit) throw new AgentsmithError("config", "--push and --no-commit apply only to global adopt --skill");
     await adoptGlobal(options);
+    return 0;
+  }
+  if (action === "init" && mode === "project") {
+    await projectInit({ project: options.project, prepare: options.prepare });
     return 0;
   }
   if (action === "init") {

@@ -292,7 +292,7 @@ agentsmith owns only the entries it recorded in project state. Every other key o
 
 Personal files are excluded from Git through the repository's `info/exclude` (`git rev-parse --git-path info/exclude`) as anchored lines (`/AGENTS.override.md`, `/app/CLAUDE.local.md`), so the repository never mentions a personal layer. `/.claude/settings.local.json` is added too while agentsmith keeps `claudeMdExcludes` entries and Git does not already ignore the file. Lines are recorded in project state and removed when no longer needed; other lines are kept. `info/exclude` is shared by every worktree of a repository.
 
-Skills are not layered: shared and personal skills render once, with every input, into the same Skill Roots, which are meant to be ignored (`project init`, section 11).
+Skills are not layered: shared and personal skills render once, with every input, into the same Skill Roots, which are meant to be ignored (`project init`, section 11.1).
 
 ### 5.6 Third-party repositories
 
@@ -575,6 +575,7 @@ asmith global schedule install [--interval DURATION] [--config PATH]
 asmith global schedule uninstall
 asmith global schedule status
 
+asmith project init [--project PATH] [--prepare]
 asmith project generate [--project PATH] [--on-modified fail|backup]
 asmith project adopt --skill NAME [--project PATH] [--scope PATH] [--pack NAME] [--dry-run]
 asmith project diff [--project PATH]
@@ -599,6 +600,16 @@ Exit status:
 | 6 | `status-stale` | `global status`: no recorded run, or older than `--max-age` |
 
 Warnings alone succeed unless `--warnings-as-errors` is active. Notices report inputs deliberately left out and never fail a run, even with `--warnings-as-errors`. `global status` exits with the recorded exit code when the last run failed, otherwise 6 when stale, otherwise 0. `--max-age` takes one or more `<number><unit>` terms with units `s`, `m`, `h`, `d`, `w`.
+
+### 11.1 Project initialization
+
+`project init [--project PATH] [--prepare]` works on the Git worktree root containing `--project` or the current directory (not a Git repository: configuration error). It runs, stopping at the first failure:
+
+1. If `.config/agentsmith/config.toml` is absent, write one selecting the harnesses whose directory exists at the root (`.agents/` → `generic`, `.codex/` → `codex`, `.claude/` → `claude`), or every harness when none does, with one repository scope `.` that has no template and no packs. An existing configuration is kept and its harnesses are used.
+2. Append to `.gitignore`, under one comment line, every missing line of: `/<dir>/*` and `!/<dir>/.gitkeep` for each selected harness's project skill directory (`.agents/skills`, `.codex/skills`, `.claude/skills`), then `/.config/agentsmith/**/*.local.md`. Create each `<dir>/.gitkeep`. Claude Code reloads only skill directories that existed when a session started; the placeholder keeps the directory. Skill directories Git already tracks under a skill root are reported with `committed-skill` warnings.
+3. With `--prepare`: `package.json` must exist (configuration error). The package manager is the `packageManager` field's name when it is `bun`, `pnpm`, `yarn`, or `npm`; otherwise the first lockfile present of `bun.lock`, `bun.lockb` (bun), `pnpm-lock.yaml` (pnpm), `yarn.lock` (yarn), `package-lock.json` (npm); otherwise npm. Unless `asmith` is in `devDependencies` or `dependencies`, run `bun add -d asmith`, `pnpm add -D asmith`, `yarn add -D asmith`, or `npm install -D asmith` in the root (failure: exit 1). Then, when `scripts.prepare` is absent, set it to `asmith project generate`, keeping the file's indentation and final newline. A `prepare` containing `asmith project generate` is left unchanged; any other is left unchanged with a `prepare-script-kept` warning printing `<existing> && asmith project generate`. Commands printed afterwards use `bunx asmith`, `pnpm exec asmith`, `yarn asmith`, or `npx asmith`.
+
+The command is idempotent. agentsmith installs no session hooks: they would run on every start, resume, compaction, and subagent, and no harness loads instruction files or skills a hook creates during the same turn.
 
 ## 12. Determinism
 

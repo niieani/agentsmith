@@ -62,7 +62,7 @@ Reusable matches come from the maintainer's configured Source Repository:
 - `bun`, `swift`, and `ios` supply ecosystem-specific guidance;
 - `software`, `service`, and `ios` define appropriate document structures.
 
-This content can be improved once and reused by many repositories.
+This content can be improved once and reused by many repositories. It is personal to the maintainer, though: Source Repository templates and packs render into `AGENTS.override.md` and `CLAUDE.local.md`, which Git never sees. Anything every clone must get belongs in `.config/agentsmith/`, as the next step shows. See [committing project instructions](/guides/committing-project-instructions).
 
 ## 3. Keep repository-specific policy in the repository
 
@@ -126,7 +126,7 @@ git add .config/agentsmith AGENTS.md CLAUDE.md services/api apps/ios
 git commit -m "chore: generate agent context"
 ```
 
-Generated context is committed so every clone and every agent sees it without having agentsmith installed at runtime.
+The shared instruction files are committed so every clone and every agent sees them without having agentsmith installed at runtime. Skills are generated, not committed: `asmith project init --prepare` ignores the skill folders and regenerates them on every package install, and a clone without a machine config still generates the shared skills.
 
 ## 6. Understand what an agent sees
 

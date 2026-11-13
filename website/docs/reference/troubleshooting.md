@@ -7,7 +7,7 @@ description: Resolve common configuration, Git safety, composition, and collisio
 
 agentsmith will not overwrite a modified, staged, conflicted, untracked, or ignored destination unless it still holds exactly what agentsmith last wrote there. Review the file and either commit the intended version, restore the generated content, or move it out of the generated path. There is no project `--force` option.
 
-For a newly generated output, add and commit it before the next generation.
+A generated skill whose folder already holds files agentsmith did not write, such as a skill the repository commits, is refused with an error naming the folder. Rename the generated skill, or adopt the folder with `asmith project adopt --skill NAME`.
 
 ## Global output is unmanaged or changed
 
@@ -81,7 +81,14 @@ Two skills visible from the same working location share a public name. `asmith p
 
 ## Codex override shadows generated context
 
-Remove or relocate `AGENTS.override.md` at the planned scope before generation. Codex gives that file precedence, so generating `AGENTS.md` there would be misleading.
+An `AGENTS.override.md` that agentsmith did not write sits next to a generated `AGENTS.md`. Codex reads it instead of `AGENTS.md`, so generating there would be misleading. Move its content into a `*.local.md` snippet in a project pack and delete the file; agentsmith then writes its own `AGENTS.override.md` with the shared layer plus your snippet.
+
+## Personal files and settings
+
+- **`settings.local.json is not valid JSON`** or **`is tracked by Git`**: agentsmith adds `claudeMdExcludes` entries to `<project>/.claude/settings.local.json` and refuses to edit a file it cannot parse or one Git tracks, since the entries hold this machine's paths. Fix the JSON, or run `git rm --cached .claude/settings.local.json` and ignore it.
+- **`NOTICE personal-input-skipped`**: there is no machine config, so a Source Repository pack, skill, template, or partial was left out. Shared inputs still render. Configure a machine with `asmith global init` to include them.
+- **`never writes a repository's committed files`**: with `upstream`, a personal file such as `CLAUDE.local.md` is committed in that repository. agentsmith will not replace it; remove `upstream` or ask the repository to stop committing it.
+- **`WARNING prepare-script-kept`**: `project init --prepare` found a `prepare` script that does something else and left it unchanged. Chain `&& asmith project generate` to it by hand.
 
 ## Symlink destination or ancestor is not allowed
 
