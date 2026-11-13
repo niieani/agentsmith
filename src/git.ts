@@ -146,3 +146,9 @@ export async function gitIsTracked(root: string, path: string): Promise<boolean>
   const result = await runCommand("git", ["ls-files", "--error-unmatch", "--", path], { cwd: root, allowFailure: true });
   return result.exitCode === 0;
 }
+
+/** Whether Git tracks a path, or any path below a directory. */
+export async function gitHasTracked(root: string, path: string): Promise<boolean> {
+  const result = await runCommand("git", ["ls-files", "-z", "--", path], { cwd: root, allowFailure: true });
+  return result.exitCode === 0 && result.stdout.length > 0;
+}

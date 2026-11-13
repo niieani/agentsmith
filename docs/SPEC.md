@@ -149,6 +149,21 @@ A profile may set `extends = "<profile name>"` to inherit from one parent profil
 
 Profiles accept `exclusive` (boolean, default `false`; the nearest profile that sets it wins) and `exclusive_allow` (a list of skill directory name globs; ordered union through the chain). See section 7.3.
 
+A profile may declare `[[projects]]` entries that configure third-party repositories without an agentsmith configuration of their own (section 5.6):
+
+```toml
+[[projects]]
+remote = "github.com/acme/tool"   # or: path = "~/src/tool"
+upstream = "keep"                 # default; or "replace"
+harnesses = ["codex", "claude"]   # default: the profile's harnesses
+template = "personal"
+packs = ["base"]
+skills_enable = []
+skills_disable = []
+```
+
+Each entry sets exactly one of `path` (resolved like other configured paths and canonicalized) and `remote`, and accepts only the keys shown. Source IDs may not be `project:`-qualified. Entries are listed nearest profile first through `extends`; the first matching entry wins.
+
 An `extends` cycle or a missing parent profile is an error. `global explain` reports the resolved chain (`profile.chain`, root first) and the profile that contributed each pack (`profile.packs`).
 
 ### 4.4 Pack
@@ -196,6 +211,8 @@ packs = ["service"]
 ```
 
 The project root is the directory containing `.config/agentsmith/config.toml`. Scope paths are unique, normalized, existing project-relative directories that may not escape the project. A harness override must be a nonempty subset of the project defaults. `claude_import_agents_md` is an optional boolean, default `true` (section 5.3).
+
+`upstream = "keep" | "replace"` at the top level marks a third-party repository (section 5.6). Without it, the project owns its shared layer.
 
 `exclusive` and `exclusive_allow` are accepted at the top level and in each scope. A scope's `exclusive` overrides the top-level value (default `false`); its `exclusive_allow` is appended to the top-level list. See section 7.3.
 
@@ -277,7 +294,18 @@ Personal files are excluded from Git through the repository's `info/exclude` (`g
 
 Skills are not layered: shared and personal skills render once, with every input, into the same Skill Roots, which are meant to be ignored (`project init`, section 11).
 
-### 5.6 Physical destination collisions
+### 5.6 Third-party repositories
+
+A repository whose committed instruction files belong to someone else is configured with `upstream` in its project configuration, or, when it has none, by a profile `[[projects]]` entry. Project commands that find no `.config/agentsmith/config.toml` load the machine configuration's profile and use the first entry whose `path` equals the Git worktree root or whose `remote` matches one of the repository's remote URLs. Remotes compare as `host/path` with the scheme, user, trailing `/`, and `.git` removed and the host lowercased, so `git@github.com:acme/tool.git`, `ssh://git@github.com/acme/tool`, and `https://github.com/acme/tool` match `github.com/acme/tool`; local paths are canonicalized. A profile entry is a project with one repository scope at `.`, default `upstream = "keep"`.
+
+Every input is personal; there is no shared layer, and agentsmith never writes a file Git tracks (configuration error). Personal files are always written:
+
+- `keep`: `AGENTS.override.md` holds the upstream `AGENTS.md` (when present and not written by agentsmith), a blank line, and the personal layer, because Codex reads it instead of `AGENTS.md`. `CLAUDE.local.md` holds only the personal layer and no `claudeMdExcludes` entry is written, because Claude reads it beside the upstream `CLAUDE.md`. When the directory has no `CLAUDE.md` or `.claude/CLAUDE.md` but has an upstream `AGENTS.md`, `CLAUDE.local.md` starts with `@AGENTS.md` and a blank line, since its presence turns off Claude Code's `AGENTS.md` fallback.
+- `replace`: both files hold only the personal layer, and `<scope>/CLAUDE.md` is added to `claudeMdExcludes`.
+
+Upstream skills stay visible; a generated skill whose name matches one is an error (section 8.1). Generic tools read the upstream `AGENTS.md`. Because the repository's `.gitignore` is not agentsmith's to edit, each generated skill directory and, for a project configuration, `/.config/agentsmith/` are added to `info/exclude` unless Git tracks something inside them.
+
+### 5.7 Physical destination collisions
 
 If adapters plan the same physical destination outside a shared instruction artifact, agentsmith coalesces byte-identical content into one write. Different content for the same destination is a planning error.
 
@@ -556,7 +584,7 @@ asmith project explain [--project PATH] [--json]
 asmith project add SLOT [TEXT] [--project PATH] [--scope PATH] [--file PATH] [--skill-slot] [--harness NAME] [--pack NAME] [--placement gap|first|last] [--name NAME] [--skip-generate] [--dry-run]
 ```
 
-`project` walks from the requested path, or current directory, toward its ancestors to find `.config/agentsmith/config.toml`.
+`project` walks from the requested path, or current directory, toward its ancestors to find `.config/agentsmith/config.toml`. When none exists, `generate`, `diff`, `lint`, `explain`, and `clean` fall back to a matching profile `[[projects]]` entry (section 5.6).
 
 Exit status:
 

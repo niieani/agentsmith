@@ -193,7 +193,7 @@ A global snippet that is not `--local` is committed by default, only the new fil
 | `asmith project explain [--project PATH] [--json]` | Explain the project plan and provenance. |
 | `asmith project add SLOT [TEXT] [--project PATH] [--scope PATH] [--file PATH] [--skill-slot] [--harness NAME] [--pack NAME] [--placement gap\|first\|last] [--name NAME] [--skip-generate] [--dry-run]` | Write a new snippet into a project pack slot, lint, and regenerate. See [adding snippets](#adding-snippets). |
 
-Starting from `--project` or the current directory, agentsmith searches ancestors for `.config/agentsmith/config.toml`.
+Starting from `--project` or the current directory, agentsmith searches ancestors for `.config/agentsmith/config.toml`. In a Git repository without one, it uses the first `[[projects]]` entry of your profile that matches the repository's path or a remote URL (see [third-party repositories](/reference/configuration#third-party-repositories)).
 
 ## Exit behavior
 

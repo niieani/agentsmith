@@ -1,22 +1,22 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import {
-  discoverProjectConfig,
   loadMachineConfig,
   loadProfileConfig,
-  loadProjectConfig,
   loadRootConfig,
   MACHINE_CONFIG_PATH,
   matchesAllow,
+  projectSourceRoot,
   resolveConfiguredPath,
   parseSourceId,
 } from "./config.ts";
-import { canonicalRoot, walkFiles } from "./fs.ts";
+import { walkFiles } from "./fs.ts";
 import { gitWorktree } from "./git.ts";
+import { resolveProject } from "./project.ts";
 import { loadProjectState, projectStatePath } from "./safety.ts";
 import { getHarnessAdapter, placeSkill, skillReadRoots, skillWriteRoot, type SkillLocation } from "./harness.ts";
-import { RESERVED_EDGE_SLOTS, renderMarkdown } from "./markdown.ts";
+import { normalizeMarkdown, RESERVED_EDGE_SLOTS, renderMarkdown } from "./markdown.ts";
 import {
   isLocalSource,
   loadInstructionContributions,
@@ -47,6 +47,7 @@ import {
   type RenderTrace,
   type ScopeConfig,
   type SkillIdentity,
+  type UpstreamMode,
 } from "./types.ts";
 
 const encoder = new TextEncoder();
@@ -70,6 +71,10 @@ export interface BuiltPlan extends GenerationPlan {
   claudeMdExcludes: string[];
   /** Project: directories Git must ignore through `info/exclude` because the repository's own ignores cannot be edited. */
   personalExcludes: string[];
+  /** Project: set for a third-party repository whose committed files agentsmith never writes. */
+  upstream?: UpstreamMode;
+  /** Project: where the configuration came from. */
+  origin?: "project" | "profile";
 }
 
 /** A skill directory that exclusive mode reports because agentsmith does not manage it. */
@@ -132,8 +137,9 @@ interface EnabledSkill {
 interface PlannerContext {
   mode: "global" | "project";
   sources: SourceContext;
-  /** Project: the same sources restricted to shared inputs. */
+  /** Project: the same sources restricted to shared inputs; undefined for a third-party repository. */
   sharedSources?: SourceContext;
+  upstream?: UpstreamMode;
   /** Personal sources left out because no Source Repository is available. */
   skipped: SkippedSource[];
   /** Absolute paths agentsmith recorded writing (project state), used to tell its own files from foreign ones. */
@@ -364,7 +370,47 @@ interface InstructionOutput {
   layer?: InstructionLayerKind;
   destination: string;
   render: LayerRender;
+  /** Content replacing the rendered layer, such as upstream instructions followed by the personal layer. */
+  content?: string;
+  /** Files besides the render's sources that the content came from. */
+  extraProvenance?: string[];
   importsFrom?: string;
+}
+
+/** A committed instruction file of a third-party repository, unless agentsmith wrote it itself. */
+function upstreamInstruction(context: PlannerContext, path: string): string | undefined {
+  if (context.ownedPaths.has(path) || !existsSync(path)) return undefined;
+  return readFileSync(path, "utf8");
+}
+
+/**
+ * Third-party repository: the personal files are all agentsmith writes. With `keep`, Codex's `AGENTS.override.md`
+ * repeats the upstream `AGENTS.md` before the personal layer, since Codex reads it instead; Claude reads the upstream
+ * `CLAUDE.md` beside `CLAUDE.local.md` anyway, and an upstream `AGENTS.md` that Claude would otherwise fall back to is
+ * imported. With `replace`, the upstream `CLAUDE.md` is excluded.
+ */
+function applyUpstream(context: PlannerContext, outputs: InstructionOutput[]): void {
+  for (const item of outputs) {
+    const directory = dirname(item.group.destination);
+    if (item.group.personalHarness === "codex" && context.upstream === "keep") {
+      const upstream = upstreamInstruction(context, item.group.destination);
+      if (upstream !== undefined && upstream.trim() !== "") {
+        item.content = `${normalizeMarkdown(upstream)}\n${item.render.content}`;
+        item.extraProvenance = [item.group.destination];
+      }
+    }
+    if (item.group.personalHarness !== "claude") continue;
+    if (context.upstream === "replace") {
+      context.claudeMdExcludes.push(item.group.destination);
+      continue;
+    }
+    const claudeFiles = [item.group.destination, join(directory, ".claude", "CLAUDE.md")];
+    const agents = join(directory, "AGENTS.md");
+    if (claudeFiles.every((path) => !existsSync(path)) && upstreamInstruction(context, agents) !== undefined) {
+      item.content = `@AGENTS.md\n\n${item.render.content}`;
+      item.extraProvenance = [agents];
+    }
+  }
 }
 
 function isPersonalSkip(cause: unknown): cause is PersonalSourceSkipped {
@@ -457,7 +503,7 @@ async function planInstructions(context: PlannerContext, scope: ScopeInput, pack
       context.diagnostics.push(...(getHarnessAdapter(harness).preflightInstruction?.(destination, context.ownedPaths) ?? []));
     }
     const group: InstructionGroup = { destination, harnesses: members, full };
-    if (context.mode === "project") {
+    if (context.mode === "project" && context.sharedSources !== undefined) {
       const sharedDiagnostics: Diagnostic[] = [];
       try {
         const shared = await renderInstruction(context, context.sharedSources!, scope, sharedPacks, variants, sharedDiagnostics);
@@ -479,6 +525,8 @@ async function planInstructions(context: PlannerContext, scope: ScopeInput, pack
           destination,
         );
       }
+    }
+    if (context.mode === "project") {
       for (const harness of HARNESS_NAMES.filter((item) => members.includes(item))) {
         const personal = getHarnessAdapter(harness).projectPersonalInstruction?.(context.projectRoot!, scope.path);
         if (personal === undefined) continue;
@@ -508,6 +556,8 @@ async function planInstructions(context: PlannerContext, scope: ScopeInput, pack
     }
   }
 
+  if (context.upstream !== undefined) applyUpstream(context, outputs);
+
   if (context.mode === "project" && context.claudeImportAgentsMd) {
     for (const item of outputs) {
       const importer = item.group.harnesses.length === 1 ? getHarnessAdapter(item.group.harnesses[0]!).instructionImport : undefined;
@@ -517,7 +567,7 @@ async function planInstructions(context: PlannerContext, scope: ScopeInput, pack
           other !== item &&
           other.layer === item.layer &&
           dirname(other.destination) === dirname(item.destination) &&
-          other.render.content === item.render.content &&
+          (other.content ?? other.render.content) === (item.content ?? item.render.content) &&
           !other.importsFrom,
       );
       if (sibling) item.importsFrom = sibling.destination;
@@ -548,8 +598,13 @@ async function planInstructions(context: PlannerContext, scope: ScopeInput, pack
   for (const item of outputs) {
     const harnesses = item.layer === "personal" ? [item.group.personalHarness!] : item.group.harnesses;
     const importer = getHarnessAdapter(item.group.harnesses[0]!).instructionImport;
-    const content = item.importsFrom && importer ? importer(basename(item.importsFrom)) : item.render.content;
-    const provenance = [item.render.template.path, ...Object.values(item.render.trace.slots).flat(), ...item.render.trace.includes];
+    const content = item.importsFrom && importer ? importer(basename(item.importsFrom)) : (item.content ?? item.render.content);
+    const provenance = [
+      ...(item.extraProvenance ?? []),
+      item.render.template.path,
+      ...Object.values(item.render.trace.slots).flat(),
+      ...item.render.trace.includes,
+    ];
     context.writes.push({
       destination: item.destination,
       content: encoder.encode(content),
@@ -577,7 +632,7 @@ async function planInstructions(context: PlannerContext, scope: ScopeInput, pack
         directory: pack.directory,
       })),
       trace: item.render.trace,
-      bytes: utf8Bytes(item.render.content),
+      bytes: utf8Bytes(item.content ?? item.render.content),
     });
   }
 }
@@ -1113,17 +1168,15 @@ async function ownedProjectPaths(projectRoot: string): Promise<Set<string>> {
 }
 
 export async function buildProjectPlan(projectStart = process.cwd(), machineConfigPath = MACHINE_CONFIG_PATH): Promise<BuiltPlan> {
-  const configPath = discoverProjectConfig(projectStart);
-  const projectRoot = canonicalRoot(dirname(dirname(dirname(configPath))));
-  const project = loadProjectConfig(configPath);
-  let sourceRoot: string | undefined;
-  let home: string | undefined;
-  const resolvedMachine = resolveConfiguredPath(machineConfigPath, join(process.cwd(), "config.toml"));
-  if (existsSync(resolvedMachine)) ({ source: sourceRoot, home } = loadMachineConfig(resolvedMachine));
+  const { configPath, projectRoot, project, origin, machine } = await resolveProject(projectStart, machineConfigPath);
+  const sourceRoot = machine?.source;
+  const home = machine?.home;
   const context: PlannerContext = {
     mode: "project",
     sources: { sourceRoot, projectRoot },
-    sharedSources: { projectRoot, sharedOnly: true },
+    // A third-party repository has no shared layer: every input is personal.
+    sharedSources: project.upstream === undefined ? { projectRoot, sharedOnly: true } : undefined,
+    upstream: project.upstream,
     skipped: [],
     ownedPaths: await ownedProjectPaths(projectRoot),
     claudeMdExcludes: [],
@@ -1144,7 +1197,17 @@ export async function buildProjectPlan(projectStart = process.cwd(), machineConf
     context,
     project.scopes.map((scope) => toScope(scope, project)),
   );
-  return builtPlan(context, configPath);
+  const plan = builtPlan(context, configPath);
+  plan.origin = origin;
+  if (project.upstream !== undefined) {
+    plan.upstream = project.upstream;
+    // The repository's own ignores cannot be edited, so generated skills and a personal configuration are excluded.
+    plan.personalExcludes = [
+      ...new Set(context.writes.flatMap((write) => (write.skillDirectory === undefined ? [] : [resolve(write.skillDirectory)]))),
+      ...(origin === "project" ? [projectSourceRoot(projectRoot)] : []),
+    ];
+  }
+  return plan;
 }
 
 export function assertPlanValid(plan: GenerationPlan, warningsAsErrors = false): void {

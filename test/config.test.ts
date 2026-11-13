@@ -298,6 +298,7 @@ describe("profile extends", () => {
       exclusiveAllow: [],
       chain: ["mac", "studio"],
       packProfiles: { base: "mac", macos: "mac", server: "studio" },
+      projects: [],
     });
     expect(loadProfileConfig(source, "desk")).toMatchObject({
       harnesses: ["codex"],

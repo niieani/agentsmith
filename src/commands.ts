@@ -8,7 +8,7 @@ import { adoptGlobal } from "./adopt.ts";
 import { adoptSkill } from "./adopt-skill.ts";
 import { cleanGlobal, cleanProject } from "./clean.ts";
 import { AgentsmithError, classify, errorCode, errorMessage, exitCodeFor } from "./errors.ts";
-import { CommandError, ensureCleanSource, gitHeadCommit, gitIsTracked, gitPathStatus, gitPullFfOnly, gitWorktree } from "./git.ts";
+import { CommandError, ensureCleanSource, gitHasTracked, gitHeadCommit, gitIsTracked, gitPathStatus, gitPullFfOnly, gitWorktree } from "./git.ts";
 import { assertPlanValid, buildGlobalPlan, buildProjectPlan, type BuiltPlan, type UnmanagedSkill } from "./planner.ts";
 import { isWithin } from "./fs.ts";
 import {
@@ -229,6 +229,28 @@ export interface ProjectEntries {
   previousClaudeMdExcludes: string[];
 }
 
+async function untrackedDirectories(root: string, paths: readonly string[]): Promise<string[]> {
+  const untracked: string[] = [];
+  for (const path of paths) if (!(await gitHasTracked(root, path))) untracked.push(path);
+  return untracked;
+}
+
+/** A third-party repository's committed files belong to its authors; agentsmith writes only untracked personal files. */
+async function refuseCommittedUpstreamWrites(plan: BuiltPlan, root: string): Promise<void> {
+  if (plan.upstream === undefined) return;
+  const committed: string[] = [];
+  for (const write of plan.writes) if (await gitIsTracked(root, write.destination)) committed.push(write.destination);
+  if (committed.length > 0) {
+    throw new AgentsmithError(
+      "config",
+      [
+        `upstream = "${plan.upstream}": agentsmith never writes a repository's committed files, but the plan would replace:`,
+        ...committed.map((path) => `  ${path}`),
+      ].join("\n"),
+    );
+  }
+}
+
 export async function projectEntries(plan: BuiltPlan, worktreeRoot: string, previous: ProjectState): Promise<ProjectEntries> {
   const settingsPath = claudeLocalSettingsPath(plan.projectRoot!);
   const previousExcludes = previous.excludes ?? [];
@@ -239,7 +261,7 @@ export async function projectEntries(plan: BuiltPlan, worktreeRoot: string, prev
     settingsPath,
     excludes: [
       ...(await desiredExcludes(worktreeRoot, plan.projectRoot!, personal, plan.claudeMdExcludes, previousExcludes)),
-      ...plan.personalExcludes.map((path) => excludeEntry(worktreeRoot, path, true)),
+      ...(await untrackedDirectories(worktreeRoot, plan.personalExcludes)).map((path) => excludeEntry(worktreeRoot, path, true)),
     ],
     claudeMdExcludes: plan.claudeMdExcludes,
     previousExcludes,
@@ -264,6 +286,7 @@ export async function generateProject(plan: BuiltPlan, options: ProjectGenerateO
   await classify("config", () => assertPlanValid(plan));
   printDiagnostics(plan.diagnostics.filter((item) => item.severity !== "error"));
   const prepared = await prepareProjectPlan(plan);
+  await refuseCommittedUpstreamWrites(plan, prepared.worktree.root);
   await preflightProjectPlan(plan, { projectRoot: plan.projectRoot!, state: prepared.previous });
   const unmanaged = exclusiveViolations(
     plan,

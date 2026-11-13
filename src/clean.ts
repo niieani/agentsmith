@@ -1,11 +1,12 @@
 import { lstat, readFile, rm, rmdir } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
-import { discoverProjectConfig, loadProjectConfig, MACHINE_CONFIG_PATH, requireMachineHome, resolveConfiguredPath } from "./config.ts";
+import { MACHINE_CONFIG_PATH, requireMachineHome, resolveConfiguredPath } from "./config.ts";
 import { AgentsmithError, classify, errorMessage } from "./errors.ts";
-import { agentsmithHome, canonicalRoot, isWithin } from "./fs.ts";
+import { agentsmithHome, isWithin } from "./fs.ts";
 import { gitPathStatus, gitWorktree } from "./git.ts";
 import { claudeLocalSettingsPath, excludeEntry, infoExcludePath, readClaudeSettings, updateClaudeMdExcludes, updateInfoExclude } from "./personal.ts";
 import { buildProjectPlan } from "./planner.ts";
+import { resolveProject } from "./project.ts";
 import {
   type ArtifactBackup,
   backupGlobalArtifacts,
@@ -169,9 +170,7 @@ export function owningScope(path: string, scopes: readonly string[]): string {
  */
 export async function cleanProject(options: CleanOptions): Promise<void> {
   const start = options.project ?? process.cwd();
-  const configPath = await classify("config", () => discoverProjectConfig(start));
-  const config = await classify("config", () => loadProjectConfig(configPath));
-  const projectRoot = canonicalRoot(dirname(dirname(dirname(configPath))));
+  const { project: config, projectRoot } = await classify("config", () => resolveProject(start, options.config ?? MACHINE_CONFIG_PATH));
   const worktree = await gitWorktree(projectRoot);
   const statePath = projectStatePath(worktree);
   const state = await loadProjectState(statePath);

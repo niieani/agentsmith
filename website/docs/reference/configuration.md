@@ -78,6 +78,7 @@ Profile budgets override matching Source Repository defaults. See [per-harness s
 | `budgets` | No | Same keys as the Source Repository root. |
 | `exclusive` | No | `true` reports every skill agentsmith did not write. See [exclusive mode](#exclusive-mode). Default `false`. |
 | `exclusive_allow` | No | Skill directory name globs that exclusive mode leaves alone. |
+| `projects` | No | `[[projects]]` entries that configure [third-party repositories](#third-party-repositories). |
 
 ### Extending a profile
 
@@ -96,6 +97,7 @@ A profile may extend one parent, which may extend another. agentsmith merges the
 | `harness_skills.<harness>.enable`, `.disable` | Ordered union per harness, parent entries first. Each configured harness must be selected by the resolved profile. |
 | `harnesses`, `template`, `exclusive` | The child's value replaces the parent's when set. |
 | `exclusive_allow` | Ordered union, parent entries first. |
+| `projects` | The child's entries first, then the parent's; the first matching entry wins. |
 | `budgets` | Per key; the child's value wins. The result then overrides Source Repository defaults. |
 
 Packs are additive only; a child cannot remove a parent's pack. A base profile may list only packs; the selected profile must end up with `harnesses` and `template`, set directly or inherited. Cycles and missing parents are errors. `asmith global explain` shows the resolved chain and which profile contributed each pack.
@@ -142,13 +144,49 @@ skills_disable = []
 disable = ["publish"]
 ```
 
-Top-level project keys are `harnesses`, `claude_import_agents_md`, `budgets`, `exclusive`, `exclusive_allow`, and `scopes`. Scope keys are `path`, `template`, `packs`, `harnesses`, `skills_enable`, `skills_disable`, `harness_skills`, `exclusive`, and `exclusive_allow`. A `[scopes.harness_skills.<harness>]` table applies to the most recent `[[scopes]]` entry.
+Top-level project keys are `harnesses`, `claude_import_agents_md`, `budgets`, `exclusive`, `exclusive_allow`, `upstream`, and `scopes`. Scope keys are `path`, `template`, `packs`, `harnesses`, `skills_enable`, `skills_disable`, `harness_skills`, `exclusive`, and `exclusive_allow`. A `[scopes.harness_skills.<harness>]` table applies to the most recent `[[scopes]]` entry.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `claude_import_agents_md` | `true` | When a scope's generated `CLAUDE.md` would be byte-identical to the `AGENTS.md` generated beside it, write `CLAUDE.md` containing only `@AGENTS.md`. Set `false` to always write the full content. |
 | `exclusive` | `false` | Turn on [exclusive mode](#exclusive-mode) for every scope. A scope's own `exclusive` overrides it. |
 | `exclusive_allow` | `[]` | Skill directory name globs that exclusive mode leaves alone. A scope's own list is added to this one. |
+| `upstream` | unset | `"keep"` or `"replace"` marks a [third-party repository](#third-party-repositories): agentsmith writes only personal files. |
+
+## Third-party repositories
+
+Some repositories already commit their own `AGENTS.md`, `CLAUDE.md`, or skills, and you cannot or should not change them. Mark such a repository with `upstream`, and agentsmith never writes its committed files: every input is personal, and only the personal files and skills are written, all excluded through `.git/info/exclude`.
+
+| `upstream` | `AGENTS.override.md` (Codex) | `CLAUDE.local.md` (Claude) | Upstream `CLAUDE.md` |
+| --- | --- | --- | --- |
+| `keep` (default) | upstream `AGENTS.md`, then your layer | your layer only | still loaded |
+| `replace` | your layer only | your layer only | excluded through `claudeMdExcludes` |
+
+With `keep`, a directory that has an upstream `AGENTS.md` but no `CLAUDE.md` gets `@AGENTS.md` at the top of `CLAUDE.local.md`, because a `CLAUDE.local.md` turns off Claude's fallback to `AGENTS.md`. Upstream skills stay visible; one with the same name as a generated skill is an error. Generic tools keep reading the upstream `AGENTS.md`.
+
+You can put `upstream` in a `.config/agentsmith/config.toml` you add to the repository yourself; agentsmith excludes `/.config/agentsmith/` through `.git/info/exclude` so it stays out of `git status`. Without any project config, add an entry to your profile instead:
+
+```toml title="profiles/laptop.toml"
+[[projects]]
+remote = "github.com/acme/tool"   # matches git@github.com:acme/tool.git, https://github.com/acme/tool, ...
+upstream = "replace"
+packs = ["base", "review"]
+template = "personal"
+
+[[projects]]
+path = "~/src/vendor-sdk"
+packs = ["base"]
+template = "personal"
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `path` or `remote` | required, exactly one | The repository root, or any of its remote URLs. Remotes compare by host and path, ignoring the scheme, user, and `.git`. |
+| `upstream` | `"keep"` | As in the table above. |
+| `harnesses` | the profile's | Harnesses for this repository. |
+| `template`, `packs`, `skills_enable`, `skills_disable` | none | As in a project scope at `.`. Source IDs cannot be `project:`-qualified. |
+
+`asmith project generate`, `diff`, `lint`, `explain`, and `clean` use the first matching entry when they find no `.config/agentsmith/config.toml`.
 
 ## Exclusive mode
 
