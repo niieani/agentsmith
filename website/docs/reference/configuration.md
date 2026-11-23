@@ -292,7 +292,7 @@ Harness names are `generic`, `codex`, `claude`, and `antigravity`. `generic` tar
 Antigravity (`agy`) loads every instruction file it finds: nothing overrides or hides another file. agentsmith therefore:
 
 - writes global instructions to its own rule file, `~/.gemini/config/rules/agentsmith.md`, starting with `trigger: always_on` front matter. It uses `templates/<family>/antigravity.md` and `instructions/antigravity/` snippets. Antigravity does not read `~/.agents/skills`, so global skills enabled for it get their own copy in `~/.gemini/config/skills`;
-- shares the project `<scope>/AGENTS.md` with `codex` and `generic` and never writes `GEMINI.md`, which Antigravity would load as well. In a project, `instructions/antigravity/` snippets are an error and the `antigravity.md` variant is not used, because every tool reading `AGENTS.md` would see them. `lint` warns when a scope has a `GEMINI.md` beside `AGENTS.md`;
+- shares the project `<scope>/AGENTS.md` with `codex` and `generic` and never writes `GEMINI.md`, which Antigravity would load as well. In a project, `instructions/antigravity/` snippets and the `antigravity.md` variant do not render into `AGENTS.md`, because every tool reading it would see them. The snippets go to always-on rules only Antigravity reads: shared ones to the committed `<scope>/.agents/rules/agentsmith.md`, personal ones to the personal rule. The variant applies only globally; a project `antigravity.md` variant is reported with a notice. `lint` warns when a scope has a `GEMINI.md` beside `AGENTS.md`;
 - writes personal additions to `<scope>/.agents/rules/agentsmith-personal.md` ([below](#shared-and-personal-layers)).
 
 ### Shared `AGENTS.md`
@@ -324,7 +324,7 @@ Every project Instruction Layer is rendered twice:
 
 | Layer | Rendered from | Files | Committed |
 | --- | --- | --- | --- |
-| Shared | shared inputs only | `<scope>/AGENTS.md`, `<scope>/CLAUDE.md` (or `@AGENTS.md`) | yes |
+| Shared | shared inputs only | `<scope>/AGENTS.md`, `<scope>/CLAUDE.md` (or `@AGENTS.md`), `<scope>/.agents/rules/agentsmith.md` (Antigravity snippets only) | yes |
 | Personal | every input | `<scope>/AGENTS.override.md` for `codex`, `<scope>/CLAUDE.local.md` for `claude`, `<scope>/.agents/rules/agentsmith-personal.md` (additions only) for `antigravity` | no, excluded through `.git/info/exclude` |
 
 The personal files are written only when they differ from the shared layer. Codex reads `AGENTS.override.md` instead of `AGENTS.md`. For Claude, agentsmith adds `<scope>/CLAUDE.md` to `claudeMdExcludes` in `<project>/.claude/settings.local.json`, so Claude loads only `CLAUDE.local.md` for that folder. agentsmith owns only the `claudeMdExcludes` entries it added and keeps every other setting. `generic` has no personal file; other agents read the shared `AGENTS.md`.
@@ -352,6 +352,8 @@ These personal instructions extend AGENTS.md and take precedence over it where t
 
 Prefer early returns.
 ```
+
+Antigravity-specific snippets get the same layout. Those from the project's own `.config/agentsmith/` go to `<scope>/.agents/rules/agentsmith.md`, committed beside `AGENTS.md` and opening with "These instructions extend AGENTS.md for this agent only."; personal ones (Source Repository packs, `*.local.md`) go to the personal rule.
 
 Adding a personal snippet or pack never changes the shared layer, so teammates never see your personal instructions in a diff. A Source Repository partial included by a project template renders as nothing in the shared layer. When the template itself comes from the Source Repository, no shared file is written and only the personal files carry the scope's instructions. To commit such a template with the project, copy it into `.config/agentsmith/` with [`asmith project init --template NAME`](/reference/commands#copying-a-template-into-the-project), which sets `template = "project:NAME"`.
 

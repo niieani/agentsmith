@@ -51,7 +51,7 @@ skills_enable = ["review-worktree"]
 skills_disable = ["publish"]
 ```
 
-`generic` writes global skills to `~/.agents/skills`, where Codex reads them; `codex` writes only `~/.codex/AGENTS.md`. A global skill enabled for `codex` without `generic` is an error. See [harness destinations](/reference/configuration#harness-destinations).
+`generic` writes global skills to `~/.agents/skills`, where Codex reads them; `codex` writes only `~/.codex/AGENTS.md`. A global skill enabled for `codex` without `generic` is an error. Add `antigravity` to write Antigravity's global instructions as an always-on rule, `~/.gemini/config/rules/agentsmith.md`, and its skills to `~/.gemini/config/skills`; agentsmith never edits your own `GEMINI.md`. See [harness destinations](/reference/configuration#harness-destinations).
 
 The Source Repository also needs an `agentsmith.toml` root config, the selected template family, packs, and skill sources. See [Source Repository layout](/reference/source-layout).
 

@@ -354,6 +354,8 @@ interface InstructionGroup {
   /** The Instruction Layer file the harnesses share, such as `<scope>/AGENTS.md`. */
   destination: string;
   harnesses: HarnessName[];
+  /** Harnesses whose template variant and snippets render into the file, most specific first. */
+  variants: HarnessName[];
   /** Rendered from every input. */
   full: LayerRender;
   /** Project mode: rendered from shared inputs only, or undefined when shared inputs cannot render it. */
@@ -424,8 +426,10 @@ async function renderInstruction(
   packs: LoadedPack[],
   variants: HarnessName[],
   diagnostics: Diagnostic[],
+  /** Harnesses whose snippets render after the variants' snippets without choosing the template. */
+  extraSnippets: HarnessName[] = [],
 ): Promise<LayerRender> {
-  const snippetOrder = [...variants].reverse();
+  const snippetOrder = [...[...variants].reverse(), ...extraSnippets];
   let contributions = (await Promise.all(packs.map((pack) => loadInstructionContributions(pack, snippetOrder)))).flat();
   if (sources.sharedOnly) contributions = contributions.filter((item) => !isLocalSource(item.path));
   const template = await loadTemplate(sources, scope.template!, variants);
@@ -436,31 +440,34 @@ async function renderInstruction(
 /** Opening line of a personal rule that adds to a shared instruction file. */
 export const PERSONAL_RULE_INTRO = "These personal instructions extend AGENTS.md and take precedence over it where they conflict.";
 
+/** Opening line of a shared rule holding one harness's own snippets beside the shared instruction file. */
+export const HARNESS_RULE_INTRO = "These instructions extend AGENTS.md for this agent only.";
+
 /**
- * Content of a personal rule for a harness that loads every instruction file (Antigravity): the personal snippets of
- * the layer, each under the heading its slot has in the template, in template order. Without a shared layer (a
- * third-party repository, or a template that is not a shared input) the whole layer is personal. Undefined when the
- * layer has no personal snippets.
+ * Rule content adding to an instruction file a harness already reads: the snippets `layer` renders and `base` does not,
+ * each under the heading its slot has in the template, in template order. Undefined when there are none.
  */
-async function personalRuleBody(context: PlannerContext, group: InstructionGroup, path: string): Promise<{ content: string; trace: RenderTrace } | undefined> {
-  if (group.shared === undefined) {
-    const intro = context.upstream === undefined ? "" : `${PERSONAL_RULE_INTRO}\n\n`;
-    return { content: normalizeMarkdown(intro + group.full.content), trace: group.full.trace };
-  }
-  const sharedPaths = new Set(Object.values(group.shared.trace.slots).flat());
-  const personalPaths = new Set(
-    Object.values(group.full.trace.slots)
+async function additionsBody(
+  context: PlannerContext,
+  base: LayerRender,
+  layer: LayerRender,
+  intro: string,
+  path: string,
+): Promise<{ content: string; trace: RenderTrace } | undefined> {
+  const basePaths = new Set(Object.values(base.trace.slots).flat());
+  const addedPaths = new Set(
+    Object.values(layer.trace.slots)
       .flat()
-      .filter((item) => !sharedPaths.has(item)),
+      .filter((item) => !basePaths.has(item)),
   );
-  const personal = group.full.contributions.filter((item) => personalPaths.has(item.path));
-  if (personal.length === 0) return undefined;
-  const filled = new Set(personal.map((item) => item.slot));
-  const lines = [PERSONAL_RULE_INTRO, ""];
+  const added = layer.contributions.filter((item) => addedPaths.has(item.path));
+  if (added.length === 0) return undefined;
+  const filled = new Set(added.map((item) => item.slot));
+  const lines = [intro, ""];
   const directive = (slot: string) => lines.push(`<!-- agentsmith:slot ${slot} -->`, "");
   if (filled.has("prepend")) directive("prepend");
   let heading: string | null = null;
-  for (const item of group.full.slotHeadings) {
+  for (const item of layer.slotHeadings) {
     if (!filled.has(item.slot)) continue;
     if (item.heading !== null && item.heading !== heading) lines.push(item.heading, "");
     heading = item.heading;
@@ -468,7 +475,7 @@ async function personalRuleBody(context: PlannerContext, group: InstructionGroup
   }
   if (filled.has("append")) directive("append");
   // Diagnostics about these snippets were already reported for the layer itself.
-  const rendered = await renderContent(context, lines.join("\n"), path, personal, false, { sources: context.sources, diagnostics: [] });
+  const rendered = await renderContent(context, lines.join("\n"), path, added, false, { sources: context.sources, diagnostics: [] });
   return { content: rendered.content, trace: rendered.trace };
 }
 
@@ -507,22 +514,8 @@ async function planInstructions(context: PlannerContext, scope: ScopeInput, pack
       (a, b) => getHarnessAdapter(b).instructionPrecedence - getHarnessAdapter(a).instructionPrecedence || HARNESS_NAMES.indexOf(a) - HARNESS_NAMES.indexOf(b),
     );
     // In a project, a harness without its own project content (Antigravity) renders no variant or snippets into the
-    // file it shares; its snippets there are an error.
+    // file it shares; its snippets go to its own rules instead (planHarnessRules).
     const variants = context.mode === "project" ? sorted.filter((harness) => getHarnessAdapter(harness).projectHarnessContent !== false) : sorted;
-    if (context.mode === "project") {
-      for (const harness of sorted.filter((item) => !variants.includes(item))) {
-        for (const pack of packs) {
-          for (const item of (await loadInstructionContributions(pack, [harness])).filter((contribution) => contribution.harness === harness)) {
-            error(
-              context.diagnostics,
-              "harness-instruction-content-project",
-              `${item.path} is ${harness}-specific instruction content, but ${harness} reads the shared ${destination} in scope ${scope.path}; ${harness}-specific instructions apply only to the Global Scope, so make the snippet common or remove it`,
-              item.path,
-            );
-          }
-        }
-      }
-    }
     if (!scope.template) {
       const contributions = (await Promise.all(packs.map((pack) => loadInstructionContributions(pack, [...variants].reverse())))).flat();
       if (contributions.length > 0) {
@@ -555,10 +548,22 @@ async function planInstructions(context: PlannerContext, scope: ScopeInput, pack
       continue;
     }
     context.diagnostics.push(...fullDiagnostics);
+    if (context.mode === "project") {
+      for (const harness of sorted.filter((item) => !variants.includes(item))) {
+        const variant = join(dirname(full.template.path), `${harness}.md`);
+        if (!existsSync(variant)) continue;
+        notice(
+          context.diagnostics,
+          "harness-template-variant-project",
+          `${variant} is not used in scope ${scope.path}: ${harness} reads the shared ${destination} there, so its template variant applies only to the Global Scope; its project snippets go to its rules`,
+          variant,
+        );
+      }
+    }
     for (const harness of members) {
       context.diagnostics.push(...(getHarnessAdapter(harness).preflightInstruction?.(destination, context.ownedPaths) ?? []));
     }
-    const group: InstructionGroup = { destination, harnesses: members, full };
+    const group: InstructionGroup = { destination, harnesses: members, variants, full };
     if (context.mode === "project" && context.sharedSources !== undefined) {
       const sharedDiagnostics: Diagnostic[] = [];
       try {
@@ -697,49 +702,108 @@ async function planInstructions(context: PlannerContext, scope: ScopeInput, pack
   }
 
   if (context.mode === "project") {
-    for (const group of groups) await planPersonalRules(context, scope, group, packs);
+    for (const group of groups) await planHarnessRules(context, scope, group, packs, sharedPacks);
   }
 }
 
 /**
- * Plans the personal rule of each harness that loads every instruction file and so cannot read a personal file instead
- * of the shared one (Antigravity): the personal additions go to a separate always-on rule, excluded from Git.
+ * Plans the project rules of each harness that loads every instruction file and so cannot read one file instead of the
+ * shared one (Antigravity). Both rules add to the shared file under its slot headings:
+ *
+ * - the shared rule holds the harness's own snippets from shared inputs, committed with the shared file;
+ * - the personal rule holds what the harness would see from every input but does not get from the shared file and the
+ *   shared rule, excluded from Git. Without a shared layer (a third-party repository, or a template that is not a shared
+ *   input) the whole layer is personal.
  */
-async function planPersonalRules(context: PlannerContext, scope: ScopeInput, group: InstructionGroup, packs: LoadedPack[]): Promise<void> {
+async function planHarnessRules(
+  context: PlannerContext,
+  scope: ScopeInput,
+  group: InstructionGroup,
+  packs: LoadedPack[],
+  sharedPacks: LoadedPack[],
+): Promise<void> {
   for (const harness of group.harnesses) {
     const adapter = getHarnessAdapter(harness);
-    const path = adapter.projectPersonalRule?.(context.projectRoot!, scope.path);
-    if (path === undefined) continue;
-    const destination = resolve(path);
-    const body = await personalRuleBody(context, group, destination);
-    if (body === undefined) continue;
-    const content = (adapter.instructionFrontMatter ?? "") + body.content;
-    context.writes.push({
-      destination,
-      content: encoder.encode(content),
-      kind: "instruction",
-      harness,
-      scope: scope.path,
-      provenance: [group.full.template.path, ...Object.values(body.trace.slots).flat(), ...body.trace.includes],
-      layer: "personal",
-    });
-    context.explanations.push({
-      kind: "instruction",
-      layer: "personal",
-      harness,
-      harnesses: [harness],
-      scope: scope.path,
-      destination,
-      extends: group.destination,
-      template: group.full.template.path,
-      templateSelection: group.full.template.selection,
-      templateSourceId: group.full.template.sourceId,
-      packs: packs.map((pack) => pack.sourceId),
-      packSources: packs.map((pack) => ({ selection: pack.selection, sourceId: pack.sourceId, directory: pack.directory })),
-      trace: body.trace,
-      bytes: utf8Bytes(content),
-    });
+    const personalPath = adapter.projectPersonalRule?.(context.projectRoot!, scope.path);
+    if (personalPath === undefined) continue;
+    const own = adapter.projectHarnessContent === false && !group.variants.includes(harness) ? [harness] : [];
+    const hasOwn =
+      own.length > 0 && (await Promise.all(packs.map((pack) => loadInstructionContributions(pack, own)))).flat().some((item) => item.harness === harness);
+    let full = group.full;
+    if (hasOwn) {
+      const diagnostics: Diagnostic[] = [];
+      full = await renderInstruction(context, context.sources, scope, packs, group.variants, diagnostics, own);
+      // Report only what the harness's own snippets add; the rest was reported for the shared file.
+      const seen = new Set(context.diagnostics.map((item) => `${item.code}\0${item.message}`));
+      context.diagnostics.push(...diagnostics.filter((item) => !seen.has(`${item.code}\0${item.message}`)));
+    }
+    let base = group.shared;
+    const sharedPath = adapter.projectSharedRule?.(context.projectRoot!, scope.path);
+    if (hasOwn && group.shared !== undefined && sharedPath !== undefined) {
+      const diagnostics: Diagnostic[] = [];
+      let shared: LayerRender | undefined;
+      try {
+        shared = await renderInstruction(context, context.sharedSources!, scope, sharedPacks, group.variants, diagnostics, own);
+      } catch (cause) {
+        if (!isPersonalSkip(cause)) throw cause;
+      }
+      if (shared !== undefined && !diagnostics.some((item) => item.severity === "error")) {
+        const destination = resolve(sharedPath);
+        const body = await additionsBody(context, group.shared, shared, HARNESS_RULE_INTRO, destination);
+        if (body !== undefined) {
+          planRule(context, scope, group, harness, destination, body, "shared", sharedPacks);
+          base = shared;
+        }
+      }
+    }
+    const destination = resolve(personalPath);
+    let body: { content: string; trace: RenderTrace } | undefined;
+    if (base === undefined) {
+      const intro = context.upstream === undefined ? "" : `${PERSONAL_RULE_INTRO}\n\n`;
+      body = { content: normalizeMarkdown(intro + full.content), trace: full.trace };
+    } else {
+      body = await additionsBody(context, base, full, PERSONAL_RULE_INTRO, destination);
+    }
+    if (body !== undefined) planRule(context, scope, group, harness, destination, body, "personal", packs);
   }
+}
+
+function planRule(
+  context: PlannerContext,
+  scope: ScopeInput,
+  group: InstructionGroup,
+  harness: HarnessName,
+  destination: string,
+  body: { content: string; trace: RenderTrace },
+  layer: InstructionLayerKind,
+  packs: LoadedPack[],
+): void {
+  const content = (getHarnessAdapter(harness).instructionFrontMatter ?? "") + body.content;
+  context.writes.push({
+    destination,
+    content: encoder.encode(content),
+    kind: "instruction",
+    harness,
+    scope: scope.path,
+    provenance: [group.full.template.path, ...Object.values(body.trace.slots).flat(), ...body.trace.includes],
+    layer,
+  });
+  context.explanations.push({
+    kind: "instruction",
+    layer,
+    harness,
+    harnesses: [harness],
+    scope: scope.path,
+    destination,
+    extends: group.destination,
+    template: group.full.template.path,
+    templateSelection: group.full.template.selection,
+    templateSourceId: group.full.template.sourceId,
+    packs: packs.map((pack) => pack.sourceId),
+    packSources: packs.map((pack) => ({ selection: pack.selection, sourceId: pack.sourceId, directory: pack.directory })),
+    trace: body.trace,
+    bytes: utf8Bytes(content),
+  });
 }
 
 /**

@@ -34,6 +34,8 @@ packs = ["team", "base", "github"]
 
 Every project must declare the repository scope with `path = "."`. Templates and packs under `.config/agentsmith/` are shared: they render into the committed `AGENTS.md` and `CLAUDE.md`. Names that come from your Source Repository, such as `base` and `github` here, are personal: they render into `AGENTS.override.md` and `CLAUDE.local.md`, which Git never sees.
 
+With `antigravity` selected, Antigravity reads the same `AGENTS.md`. It loads every instruction file it finds and cannot read a personal file instead, so agentsmith adds to it with always-on rules only Antigravity reads: `instructions/antigravity/` snippets from the project go to the committed `.agents/rules/agentsmith.md`, and personal additions to `.agents/rules/agentsmith-personal.md`, which Git never sees.
+
 ## 2. Preview the plan
 
 ```sh

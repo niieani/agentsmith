@@ -1,6 +1,6 @@
 # agentsmith
 
-agentsmith assembles agent instructions and skills from Git-backed templates and reusable packs. It generates native, scope-aware artifacts for Codex, Claude Code, and the shared `.agents/` convention while protecting local edits.
+agentsmith assembles agent instructions and skills from Git-backed templates and reusable packs. It generates native, scope-aware artifacts for Codex, Claude Code, Antigravity, and the shared `.agents/` convention while protecting local edits.
 
 The command is `asmith`.
 
@@ -8,7 +8,7 @@ The command is `asmith`.
 
 - synchronizes one reusable Source Repository across machines;
 - selects machine behavior through profiles and ordered packs;
-- generates `AGENTS.md`, `CLAUDE.md`, and native skill directories, placing each skill so no harness sees it twice;
+- generates `AGENTS.md`, `CLAUDE.md`, Antigravity rules, and native skill directories, placing each skill so no harness sees it twice;
 - supports repository and monorepo subtree scopes;
 - fills precise Markdown slots and flattens reusable partials;
 - previews diffs, validates composition, and explains provenance;
@@ -89,7 +89,7 @@ template = "personal"
 packs = ["base", "macos"]
 ```
 
-`generic` writes `~/.agents/skills` and project `.agents/skills`, which Codex also reads; `codex` writes `~/.codex/AGENTS.md`; `claude` writes `~/.claude/`. See [harness discovery](website/docs/reference/harness-discovery.md) for the full mapping.
+`generic` writes `~/.agents/skills` and project `.agents/skills`, which Codex also reads; `codex` writes `~/.codex/AGENTS.md`; `claude` writes `~/.claude/`; `antigravity` writes the always-on rule `~/.gemini/config/rules/agentsmith.md` and `~/.gemini/config/skills`. See [harness discovery](website/docs/reference/harness-discovery.md) for the full mapping.
 
 Then preview and generate:
 
@@ -127,7 +127,7 @@ asmith project diff
 asmith project generate
 ```
 
-Project generation never pulls Git. Inputs in `.config/agentsmith/` render the committed `AGENTS.md` and `CLAUDE.md`; Source Repository inputs and `*.local.md` snippets render personal `AGENTS.override.md` and `CLAUDE.local.md` files that Git never sees. Skills are generated, not committed. agentsmith replaces an existing output only when Git has it tracked and clean or it still holds what agentsmith last wrote.
+Project generation never pulls Git. Inputs in `.config/agentsmith/` render the committed `AGENTS.md` and `CLAUDE.md`; Source Repository inputs and `*.local.md` snippets render personal `AGENTS.override.md` and `CLAUDE.local.md` files that Git never sees. Antigravity reads the shared `AGENTS.md` and gets its additions as rules in `.agents/rules/`. Skills are generated, not committed. agentsmith replaces an existing output only when Git has it tracked and clean or it still holds what agentsmith last wrote.
 
 ## Composition syntax
 

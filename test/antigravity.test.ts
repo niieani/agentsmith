@@ -218,17 +218,32 @@ describe("antigravity project scope", () => {
     expect(existsSync(join(f.project, ".agents", "rules"))).toBeFalse();
   });
 
-  test("rejects Antigravity-specific instruction snippets in a project", async () => {
-    const f = await layeredProject(["antigravity"]);
+  test("puts Antigravity-specific snippets in an Antigravity-only rule beside the shared AGENTS.md", async () => {
+    const f = await layeredProject(["codex", "antigravity"]);
     await put(join(f.config, "templates", "guide", "antigravity.md"), "# Unused variant\n");
     await put(join(f.config, "packs", "team", "instructions", "antigravity", "notes", "20-agy.md"), "Agy note.\n");
-    const lint = await f.asmith("project", "lint");
-    expect(lint.exitCode).not.toBe(0);
-    expect(lint.stdout + lint.stderr).toContain("harness-instruction-content-project");
+    await put(join(f.config, "packs", "team", "instructions", "antigravity", "style", "30-mine.local.md"), "My agy style.\n");
+    await commitAll(f, "antigravity inputs");
+    const result = await f.asmith("project", "generate");
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stderr).toContain("harness-template-variant-project");
+    // Neither the variant nor the snippets reach the AGENTS.md Codex and every other agent reads.
+    const agents = "# Guide\n\n## Notes\n\nTeam note.\n\n## Style\n\nTeam style.\n";
+    expect(await readFile(join(f.project, "AGENTS.md"), "utf8")).toBe(agents);
+    expect(existsSync(join(f.project, "AGENTS.override.md"))).toBeFalse();
+    // Shared Antigravity snippets: a committed rule. Personal ones: the excluded personal rule.
+    const sharedRule = join(f.project, ".agents", "rules", "agentsmith.md");
+    expect(await readFile(sharedRule, "utf8")).toBe(`${FRONT_MATTER}These instructions extend AGENTS.md for this agent only.\n\n## Notes\n\nAgy note.\n`);
+    expect(await readFile(personalRule(f), "utf8")).toBe(`${FRONT_MATTER}${INTRO}\n\n## Style\n\nMy agy style.\n`);
+    expect(await f.git("status", "--porcelain", "-uall")).toBe("?? .agents/rules/agentsmith.md\n?? AGENTS.md\n");
+    expect((await f.asmith("project", "diff")).stdout).toBe("No changes.\n");
+
+    // Without Antigravity snippets both rules go away.
     await rm(join(f.config, "packs", "team", "instructions", "antigravity"), { recursive: true });
-    // The Antigravity template variant never renders into the shared AGENTS.md.
-    expect((await f.asmith("project", "generate")).exitCode).toBe(0);
-    expect(await readFile(join(f.project, "AGENTS.md"), "utf8")).toStartWith("# Guide\n");
+    const second = await f.asmith("project", "generate");
+    expect(second.exitCode, second.stderr).toBe(0);
+    expect(existsSync(sharedRule)).toBeFalse();
+    expect(existsSync(personalRule(f))).toBeFalse();
   });
 
   test("an Antigravity skill snippet puts the skill's Antigravity copy in .agent/skills, which wins over .agents/skills", async () => {
@@ -295,6 +310,7 @@ describe("antigravity in a third-party repository", () => {
     await put(join(f.source, "templates", "mine", "default.md"), "# Mine\n\n<!-- agentsmith:slot notes -->\n");
     await put(join(f.source, "packs", "mine", "pack.toml"), "skills = []\n");
     await put(join(f.source, "packs", "mine", "instructions", "notes", "10-mine.md"), "My note.\n");
+    await put(join(f.source, "packs", "mine", "instructions", "antigravity", "notes", "20-agy.md"), "My agy note.\n");
     await put(f.machine, `source = ${JSON.stringify(f.source)}\nprofile = "me"\n`);
     await put(
       join(f.config, "config.toml"),
@@ -308,7 +324,7 @@ describe("antigravity in a third-party repository", () => {
     const result = await f.asmith("project", "generate");
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.stderr).not.toContain("upstream-replace-cumulative");
-    expect(await readFile(personalRule(f), "utf8")).toBe(`${FRONT_MATTER}${INTRO}\n\n# Mine\n\nMy note.\n`);
+    expect(await readFile(personalRule(f), "utf8")).toBe(`${FRONT_MATTER}${INTRO}\n\n# Mine\n\nMy note.\n\nMy agy note.\n`);
     expect(await readFile(join(f.project, "AGENTS.md"), "utf8")).toBe("# Upstream\n\nUpstream rules.\n");
     expect(await f.git("status", "--porcelain")).toBe("");
     expect(Object.keys(await tree(f.project, [".git", ".config"])).sort()).toEqual([".agents/rules/agentsmith-personal.md", "AGENTS.md"]);

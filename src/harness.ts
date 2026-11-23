@@ -45,9 +45,14 @@ export interface HarnessAdapter {
   instructionFrontMatter?: string;
   /**
    * False when the harness's own template variant and instruction snippets must not render into the project instruction
-   * file it shares: its snippets there are an error and its variant is not used. Defaults to true.
+   * file it shares: its snippets go to its project rules instead, and its variant is not used. Defaults to true.
    */
   projectHarnessContent?: boolean;
+  /**
+   * Project rule file holding this harness's own shared instruction snippets as additions to the shared instruction
+   * file, for a harness that loads every instruction file cumulatively. Committed like the shared file.
+   */
+  projectSharedRule?(projectRoot: string, scopePath: string): string;
   /**
    * Project rule file holding the personal layer as additions to the shared instruction file, for a harness that loads
    * every instruction file cumulatively and has no way to read one file instead of another.
@@ -164,7 +169,8 @@ const claude: HarnessAdapter = {
 
 /**
  * Antigravity (agy) loads every instruction file it finds and lets none replace another, so agentsmith owns a separate
- * always-on rule globally and adds personal content to a project as a rule beside the shared `AGENTS.md`. It never
+ * always-on rule globally. In a project it reads the shared `AGENTS.md`, and agentsmith adds Antigravity-specific
+ * snippets and personal content as rules beside it. It never
  * writes `GEMINI.md`, which Antigravity would load as well.
  */
 const antigravity: HarnessAdapter = {
@@ -178,6 +184,9 @@ const antigravity: HarnessAdapter = {
   instructionPrecedence: 5,
   instructionFrontMatter: ALWAYS_ON_FRONT_MATTER,
   projectHarnessContent: false,
+  projectSharedRule(projectRoot, scopePath): string {
+    return join(scopeDirectory(projectRoot, scopePath), ".agents", "rules", "agentsmith.md");
+  },
   projectPersonalRule(projectRoot, scopePath): string {
     return join(scopeDirectory(projectRoot, scopePath), ".agents", "rules", "agentsmith-personal.md");
   },
