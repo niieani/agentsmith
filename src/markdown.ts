@@ -36,6 +36,7 @@ interface RenderContext {
   resolveInclude?: IncludeResolver;
   includeStack: string[];
   reservedSlots: ReadonlySet<string>;
+  slotHeadings: Array<{ slot: string; heading: string | null }>;
 }
 
 type Directive = { kind: "slot"; name: string } | { kind: "required-slot"; name: string } | { kind: "include"; name: string };
@@ -88,6 +89,7 @@ export async function renderMarkdown(options: RenderMarkdownOptions): Promise<Re
     resolveInclude: options.resolveInclude,
     includeStack: [options.templatePath],
     reservedSlots: new Set(options.edgeSlots ? RESERVED_EDGE_SLOTS : []),
+    slotHeadings: [],
   };
 
   const contributions = options.contributions ?? [];
@@ -104,7 +106,7 @@ export async function renderMarkdown(options: RenderMarkdownOptions): Promise<Re
     if (prepend || append) content = normalizeMarkdown(prepend + content + append);
   }
 
-  return { content, trace, diagnostics };
+  return { content, trace, diagnostics, slotHeadings: context.slotHeadings };
 }
 
 /**
@@ -349,6 +351,7 @@ async function fillSlots(lines: string[], path: string, contributions: readonly 
     }
 
     const surrounding = nearestHeading(output);
+    context.slotHeadings.push({ slot: directive.name, heading: surrounding ? (output[surrounding.line - 1] ?? "").trimEnd() : null });
     const renderedItems: string[][] = [];
     for (const item of items) {
       const itemLines = await expandIncludes(splitLines(item.content), item.path, { ...context, includeStack: [item.path] }, false, surrounding);

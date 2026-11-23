@@ -140,6 +140,8 @@ export interface RenderResult {
   content: string;
   trace: RenderTrace;
   diagnostics: Diagnostic[];
+  /** The ATX heading line nearest above each declared slot, in template order; null when no heading precedes it. */
+  slotHeadings: Array<{ slot: string; heading: string | null }>;
 }
 
 /** A project Instruction Layer file: committed shared content, or a personal file read instead of it. */

@@ -277,3 +277,19 @@ describe("partial headings", () => {
     expect(codes(result.diagnostics).filter((code) => code === "partial-setext-heading")).toHaveLength(1);
   });
 });
+
+describe("slot headings", () => {
+  test("record the heading above each slot in template order, including headings from partials", async () => {
+    const result = await renderMarkdown({
+      templatePath: "templates/default.md",
+      content: "<!-- agentsmith:slot top -->\n\n# Guide\n\n## Notes\n\n<!-- agentsmith:slot notes -->\n\n<!-- agentsmith:include team/rules.md -->\n",
+      resolveInclude: () => ({ path: "partials/rules.md", content: "# Rules\n\n<!-- agentsmith:slot rules -->\n" }),
+    });
+    expect(result.diagnostics).toEqual([]);
+    expect(result.slotHeadings).toEqual([
+      { slot: "top", heading: null },
+      { slot: "notes", heading: "## Notes" },
+      { slot: "rules", heading: "### Rules" },
+    ]);
+  });
+});
