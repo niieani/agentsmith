@@ -6,6 +6,7 @@ import { generateGlobal } from "./commands.ts";
 import { loadMachineConfig, loadProfileConfig, MACHINE_CONFIG_PATH, parseSourceId, resolveConfiguredPath } from "./config.ts";
 import { AgentsmithError, classify } from "./errors.ts";
 import { gitIsIgnored } from "./git.ts";
+import { getHarnessAdapter } from "./harness.ts";
 import { RESERVED_EDGE_SLOTS, validLogicalName } from "./markdown.ts";
 import { assertPlanValid, buildGlobalPlan } from "./planner.ts";
 import { atomicWrite, globalBlobDirectory, globalStatePath, hashBytes, loadGlobalState, readBlob } from "./safety.ts";
@@ -29,9 +30,14 @@ export interface AdoptOptions {
 /**
  * Split an edited artifact around its last generated content. Only edits made
  * strictly before or after the generated content are adoptable; any other
- * change returns undefined.
+ * change returns undefined. With `frontMatter`, edits must follow it.
  */
-export function splitAroundGenerated(current: string, generated: string): { prefix: string; suffix: string } | undefined {
+export function splitAroundGenerated(current: string, generated: string, frontMatter = ""): { prefix: string; suffix: string } | undefined {
+  // A file that must start with front matter (an Antigravity rule) keeps it: edits are adopted after it.
+  if (frontMatter !== "" && generated.startsWith(frontMatter)) {
+    if (!current.startsWith(frontMatter)) return undefined;
+    return splitAroundGenerated(current.slice(frontMatter.length), generated.slice(frontMatter.length));
+  }
   const index = current.indexOf(generated);
   if (index < 0) return undefined;
   return { prefix: current.slice(0, index), suffix: current.slice(index + generated.length) };
@@ -131,7 +137,11 @@ export async function adoptGlobal(options: AdoptOptions): Promise<void> {
         refusals.push(`${destination}: no stored generated content exists for this artifact; run global generate once with this version first`);
         continue;
       }
-      const split = splitAroundGenerated(new TextDecoder().decode(current), new TextDecoder().decode(stored));
+      const split = splitAroundGenerated(
+        new TextDecoder().decode(current),
+        new TextDecoder().decode(stored),
+        getHarnessAdapter(harness).instructionFrontMatter,
+      );
       if (!split) {
         refusals.push(`${destination}: edits are not strictly before or after the generated content; resolve them by hand`);
         continue;

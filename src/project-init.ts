@@ -33,10 +33,25 @@ export const PREPARE_COMMAND = "asmith project generate";
 
 const PERSONAL_SNIPPETS = "/.config/agentsmith/**/*.local.md";
 
-/** Harnesses whose own directories already exist at the repository root, or all of them when none does. */
+/** Directories, or files, at the repository root that show a harness is already in use. */
+const HARNESS_MARKERS: Record<HarnessName, Array<{ path: string; directory: boolean }>> = {
+  generic: [{ path: ".agents", directory: true }],
+  codex: [{ path: ".codex", directory: true }],
+  claude: [{ path: ".claude", directory: true }],
+  antigravity: [
+    { path: ".agent", directory: true },
+    { path: "GEMINI.md", directory: false },
+  ],
+};
+
+/** Harnesses whose own directories or files already exist at the repository root, or all of them when none does. */
 export function detectHarnesses(root: string): HarnessName[] {
-  const markers: Record<HarnessName, string> = { generic: ".agents", codex: ".codex", claude: ".claude" };
-  const found = HARNESS_NAMES.filter((harness) => existsSync(join(root, markers[harness])) && lstatSync(join(root, markers[harness])).isDirectory());
+  const found = HARNESS_NAMES.filter((harness) =>
+    HARNESS_MARKERS[harness].some((marker) => {
+      const path = join(root, marker.path);
+      return existsSync(path) && (marker.directory ? lstatSync(path).isDirectory() : lstatSync(path).isFile());
+    }),
+  );
   return found.length > 0 ? found : [...HARNESS_NAMES];
 }
 
@@ -193,7 +208,9 @@ async function useTemplateCopy(configPath: string, sourceId: string): Promise<"s
 /** `.gitignore` lines for generated skills (keeping a placeholder so the folder exists) and personal snippets. */
 export function ignoreEntries(harnesses: readonly HarnessName[]): string[] {
   const roots = [...new Set(harnesses.map((harness) => getHarnessAdapter(harness).projectSkillDirectory.replaceAll("\\", "/")))];
-  return [...roots.flatMap((root) => [`/${root}/*`, `!/${root}/.gitkeep`]), PERSONAL_SNIPPETS];
+  // A root only some skills land in, such as Antigravity's .agent/skills, needs no placeholder.
+  const priority = [...new Set(harnesses.flatMap((harness) => getHarnessAdapter(harness).projectPrioritySkillDirectory?.replaceAll("\\", "/") ?? []))];
+  return [...roots.flatMap((root) => [`/${root}/*`, `!/${root}/.gitkeep`]), ...priority.map((root) => `/${root}/`), PERSONAL_SNIPPETS];
 }
 
 /** Append missing lines to `.gitignore` under one comment; returns the lines added. */

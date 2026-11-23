@@ -81,7 +81,7 @@ A project Instruction Layer rendered from Shared Inputs only and meant to be com
 _Avoid_: Team layer, base layer
 
 **Personal Layer**:
-A project Instruction Layer rendered from every input into the file a harness reads instead of the Shared Layer, such as `AGENTS.override.md` or `CLAUDE.local.md`, and excluded from Git.
+A project Instruction Layer rendered from every input into the file a harness reads instead of the Shared Layer, such as `AGENTS.override.md` or `CLAUDE.local.md`, and excluded from Git. A harness that loads every instruction file (Antigravity) instead gets a personal rule holding only the personal additions.
 _Avoid_: Override layer, local layer
 
 **Skill Root**:
@@ -89,8 +89,12 @@ The collection of skill artifacts associated with one scope.
 _Avoid_: Skills target, skill catalog
 
 **Shared Skill Root**:
-A Skill Root read by more than one harness, such as `.agents/skills`, read by the Generic Harness and Codex. Skill Artifacts placed there carry only harness-neutral content.
+A Skill Root read by more than one harness, such as `.agents/skills`, read by the Generic Harness, Codex, and Antigravity. Skill Artifacts placed there carry only harness-neutral content.
 _Avoid_: Common root, generic folder
+
+**Priority Skill Root**:
+A Skill Root only one harness reads that wins over its other roots when a skill name appears in both, such as Antigravity's `.agent/skills`. A skill carrying that harness's content gets a copy there, which shadows its copy in a Shared Skill Root for that harness.
+_Avoid_: Override root, preferred folder
 
 **Skill Placement**:
 The choice of Skill Roots for one Enabled Skill so that each harness it is enabled for reads it exactly once.

@@ -300,3 +300,28 @@ describe("limits on the command line", () => {
     expect(lint.stderr).toContain('budgets contains unknown harness "nope"');
   });
 });
+
+describe("Antigravity limits", () => {
+  test("rejects a rule file over 24,000 bytes and warns when always-on rules pass 20,000 tokens", async () => {
+    const rule = (size: number) => `---\ntrigger: always_on\n---\n${"y".repeat(size)}\n`;
+    const s = await setup(['harnesses = ["antigravity"]', ...scope(".")], {
+      "project/.config/agentsmith/templates/guide/default.md": `# Guide\n\n${"x".repeat(25_000)}\n`,
+      "project/.agents/rules/a.md": rule(23_000),
+      "project/.agents/rules/b.md": rule(23_000),
+      "project/.agents/rules/c.md": rule(23_000),
+      "project/.agents/rules/manual.md": `---\ntrigger: manual\n---\n${"z".repeat(30_000)}\n`,
+      "home/.gemini/config/rules/global.md": rule(100),
+    });
+    const plan = await buildProjectPlan(s.project, s.machine);
+    const files = limitDiagnostics(plan.diagnostics, "antigravity-rule-file-bytes");
+    expect(files.map((item) => item.severity)).toEqual(["error"]);
+    expect(files[0]!.message).toContain(join(s.project, "AGENTS.md"));
+    expect(files[0]!.message).toContain("Antigravity truncates the file at the limit");
+    const chain = limitDiagnostics(plan.diagnostics, "antigravity-always-on-tokens");
+    expect(chain).toHaveLength(1);
+    expect(chain[0]!.severity).toBe("warning");
+    expect(chain[0]!.message).toContain(join(s.home, ".gemini", "config", "rules", "global.md"));
+    expect(chain[0]!.message).not.toContain("manual.md");
+    expect(chain[0]!.message).toContain("estimated");
+  });
+});

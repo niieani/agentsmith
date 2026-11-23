@@ -108,7 +108,34 @@ export const LOAD_MODELS: Partial<Record<HarnessName, HarnessLoadModel>> = {
     imports: true,
     nestedOnDemand: true,
   },
+  antigravity: {
+    // AGENTS.md and GEMINI.md both load, plus every always-on rule in `.agents/rules`; nothing replaces anything.
+    projectInstructionFiles: (directory, view) => [
+      ...existing(view, [join(directory, "AGENTS.md"), join(directory, "GEMINI.md")]),
+      ...alwaysOnRules(join(directory, ".agents", "rules"), view),
+    ],
+    globalInstructionFiles: (home, view) => {
+      const config = dirname(dirname(getHarnessAdapter("antigravity").globalInstruction(home)!));
+      const gemini = dirname(config);
+      return [
+        ...existing(view, [join(gemini, "GEMINI.md"), join(gemini, "AGENTS.md"), join(config, "GEMINI.md"), join(config, "AGENTS.md")]),
+        ...alwaysOnRules(join(config, "rules"), view),
+      ];
+    },
+    imports: false,
+    nestedOnDemand: false,
+  },
 };
+
+/** Markdown rules in `directory` whose front matter makes them always on. */
+function alwaysOnRules(directory: string, view: InstructionView): string[] {
+  return view
+    .list(directory)
+    .filter((name) => name.endsWith(".md"))
+    .sort()
+    .map((name) => join(directory, name))
+    .filter((path) => frontMatterFields(view.read(path) ?? "").trigger === "always_on");
+}
 
 const CLAUDE = "Claude Code";
 
@@ -227,9 +254,31 @@ export const HARNESS_LIMITS: Partial<Record<HarnessName, readonly HarnessLimit[]
       consequence: "Codex drops descriptions from its skill catalog past the budget",
     },
   ],
+  antigravity: [
+    {
+      key: "rule_file_bytes",
+      kind: "instruction-file",
+      measure: "bytes",
+      default: 24_000,
+      severity: "error",
+      unit: "rule file (AGENTS.md, GEMINI.md or always-on rule)",
+      consequence: "Antigravity truncates the file at the limit",
+    },
+    {
+      key: "always_on_tokens",
+      kind: "instruction-chain",
+      measure: "tokens",
+      tokenBasis: "bytes",
+      includeGlobal: true,
+      default: 20_000,
+      severity: "warning",
+      unit: "always-on rules visible at one scope",
+      consequence: "Antigravity demotes the largest rule files to path pointers the agent reads only on demand",
+    },
+  ],
 };
 
-const HARNESS_LABELS: Partial<Record<HarnessName, string>> = { claude: CLAUDE, codex: "Codex" };
+const HARNESS_LABELS: Partial<Record<HarnessName, string>> = { claude: CLAUDE, codex: "Codex", antigravity: "Antigravity" };
 
 /** The `[budgets.<harness>]` keys a harness accepts; empty when it has no built-in limits. */
 export function limitKeys(harness: HarnessName): string[] {

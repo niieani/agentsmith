@@ -55,7 +55,7 @@ asmith project init --prepare
 ```
 
 ```text
-Wrote .config/agentsmith/config.toml for generic, codex, claude.
+Wrote .config/agentsmith/config.toml for generic, codex, claude, antigravity.
 Templates in your Source Repository are personal, so the committed AGENTS.md does not use them. To commit one with the project, run:
   asmith project init --template <name>   (available: ios, service, software)
 Added to .gitignore:
@@ -65,6 +65,7 @@ Added to .gitignore:
   !/.codex/skills/.gitkeep
   /.claude/skills/*
   !/.claude/skills/.gitkeep
+  /.agent/skills/
   /.config/agentsmith/**/*.local.md
 Created .agents/skills/.gitkeep so the skill folder exists when a session starts.
 Created .codex/skills/.gitkeep so the skill folder exists when a session starts.
@@ -77,7 +78,7 @@ Next:
   2. Commit .config/agentsmith/, .gitignore, the .gitkeep placeholders, and the generated AGENTS.md and CLAUDE.md.
 ```
 
-No `.agents/`, `.codex/`, or `.claude/` folder existed, so init selected all three harnesses. `--prepare` found bun through the `packageManager` field, added `asmith` as a dev dependency, and set `scripts.prepare`, so every `bun install` regenerates skills and personal files with the version the repository pins.
+No `.agents/`, `.codex/`, `.claude/`, or `.agent/` folder or `GEMINI.md` existed, so init selected all four harnesses. `--prepare` found bun through the `packageManager` field, added `asmith` as a dev dependency, and set `scripts.prepare`, so every `bun install` regenerates skills and personal files with the version the repository pins.
 
 The skill folders are ignored, but each keeps a committed `.gitkeep`. Claude Code only watches skill folders that existed when its session started, so the placeholder lets skills generated during a session appear on the next turn.
 

@@ -11,6 +11,7 @@ import { AgentsmithError, classify, errorCode, errorMessage, exitCodeFor } from 
 import { CommandError, ensureCleanSource, gitHasTracked, gitHeadCommit, gitIsTracked, gitPathStatus, gitPullFfOnly, gitWorktree } from "./git.ts";
 import { assertPlanValid, buildGlobalPlan, buildProjectPlan, type BuiltPlan, type UnmanagedSkill } from "./planner.ts";
 import { isWithin } from "./fs.ts";
+import { skillRootSuffixes } from "./harness.ts";
 import {
   applyPlan,
   backupGlobalArtifacts,
@@ -169,7 +170,7 @@ function globalStateWrite(statePath: string, plan: BuiltPlan): PlannedWrite {
 async function pruneEmptySkillDirectories(deletions: PlannedDelete[], report?: RunReport): Promise<void> {
   for (const deletion of deletions) {
     const normalized = resolve(deletion.destination);
-    const markers = [".agents", ".claude", ".codex"].map((root) => `${sep}${root}${sep}skills${sep}`);
+    const markers = skillRootSuffixes().map((root) => `${sep}${root.split(/[\\/]/).join(sep)}${sep}`);
     const marker = markers.find((candidate) => normalized.includes(candidate));
     if (!marker) continue;
     const markerIndex = normalized.indexOf(marker);

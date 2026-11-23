@@ -16,7 +16,7 @@ import { walkFiles } from "./fs.ts";
 import { gitWorktree } from "./git.ts";
 import { checkHarnessLimits } from "./limits.ts";
 import { resolveProject } from "./project.ts";
-import { loadProjectState, projectStatePath } from "./safety.ts";
+import { globalStatePath, loadGlobalState, loadProjectState, projectStatePath } from "./safety.ts";
 import { getHarnessAdapter, placeSkill, skillReadRoots, skillWriteRoot, type SkillLocation } from "./harness.ts";
 import { normalizeMarkdown, RESERVED_EDGE_SLOTS, renderMarkdown } from "./markdown.ts";
 import {
@@ -344,6 +344,10 @@ interface LayerRender {
   content: string;
   template: LoadedTemplate;
   trace: RenderTrace;
+  /** Every snippet loaded for the layer, rendered or not. */
+  contributions: Contribution[];
+  /** The heading above each slot of the template, in template order. */
+  slotHeadings: Array<{ slot: string; heading: string | null }>;
 }
 
 interface InstructionGroup {
@@ -426,7 +430,46 @@ async function renderInstruction(
   if (sources.sharedOnly) contributions = contributions.filter((item) => !isLocalSource(item.path));
   const template = await loadTemplate(sources, scope.template!, variants);
   const result = await renderContent(context, template.content, template.path, contributions, true, { sources, diagnostics });
-  return { content: result.content, template, trace: result.trace };
+  return { content: result.content, template, trace: result.trace, contributions, slotHeadings: result.slotHeadings };
+}
+
+/** Opening line of a personal rule that adds to a shared instruction file. */
+export const PERSONAL_RULE_INTRO = "These personal instructions extend AGENTS.md and take precedence over it where they conflict.";
+
+/**
+ * Content of a personal rule for a harness that loads every instruction file (Antigravity): the personal snippets of
+ * the layer, each under the heading its slot has in the template, in template order. Without a shared layer (a
+ * third-party repository, or a template that is not a shared input) the whole layer is personal. Undefined when the
+ * layer has no personal snippets.
+ */
+async function personalRuleBody(context: PlannerContext, group: InstructionGroup, path: string): Promise<{ content: string; trace: RenderTrace } | undefined> {
+  if (group.shared === undefined) {
+    const intro = context.upstream === undefined ? "" : `${PERSONAL_RULE_INTRO}\n\n`;
+    return { content: normalizeMarkdown(intro + group.full.content), trace: group.full.trace };
+  }
+  const sharedPaths = new Set(Object.values(group.shared.trace.slots).flat());
+  const personalPaths = new Set(
+    Object.values(group.full.trace.slots)
+      .flat()
+      .filter((item) => !sharedPaths.has(item)),
+  );
+  const personal = group.full.contributions.filter((item) => personalPaths.has(item.path));
+  if (personal.length === 0) return undefined;
+  const filled = new Set(personal.map((item) => item.slot));
+  const lines = [PERSONAL_RULE_INTRO, ""];
+  const directive = (slot: string) => lines.push(`<!-- agentsmith:slot ${slot} -->`, "");
+  if (filled.has("prepend")) directive("prepend");
+  let heading: string | null = null;
+  for (const item of group.full.slotHeadings) {
+    if (!filled.has(item.slot)) continue;
+    if (item.heading !== null && item.heading !== heading) lines.push(item.heading, "");
+    heading = item.heading;
+    directive(item.slot);
+  }
+  if (filled.has("append")) directive("append");
+  // Diagnostics about these snippets were already reported for the layer itself.
+  const rendered = await renderContent(context, lines.join("\n"), path, personal, false, { sources: context.sources, diagnostics: [] });
+  return { content: rendered.content, trace: rendered.trace };
 }
 
 /**
@@ -460,9 +503,26 @@ async function planInstructions(context: PlannerContext, scope: ScopeInput, pack
   const groups: InstructionGroup[] = [];
   for (const [destination, members] of membersByDestination) {
     // Most specific template variant first; harness snippets render least specific first.
-    const variants = [...members].sort(
+    const sorted = [...members].sort(
       (a, b) => getHarnessAdapter(b).instructionPrecedence - getHarnessAdapter(a).instructionPrecedence || HARNESS_NAMES.indexOf(a) - HARNESS_NAMES.indexOf(b),
     );
+    // In a project, a harness without its own project content (Antigravity) renders no variant or snippets into the
+    // file it shares; its snippets there are an error.
+    const variants = context.mode === "project" ? sorted.filter((harness) => getHarnessAdapter(harness).projectHarnessContent !== false) : sorted;
+    if (context.mode === "project") {
+      for (const harness of sorted.filter((item) => !variants.includes(item))) {
+        for (const pack of packs) {
+          for (const item of (await loadInstructionContributions(pack, [harness])).filter((contribution) => contribution.harness === harness)) {
+            error(
+              context.diagnostics,
+              "harness-instruction-content-project",
+              `${item.path} is ${harness}-specific instruction content, but ${harness} reads the shared ${destination} in scope ${scope.path}; ${harness}-specific instructions apply only to the Global Scope, so make the snippet common or remove it`,
+              item.path,
+            );
+          }
+        }
+      }
+    }
     if (!scope.template) {
       const contributions = (await Promise.all(packs.map((pack) => loadInstructionContributions(pack, [...variants].reverse())))).flat();
       if (contributions.length > 0) {
@@ -594,7 +654,11 @@ async function planInstructions(context: PlannerContext, scope: ScopeInput, pack
   for (const item of outputs) {
     const harnesses = item.layer === "personal" ? [item.group.personalHarness!] : item.group.harnesses;
     const importer = getHarnessAdapter(item.group.harnesses[0]!).instructionImport;
-    const content = item.importsFrom && importer ? importer(basename(item.importsFrom)) : (item.content ?? item.render.content);
+    // A global file one harness owns alone, such as Antigravity's rule, starts with that harness's front matter. Project
+    // instruction files are shared with every tool reading AGENTS.md.
+    const frontMatter =
+      context.mode === "global" && item.group.harnesses.length === 1 ? (getHarnessAdapter(item.group.harnesses[0]!).instructionFrontMatter ?? "") : "";
+    const content = frontMatter + (item.importsFrom && importer ? importer(basename(item.importsFrom)) : (item.content ?? item.render.content));
     const provenance = [
       ...(item.extraProvenance ?? []),
       item.render.template.path,
@@ -628,8 +692,80 @@ async function planInstructions(context: PlannerContext, scope: ScopeInput, pack
         directory: pack.directory,
       })),
       trace: item.render.trace,
-      bytes: utf8Bytes(item.content ?? item.render.content),
+      bytes: utf8Bytes(frontMatter + (item.content ?? item.render.content)),
     });
+  }
+
+  if (context.mode === "project") {
+    for (const group of groups) await planPersonalRules(context, scope, group, packs);
+  }
+}
+
+/**
+ * Plans the personal rule of each harness that loads every instruction file and so cannot read a personal file instead
+ * of the shared one (Antigravity): the personal additions go to a separate always-on rule, excluded from Git.
+ */
+async function planPersonalRules(context: PlannerContext, scope: ScopeInput, group: InstructionGroup, packs: LoadedPack[]): Promise<void> {
+  for (const harness of group.harnesses) {
+    const adapter = getHarnessAdapter(harness);
+    const path = adapter.projectPersonalRule?.(context.projectRoot!, scope.path);
+    if (path === undefined) continue;
+    const destination = resolve(path);
+    const body = await personalRuleBody(context, group, destination);
+    if (body === undefined) continue;
+    const content = (adapter.instructionFrontMatter ?? "") + body.content;
+    context.writes.push({
+      destination,
+      content: encoder.encode(content),
+      kind: "instruction",
+      harness,
+      scope: scope.path,
+      provenance: [group.full.template.path, ...Object.values(body.trace.slots).flat(), ...body.trace.includes],
+      layer: "personal",
+    });
+    context.explanations.push({
+      kind: "instruction",
+      layer: "personal",
+      harness,
+      harnesses: [harness],
+      scope: scope.path,
+      destination,
+      extends: group.destination,
+      template: group.full.template.path,
+      templateSelection: group.full.template.selection,
+      templateSourceId: group.full.template.sourceId,
+      packs: packs.map((pack) => pack.sourceId),
+      packSources: packs.map((pack) => ({ selection: pack.selection, sourceId: pack.sourceId, directory: pack.directory })),
+      trace: body.trace,
+      bytes: utf8Bytes(content),
+    });
+  }
+}
+
+/**
+ * Project lints for a harness that loads every instruction file it finds (Antigravity): a `GEMINI.md` beside the shared
+ * `AGENTS.md` loads as well, and `upstream = "replace"` cannot hide the upstream files from it.
+ */
+function lintCumulativeInstructions(context: PlannerContext, scope: ScopeInput): void {
+  for (const harness of scope.harnesses) {
+    if (getHarnessAdapter(harness).projectPersonalRule === undefined) continue;
+    const agents = getHarnessAdapter(harness).projectInstruction(context.projectRoot!, scope.path);
+    const gemini = join(dirname(agents), "GEMINI.md");
+    if (existsSync(gemini) && (existsSync(agents) || scope.template !== undefined)) {
+      warning(
+        context.diagnostics,
+        "gemini-md-beside-agents-md",
+        `${harness} loads both ${agents} and ${gemini}; move GEMINI.md's content into AGENTS.md (or its inputs) and delete it, or instructions in both apply twice`,
+        gemini,
+      );
+    }
+    if (context.upstream === "replace") {
+      warning(
+        context.diagnostics,
+        "upstream-replace-cumulative",
+        `upstream = "replace" cannot hide the upstream instructions from ${harness} in scope ${scope.path}: it loads every AGENTS.md, GEMINI.md and always-on rule, so it reads the upstream files and the personal layer together`,
+      );
+    }
   }
 }
 
@@ -660,7 +796,23 @@ async function planSkills(context: PlannerContext, scope: ScopeInput, packs: Loa
       placements: context.skillPlacements.length,
       slotTargets: context.slotTargets.length,
     };
-    const { placements, unplaceable } = placeSkill(enabled.harnesses, location);
+    const files = await walkFiles(skillDir);
+    const markdownFiles = files.filter((file) => file.relativePath.endsWith(".md"));
+    const slotsByFile = new Map<string, Set<string>>();
+    const ownersBySlot = new Map<string, string[]>();
+    for (const file of markdownFiles) {
+      const slots = declaredSlots(new TextDecoder().decode(file.content));
+      slotsByFile.set(file.absolutePath, slots);
+      for (const slot of slots) ownersBySlot.set(slot, [...(ownersBySlot.get(slot) ?? []), file.absolutePath]);
+    }
+    for (const [slot, owners] of ownersBySlot) {
+      if (owners.length > 1)
+        error(context.diagnostics, "skill-slot-duplicate", `Skill ${skill.name} declares slot ${slot} in multiple files: ${owners.join(", ")}`);
+    }
+
+    // A harness whose own snippets fill a slot of this skill gets a copy in its priority root, if it has one.
+    const specific = enabled.harnesses.filter((harness) => contributions.some((item) => item.harness === harness && ownersBySlot.has(item.slot)));
+    const { placements, unplaceable } = placeSkill(enabled.harnesses, location, specific);
     for (const harness of unplaceable) {
       const readable = skillReadRoots(harness, location);
       const alternatives = HARNESS_NAMES.filter((other) => {
@@ -677,22 +829,8 @@ async function planSkills(context: PlannerContext, scope: ScopeInput, packs: Loa
       );
     }
 
-    const files = await walkFiles(skillDir);
-    const markdownFiles = files.filter((file) => file.relativePath.endsWith(".md"));
-    const slotsByFile = new Map<string, Set<string>>();
-    const ownersBySlot = new Map<string, string[]>();
-    for (const file of markdownFiles) {
-      const slots = declaredSlots(new TextDecoder().decode(file.content));
-      slotsByFile.set(file.absolutePath, slots);
-      for (const slot of slots) ownersBySlot.set(slot, [...(ownersBySlot.get(slot) ?? []), file.absolutePath]);
-    }
-    for (const [slot, owners] of ownersBySlot) {
-      if (owners.length > 1)
-        error(context.diagnostics, "skill-slot-duplicate", `Skill ${skill.name} declares slot ${slot} in multiple files: ${owners.join(", ")}`);
-    }
-
     for (const placement of placements) {
-      const selectedReaders = placement.readers.filter((harness) => scope.harnesses.includes(harness));
+      const selectedReaders = placement.readers.filter((harness) => scope.harnesses.includes(harness) && !placement.shadowed?.includes(harness));
       const consumed = contributions.filter((item) => ownersBySlot.has(item.slot));
       for (const item of consumed) {
         if (item.harness === undefined || item.harness === placement.exclusiveReader || !selectedReaders.includes(item.harness)) continue;
@@ -700,7 +838,7 @@ async function planSkills(context: PlannerContext, scope: ScopeInput, packs: Loa
         error(
           context.diagnostics,
           "skill-harness-content-shared-root",
-          `Skill ${skill.name} is written to ${placement.root}, which ${placement.readers.join(", ")} all read, so ${item.harness}-specific snippet for slot ${item.slot} cannot apply there; make the snippet common or enable the skill for ${item.harness} without ${placement.readers.filter((harness) => harness !== item.harness).join(", ")}`,
+          `Skill ${skill.name} is written to ${placement.root}, which ${selectedReaders.join(", ")} all read, so ${item.harness}-specific snippet for slot ${item.slot} cannot apply there; make the snippet common or enable the skill for ${item.harness} without ${selectedReaders.filter((harness) => harness !== item.harness).join(", ")}`,
           item.path,
         );
       }
@@ -719,7 +857,8 @@ async function planSkills(context: PlannerContext, scope: ScopeInput, packs: Loa
         slots: [...ownersBySlot.keys()].sort(),
       });
       const skillPlacement: SkillPlacement = {
-        harnesses: placement.readers.filter((harness) => context.configuredHarnesses.includes(harness)),
+        // A reader that finds this skill's own copy in a root that wins does not see this one.
+        harnesses: placement.readers.filter((harness) => context.configuredHarnesses.includes(harness) && !placement.shadowed?.includes(harness)),
         scope: scope.path,
         name: skill.name,
         sourceId,
@@ -917,7 +1056,9 @@ async function validateUnmanagedSkillCollisions(context: PlannerContext, scopes:
     const scanned = await scanSkillRoot(root);
     context.diagnostics.push(...scanned.diagnostics);
     for (const skill of scanned.skills) {
-      if (!plannedDirs.has(resolve(skill.sourceDir))) unmanaged.push({ ...skill, ...metadata });
+      // A skill agentsmith recorded writing and no longer plans there is stale and is deleted, not a foreign skill.
+      if (plannedDirs.has(resolve(skill.sourceDir)) || context.ownedPaths.has(resolve(skill.sourceDir, "SKILL.md"))) continue;
+      unmanaged.push({ ...skill, ...metadata });
     }
   }
   // In exclusive mode an unmanaged skill is reported (and can be backed up) on its own, instead of failing planning.
@@ -1063,6 +1204,7 @@ async function planScopes(context: PlannerContext, scopes: ScopeInput[]): Promis
       }
     }
     await planInstructions(context, scope, packs, sharedPacks);
+    if (context.mode === "project") lintCumulativeInstructions(context, scope);
     await planSkills(context, scope, packs);
   }
   reportSkippedSources(context);
@@ -1130,7 +1272,7 @@ export async function buildGlobalPlan(configPath = MACHINE_CONFIG_PATH): Promise
     sources: { sourceRoot: machine.source },
     home: machine.home,
     skipped: [],
-    ownedPaths: new Set(),
+    ownedPaths: await ownedGlobalPaths(machine.home),
     claudeMdExcludes: [],
     budgets: mergeBudgets(root.budgets, profile.budgets),
     configuredHarnesses: profile.harnesses,
@@ -1161,6 +1303,15 @@ export async function buildGlobalPlan(configPath = MACHINE_CONFIG_PATH): Promise
     chain: profile.chain,
     packs: profile.packs.map((pack) => ({ pack, profile: profile.packProfiles[pack]! })),
   });
+}
+
+/** Absolute paths recorded in the global state, or none when it is unreadable. */
+async function ownedGlobalPaths(home: string | undefined): Promise<Set<string>> {
+  try {
+    return new Set(Object.keys((await loadGlobalState(globalStatePath(home))).artifacts).map((path) => resolve(path)));
+  } catch {
+    return new Set();
+  }
 }
 
 /** Absolute paths recorded in the project's state, or none when Git or the state is unavailable. */

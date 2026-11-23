@@ -1,23 +1,23 @@
 ---
 title: Harness discovery
-description: Which instruction files and skill roots Codex and Claude Code read, and how agentsmith maps them.
+description: Which instruction files and skill roots Codex, Claude Code, and Antigravity read, and how agentsmith maps them.
 ---
 
 agentsmith writes artifacts where each harness already looks. This page records what each harness reads, in what order, and what happens when two files or skills overlap. The [configuration reference](/reference/configuration#harness-destinations) lists where agentsmith writes for each harness.
 
-Researched November 2026. Codex facts come from the Codex CLI source (commit `ac54a05`); Claude Code facts come from its official [memory](https://code.claude.com/docs/en/memory) and [skills](https://code.claude.com/docs/en/skills) documentation. Harnesses change; see [Caveats](#caveats) for points that were not confirmed.
+Researched November 2026. Codex facts come from the Codex CLI source (commit `ac54a05`); Claude Code facts come from its official [memory](https://code.claude.com/docs/en/memory) and [skills](https://code.claude.com/docs/en/skills) documentation; Antigravity facts were verified by running `agy` 1.5.13 and 1.5.15. Harnesses change; see [Caveats](#caveats) for points that were not confirmed.
 
 ## Summary
 
-| | Codex | Claude Code | `generic` target |
-| --- | --- | --- | --- |
-| Global instructions | `$CODEX_HOME/AGENTS.md` (default `~/.codex/AGENTS.md`) | `~/.claude/CLAUDE.md` | none |
-| Project instructions | `AGENTS.md` in each directory from the project root to the working directory | `CLAUDE.md` in the working directory and every directory above it, plus subdirectories on demand | `<scope>/AGENTS.md` |
-| Instruction files combine by | concatenation, root first | concatenation, outermost first | — |
-| Global skills | `~/.agents/skills`; `~/.codex/skills` (deprecated) | `~/.claude/skills` | `~/.agents/skills` |
-| Project skills | `.agents/skills` and `.codex/skills` in each directory from the project root to the working directory | `.claude/skills` in the working directory and every parent up to the repository root, plus subdirectories on demand | `<scope>/.agents/skills` |
-| Same skill name twice | both load; a plain `$name` mention selects neither | personal wins over project | — |
-| Reads `.agents/` | skills only | nothing | — |
+| | Codex | Claude Code | Antigravity | `generic` target |
+| --- | --- | --- | --- | --- |
+| Global instructions | `$CODEX_HOME/AGENTS.md` (default `~/.codex/AGENTS.md`) | `~/.claude/CLAUDE.md` | `~/.gemini/GEMINI.md`, `~/.gemini/AGENTS.md`, `~/.gemini/config/GEMINI.md`, `~/.gemini/config/AGENTS.md`, `~/.gemini/config/rules/*.md` | none |
+| Project instructions | `AGENTS.md` in each directory from the project root to the working directory | `CLAUDE.md` in the working directory and every directory above it, plus subdirectories on demand | `AGENTS.md`, `GEMINI.md`, and always-on `.agents/rules/*.md` from the working directory up to the repository root | `<scope>/AGENTS.md` |
+| Instruction files combine by | concatenation, root first | concatenation, outermost first | all load; nothing overrides | — |
+| Global skills | `~/.agents/skills`; `~/.codex/skills` (deprecated) | `~/.claude/skills` | `~/.gemini/config/skills`, `~/.gemini/skills` | `~/.agents/skills` |
+| Project skills | `.agents/skills` and `.codex/skills` in each directory from the project root to the working directory | `.claude/skills` in the working directory and every parent up to the repository root, plus subdirectories on demand | `.agents/skills`, `.agent/skills`, `_agents/skills`, `_agent/skills` | `<scope>/.agents/skills` |
+| Same skill name twice | both load; a plain `$name` mention selects neither | personal wins over project | one wins by priority; `.agent/skills` beats `.agents/skills` | — |
+| Reads `.agents/` | skills only | nothing | project skills and rules; not `~/.agents/skills` | — |
 
 `generic` is not a runtime. It targets the shared `.agents/` convention that Codex and other agents read.
 
@@ -83,6 +83,24 @@ When the same name appears more than once, enterprise wins over personal, and pe
 
 Claude Code reads nothing under `.agents/`, so `claude` keeps its own `~/.claude/` and `.claude/` destinations.
 
+## Antigravity
+
+Verified by running `agy` 1.5.13 (November 22, 2026) in throwaway repositories, and the skill priority with 1.5.15.
+
+### Instruction files
+
+- **Cumulative:** every instruction file Antigravity finds loads. No file overrides, shadows, or excludes another, and `rules.json` `exclude` does not affect `AGENTS.md` or `GEMINI.md`.
+- **Project:** every `AGENTS.md`, `GEMINI.md`, and `.agents/rules/*.md` whose front matter says `trigger: always_on`, from the working directory up to the repository root. `AGENTS.override.md`, `CLAUDE.md`, and `GEMINI.local.md` are not read.
+- **Global:** `~/.gemini/GEMINI.md`, `~/.gemini/AGENTS.md`, `~/.gemini/config/GEMINI.md`, `~/.gemini/config/AGENTS.md`, and `~/.gemini/config/rules/*.md` all load.
+
+agentsmith writes the global layer to a rule it owns, `~/.gemini/config/rules/agentsmith.md`, with `trigger: always_on` front matter, so it never edits a `GEMINI.md` or `AGENTS.md` you keep there. In a project Antigravity reads the shared `<scope>/AGENTS.md`; agentsmith never writes `GEMINI.md`, since both would load. Because nothing can replace the shared file, the personal layer is an always-on rule, `<scope>/.agents/rules/agentsmith-personal.md`, holding only the personal additions and saying that they take precedence. `upstream = "replace"` cannot hide upstream files from Antigravity.
+
+### Skills
+
+Antigravity reads `.agents/skills`, `.agent/skills`, `_agents/skills`, and `_agent/skills` in a project, and `~/.gemini/config/skills` and `~/.gemini/skills` globally. It does not read `.claude/skills`, `.codex/skills`, or `.gemini/skills` in a project, nor `~/.agents/skills` or `~/.claude/skills`.
+
+When the same skill name exists in two roots, one copy wins by priority and the other is not loaded. With a skill in both `.agent/skills` and `.agents/skills`, `agy` listed and used only the `.agent/skills` copy in five of five runs, whichever was created first. A skill created mid-session is visible on the next turn even if its folder did not exist when the session started.
+
 ## How agentsmith places skills
 
 Each harness adapter declares where it writes skills and every root it reads. For a skill enabled for some harnesses at one scope, agentsmith writes the fewest copies that let each of those harnesses see it exactly once:
@@ -92,8 +110,10 @@ Each harness adapter declares where it writes skills and every root it reads. Fo
 | `generic` (with or without `codex`) | `.agents/skills` | `~/.agents/skills` |
 | `codex` without `generic` | `.codex/skills` | error: enable it for `generic` |
 | `claude` | `.claude/skills` | `~/.claude/skills` |
+| `antigravity` | `.agents/skills` | `~/.gemini/config/skills` |
+| `antigravity`, with Antigravity skill-slot content | `.agent/skills`, plus `.agents/skills` for the other harnesses | `~/.gemini/config/skills` |
 
-Harness-specific skill-slot content (`skill-slots/harnesses/<harness>/`) renders only into a root that one harness alone reads. A skill in `.agents/skills` is read by Codex too, so Codex-specific content consumed by it is an error. To ship Codex-specific content, disable the skill for `generic` with `[harness_skills.generic]` so it lands in `.codex/skills`.
+Harness-specific skill-slot content (`skill-slots/harnesses/<harness>/`) renders only into a root that one harness alone reads. A skill in `.agents/skills` is read by Codex too, so Codex-specific content consumed by it is an error. To ship Codex-specific content, disable the skill for `generic` with `[harness_skills.generic]` so it lands in `.codex/skills`. Antigravity-specific content needs no such step: the skill gets its own copy in `.agent/skills`, which Antigravity alone reads and prefers over `.agents/skills`.
 
 Collision checks use the same data. A planned or unmanaged skill in `.codex/skills` collides with a same-named skill in `.agents/skills` on the same scope chain when `codex` is selected.
 
@@ -107,4 +127,5 @@ These points were not confirmed:
 - what Claude Code does with the same skill name in two ancestor `.claude/skills` roots; only root-versus-nested is documented, and both load;
 - whether Claude Code reads `~/.claude/AGENTS.md`;
 - that Claude Code ignores `.agents/skills`; this rests on its absence from the skills documentation;
-- Codex facts come from source at one commit and were not checked against released versions or OpenAI's documentation.
+- Codex facts come from source at one commit and were not checked against released versions or OpenAI's documentation;
+- Antigravity facts come from observing `agy` behavior, not from documentation or source; the priority among `_agents/skills`, `_agent/skills`, and the global roots was not tested.

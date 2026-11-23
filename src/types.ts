@@ -1,7 +1,7 @@
 /** Harness names removed in a breaking change, mapped to their replacement. */
 export const RENAMED_HARNESSES: Readonly<Record<string, string>> = { "claude-code": "claude" };
 
-export const HARNESS_NAMES = ["generic", "codex", "claude"] as const;
+export const HARNESS_NAMES = ["generic", "codex", "claude", "antigravity"] as const;
 export type HarnessName = (typeof HARNESS_NAMES)[number];
 
 export interface Budgets {
@@ -142,6 +142,8 @@ export interface RenderResult {
   content: string;
   trace: RenderTrace;
   diagnostics: Diagnostic[];
+  /** The ATX heading line nearest above each declared slot, in template order; null when no heading precedes it. */
+  slotHeadings: Array<{ slot: string; heading: string | null }>;
 }
 
 /** A project Instruction Layer file: committed shared content, or a personal file read instead of it. */

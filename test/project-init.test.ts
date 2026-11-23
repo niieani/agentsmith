@@ -143,11 +143,20 @@ describe("project init helpers", () => {
       "!/.claude/skills/.gitkeep",
       "/.config/agentsmith/**/*.local.md",
     ]);
+    expect(ignoreEntries(["antigravity"])).toEqual(["/.agents/skills/*", "!/.agents/skills/.gitkeep", "/.agent/skills/", "/.config/agentsmith/**/*.local.md"]);
     const f = await projectFixture("agentsmith-detect-");
-    expect(detectHarnesses(f.project)).toEqual(["generic", "codex", "claude"]);
+    expect(detectHarnesses(f.project)).toEqual(["generic", "codex", "claude", "antigravity"]);
     await mkdir(join(f.project, ".codex"));
     await mkdir(join(f.project, ".agents"));
     expect(detectHarnesses(f.project)).toEqual(["generic", "codex"]);
+    await put(join(f.project, "GEMINI.md"), "# Gemini\n");
+    expect(detectHarnesses(f.project)).toEqual(["generic", "codex", "antigravity"]);
+  });
+
+  test("detects Antigravity from its .agent directory", async () => {
+    const f = await projectFixture("agentsmith-detect-agy-");
+    await mkdir(join(f.project, ".agent"));
+    expect(detectHarnesses(f.project)).toEqual(["antigravity"]);
   });
 });
 

@@ -49,6 +49,16 @@ describe("splitAroundGenerated", () => {
     expect(splitAroundGenerated(generated, generated)).toEqual({ prefix: "", suffix: "" });
   });
 
+  test("keeps required front matter first and adopts edits after it", () => {
+    const front = "---\ntrigger: always_on\n---\n\n";
+    expect(splitAroundGenerated(`${front}Local first.\n${generated}Local last.\n`, front + generated, front)).toEqual({
+      prefix: "Local first.\n",
+      suffix: "Local last.\n",
+    });
+    expect(splitAroundGenerated(`Above.\n${front}${generated}`, front + generated, front)).toBeUndefined();
+    expect(splitAroundGenerated(generated, front + generated, front)).toBeUndefined();
+  });
+
   test("rejects edits inside the generated content", () => {
     expect(splitAroundGenerated("# Global\n\nEdited note.\n", generated)).toBeUndefined();
     expect(splitAroundGenerated("# Global\n\nInserted.\n\nShared note.\n", generated)).toBeUndefined();

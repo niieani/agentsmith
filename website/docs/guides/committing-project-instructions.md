@@ -20,7 +20,7 @@ asmith project init --prepare
 
 `project init`:
 
-1. Writes `.config/agentsmith/config.toml` for the harnesses whose folders already exist (`.agents/` for `generic`, `.codex/` for `codex`, `.claude/` for `claude`), or all three.
+1. Writes `.config/agentsmith/config.toml` for the harnesses whose folders already exist (`.agents/` for `generic`, `.codex/` for `codex`, `.claude/` for `claude`, `.agent/` or a `GEMINI.md` file for `antigravity`), or all of them.
 2. Adds the generated skill folders and personal snippets to `.gitignore`, keeping a `.gitkeep` placeholder in each skill folder:
 
    ```text title=".gitignore"
@@ -31,10 +31,11 @@ asmith project init --prepare
    !/.codex/skills/.gitkeep
    /.claude/skills/*
    !/.claude/skills/.gitkeep
+   /.agent/skills/
    /.config/agentsmith/**/*.local.md
    ```
 
-   Claude Code only watches skill folders that existed when the session started. The committed placeholder keeps the folder there, so skills generated during a session appear on the next turn. Codex picks up new skills on the next turn either way.
+   Claude Code only watches skill folders that existed when the session started. The committed placeholder keeps the folder there, so skills generated during a session appear on the next turn. Codex and Antigravity pick up new skills on the next turn either way. `/.agent/skills/` holds the Antigravity-only copies of skills that carry Antigravity content.
 3. With `--prepare`, adds `asmith` as a dev dependency and sets `scripts.prepare` to `asmith project generate`, so every install regenerates skills and personal files with the version the repository pins. The package manager comes from the `packageManager` field of `package.json`, then the lockfile (`bun.lock`, `pnpm-lock.yaml`, `yarn.lock`, `package-lock.json`), then npm. An existing `prepare` script that does something else is kept as is; init prints the chained command to add yourself, such as `"prepare": "husky && asmith project generate"`.
 
 Rerunning `project init` changes nothing that is already in place. Nested scopes need the same `.gitignore` lines for their own skill folders, for example `/apps/web/.claude/skills/*`.
