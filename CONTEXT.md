@@ -32,6 +32,10 @@ _Avoid_: Universal harness, default harness
 agentsmith's mapping between scopes, artifact kinds, and a harness's native discovery model, including every Skill Root the harness reads.
 _Avoid_: Output adapter, arbitrary target
 
+**Harness Limit**:
+A size or shape limit a harness itself enforces on what it loads, such as Codex's 32 KiB project instruction cap, checked by agentsmith with a built-in default that `[budgets.<harness>]` can override.
+_Avoid_: Quota, cap setting
+
 **Artifact**:
 A complete agent-facing instruction or capability produced by agentsmith.
 _Avoid_: Generated file, output file

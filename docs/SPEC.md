@@ -114,9 +114,12 @@ home = "~/sandbox/home"   # optional
 instruction_layer_bytes = 24576
 effective_instruction_bytes = 32768
 skill_markdown_bytes = 16384
+
+[budgets.codex]
+project_doc_bytes = 65536
 ```
 
-All budget keys are optional positive UTF-8 byte thresholds.
+All budget keys are optional positive integers. The top-level keys are UTF-8 byte thresholds; `[budgets.<harness>]` tables override built-in harness limits (section 10.1).
 
 ### 4.3 Profile
 
@@ -145,7 +148,7 @@ A profile may set `extends = "<profile name>"` to inherit from one parent profil
 - `skills_enable`, `skills_disable`: ordered union.
 - `harness_skills.<harness>.enable` and `.disable`: ordered union per harness; every configured harness must be in the resolved `harnesses`.
 - `harnesses`, `template`: the nearest profile that sets the value wins.
-- `budgets`: per key, child wins; the merged result then overrides Source Repository defaults.
+- `budgets`: per key (and per key within each `[budgets.<harness>]`), child wins; the merged result then overrides Source Repository defaults.
 
 Profiles accept `exclusive` (boolean, default `false`; the nearest profile that sets it wins) and `exclusive_allow` (a list of skill directory name globs; ordered union through the chain). See section 7.3.
 
@@ -254,7 +257,7 @@ No harness reads `~/.agents/AGENTS.md`, so `generic` emits no global Instruction
 | Skill Root | none | `<scope>/.codex/skills` |
 | Skill roots read | `~/.agents/skills`, `$CODEX_HOME/skills` | `<dir>/.agents/skills`, `<dir>/.codex/skills` |
 
-Codex marks `$CODEX_HOME/skills` deprecated, so global Codex skills come from `generic`. Codex reads `AGENTS.override.md` instead of `AGENTS.md` in the same directory; agentsmith writes it for the personal layer (section 5.5). An existing `AGENTS.override.md` that agentsmith did not record writing is a hard preflight error (`codex-override-shadow`) because it shadows the generated `AGENTS.md`; so is `$CODEX_HOME/AGENTS.override.md` beside the global layer. The adapter models global then repository-to-working-directory instruction order. It warns when a project instruction chain exceeds Codex's documented default 32 KiB cap and labels the cap as configurable.
+Codex marks `$CODEX_HOME/skills` deprecated, so global Codex skills come from `generic`. Codex reads `AGENTS.override.md` instead of `AGENTS.md` in the same directory; agentsmith writes it for the personal layer (section 5.5). An existing `AGENTS.override.md` that agentsmith did not record writing is a hard preflight error (`codex-override-shadow`) because it shadows the generated `AGENTS.md`; so is `$CODEX_HOME/AGENTS.override.md` beside the global layer. The adapter models global then repository-to-working-directory instruction order. Its size limits, including the configurable default 32 KiB project instruction cap, are in section 10.1.
 
 ### 5.3 Claude Code adapter
 
@@ -564,6 +567,34 @@ Supported optional positive UTF-8 byte warning thresholds:
 Effective instruction size is evaluated for every declared scope chain and harness. Skill Markdown size includes rendered Markdown files but excludes copied support files; explain reports support-file bytes separately.
 
 Budgets warn and never truncate. `lint --warnings-as-errors` turns warnings into failure for CI. Source Repository budgets cascade to global profiles; project budgets stand alone.
+
+### 10.1 Harness limits
+
+Every selected harness is checked against built-in limits that model what the harness loads, without configuration. The limits live in one table per harness (`src/limits.ts`): each row has a key, a kind, a measure, a default, a severity, and the harness behavior past the limit. A load model per harness says which instruction files it loads from a directory and globally. Check kinds are:
+
+- `instruction-file`: each instruction file the harness loads that the plan writes, optionally with the files it `@import`s (within the import depth) and optionally only files loaded on demand (a project scope below the repository root, for a harness that loads nested files on demand).
+- `import-depth`: the longest acyclic chain of existing `@import` targets from such a file. `@path` tokens inside code fences and inline code are not imports; `~/` resolves against the home in use.
+- `instruction-chain`: every instruction file the harness loads at a scope, from the repository root to the scope directory, using planned content, then files on disk, minus stale artifacts the run deletes. Global files count only when the row says so.
+- `skill-name`, `skill-description`, `skill-file`: each planned skill copy, for every configured harness reading its root. Descriptions are read from the rendered front matter (plain, quoted, continued, and block scalars).
+- `skill-listing`: every skill the harness lists at a scope: its global read roots, then its project read roots in each directory from the repository root to the scope, planned or on disk, minus stale artifacts. Each skill counts up to the harness's `skill-description` limit.
+
+| Harness | Key | Unit | Default | Severity |
+|---|---|---|---|---|
+| `claude` | `instruction_file_lines` | each `CLAUDE.md`/`CLAUDE.local.md`, with imports | 200 lines (recommended) | notice |
+| `claude` | `on_demand_file_chars` | each nested `CLAUDE.md`/`CLAUDE.local.md`, with imports | 40,000 characters | warning |
+| `claude` | `instruction_file_bytes` | each instruction file | 4 MiB | error |
+| `claude` | `import_depth` | `@import` hops | 4 | error |
+| `claude` | `skill_description_chars` | `description` + `when_to_use` | 1,536 characters | warning |
+| `claude` | `skill_listing_tokens` | name, description, and `when_to_use` of every listed skill | 2,000 tokens, estimated at 4 characters per token | warning |
+| `claude` | `skill_file_lines` | `SKILL.md` | 500 lines (recommended) | notice |
+| `codex` | `project_doc_bytes` | project `AGENTS.md` chain, `AGENTS.override.md` in place of the file it replaces | 32 KiB | warning |
+| `codex` | `skill_name_chars` | `name` | 64 characters | error |
+| `codex` | `skill_description_chars` | `description` | 1,024 characters | warning |
+| `codex` | `skill_listing_chars` | descriptions of every listed skill | 8,000 characters | warning |
+
+Diagnostic codes are `<harness>-<key>` with underscores replaced by dashes. Messages name the harness, the file or scope, the measured size, the limit, the harness behavior past it, and the overriding key; token counts say they are estimates. Characters are Unicode code points. Claude Code is assumed to start at the repository root.
+
+`[budgets.<harness>]` accepts exactly the keys of that harness's rows, each a positive integer. An unknown or renamed harness, a harness without rows, or an unknown key is a configuration error. Overrides merge like other budgets. Limits run wherever a plan is built (`lint`, `generate`, `sync`, `add`); `notice` never fails a run, `warning` fails only with `--warnings-as-errors`, `error` always fails.
 
 ## 11. CLI
 
