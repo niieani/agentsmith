@@ -120,3 +120,47 @@ Three independent features; one worktree, landed in this order.
 
 - **`.git/info/exclude` is add-only (follow-up).** `info/exclude` is shared by every worktree of a repository, but project state is per worktree. Removing a line when one worktree's personal file goes away could un-ignore the same file in another worktree, so agentsmith only adds lines, in generation and in `clean` alike. They live in one block between `# BEGIN agentsmith: …` and `# END agentsmith`, each line once; a line for a missing file is harmless, and users remove the block by hand.
 - **`project init --template NAME` (follow-up).** A project whose template comes from the Source Repository has no committed `AGENTS.md`, since the shared layer reads only project inputs. `--template` copies the template family (every harness variant) and every partial it transitively includes from the Source Repository into `.config/agentsmith/`, rewriting `source:` includes to `project:`, and points scope `.` at `project:NAME`. It never overwrites a differing project file and is idempotent. Without the flag, init prints a hint when the Source Repository has templates.
+
+## Slice H: Antigravity harness and per-harness limits
+
+Two independent parts, built in parallel worktrees and merged into `feat/fleet-readiness`. Antigravity's limit entries are added after both land.
+
+### H1. `antigravity` harness
+
+Verified against agy 1.5.13 (2026-11-22):
+
+- Instructions are cumulative; nothing overrides or excludes a file. In a project, every `AGENTS.md`, `GEMINI.md` and `.agents/rules/*.md` with `trigger: always_on` front matter from the working directory up to the repository root loads. `AGENTS.override.md`, `CLAUDE.md` and `GEMINI.local.md` are not read. `rules.json` `exclude` does not affect `AGENTS.md`/`GEMINI.md`. Globally, `~/.gemini/GEMINI.md`, `~/.gemini/AGENTS.md`, `~/.gemini/config/GEMINI.md`, `~/.gemini/config/AGENTS.md` and `~/.gemini/config/rules/*.md` all load.
+- Skills: project `.agents/skills` and `.agent/skills` (also `_agents`, `_agent`); global `~/.gemini/config/skills` and `~/.gemini/skills`. Not read: `.claude/skills`, `.codex/skills`, `.gemini/skills` in projects, `~/.agents/skills`, `~/.claude/skills`. Same-named skills resolve by priority (one wins); they are not loaded twice. A skill created mid-session is visible on the next turn even if its folder did not exist at session start.
+
+Decisions:
+
+- Harness name `antigravity`.
+- Global: instructions in a file agentsmith owns, `~/.gemini/config/rules/agentsmith.md`, with `trigger: always_on` front matter; skills in `~/.gemini/config/skills`. `generic`'s `~/.agents/skills` does not reach Antigravity.
+- Project: shares `<scope>/AGENTS.md` with `codex`/`generic`; agentsmith never writes `GEMINI.md` (Antigravity would load both). Skills in `<scope>/.agents/skills`. Antigravity-specific skill content goes to `.agent/skills`, which only Antigravity reads, once a test settles which copy wins when a name exists in both `.agent/skills` and `.agents/skills`; until then such skills are a placement lint error. Antigravity-specific instruction snippets are allowed only globally; in a project they are a lint error.
+- Personal layer: Antigravity has no replacement mechanism, so personal additions go to a git-excluded `<scope>/.agents/rules/agentsmith-personal.md` (`trigger: always_on`), written only when the scope has personal snippets. It opens with one line stating that it extends `AGENTS.md` and takes precedence where they conflict, then lists each personal snippet under its slot's heading in template order. `upstream = replace` cannot hide upstream files from Antigravity; lint says so when `antigravity` is selected.
+- Warn when a scope contains both `AGENTS.md` and `GEMINI.md` and `antigravity` is selected.
+- Every Slice A–G feature covers the new roots: placement and duplicate-name lint, `harness_skills.antigravity`, exclusive mode, `clean`, sandbox `home`, `project init` detection, `global adopt` (prepend/append on the owned rule file, front matter preserved), status, docs (harness-discovery page section, configuration, commands, SPEC).
+
+### H2. Per-harness limits
+
+Built-in checks for every selected harness, active without configuration, modelling what each harness actually loads:
+
+| Harness | Unit | Limit | Severity |
+|---|---|---|---|
+| claude | each CLAUDE.md / CLAUDE.local.md | 200 lines (recommended) | notice |
+| claude | on-demand files (nested CLAUDE.md, rules) | 40,000 characters | warning (only the start is read) |
+| claude | any instruction file | 4 MiB | error (skipped) |
+| claude | `@import` chain | depth 4 | error |
+| claude | skill `description` + `when_to_use` | 1,536 characters | warning (truncated) |
+| claude | all skill listings | ≈1% of a 200K-token context window | warning |
+| claude | SKILL.md | 500 lines (recommended) | notice |
+| codex | project AGENTS.md chain at a scope (all ancestors, override files counted instead of the file they replace) | 32 KiB | warning (later files skipped) |
+| codex | skill `name` | 64 characters | error (skill not loaded) |
+| codex | skill `description` | 1,024 characters | warning (truncated) |
+| codex | all skill descriptions visible at a scope | 8,000 characters | warning (descriptions dropped) |
+| antigravity | each rule file | 24,000 bytes | error (truncated) |
+| antigravity | all always-on rules visible at a scope | 20,000 tokens (estimated at 4 bytes/token) | warning (largest demoted to pointers) |
+
+- Token limits are estimates and say so.
+- `[budgets]` keeps working and can override any default per harness (e.g. `[budgets.codex] project_doc_bytes = 65536` to match a raised `project_doc_max_bytes`); exact key names are part of the slice.
+- Checks run in `lint`, `generate`, `sync` and `add`, at the existing diagnostic severities (`notice` never fails a run).
