@@ -38,6 +38,26 @@ export interface HarnessAdapter {
   projectPersonalInstruction?(projectRoot: string, scopePath: string): string;
   /** Diagnostics for an instruction destination; `owned` holds paths agentsmith recorded writing. */
   preflightInstruction?(destination: string, owned: ReadonlySet<string>): Diagnostic[];
+  /**
+   * Text every instruction file this harness owns alone starts with, such as the `trigger: always_on` front matter of an
+   * Antigravity rule. It is not written into a project instruction file the harness shares with others.
+   */
+  instructionFrontMatter?: string;
+  /**
+   * False when the harness's own template variant and instruction snippets must not render into the project instruction
+   * file it shares: its snippets there are an error and its variant is not used. Defaults to true.
+   */
+  projectHarnessContent?: boolean;
+  /**
+   * Project rule file holding the personal layer as additions to the shared instruction file, for a harness that loads
+   * every instruction file cumulatively and has no way to read one file instead of another.
+   */
+  projectPersonalRule?(projectRoot: string, scopePath: string): string;
+  /**
+   * Scope-relative skill directory only this harness reads and that wins over its other skill directories when a skill
+   * name exists in both. A skill carrying this harness's own content is written there.
+   */
+  projectPrioritySkillDirectory?: string;
 }
 
 export function scopeDirectory(projectRoot: string, scopePath: string): string {
@@ -55,6 +75,10 @@ function codexHome(home: string | undefined): string {
 const AGENTS_SKILLS = join(".agents", "skills");
 const CODEX_SKILLS = join(".codex", "skills");
 const CLAUDE_SKILLS = join(".claude", "skills");
+const AGENT_SKILLS = join(".agent", "skills");
+
+/** Front matter that makes Antigravity load a rule file in every conversation. */
+export const ALWAYS_ON_FRONT_MATTER = "---\ntrigger: always_on\n---\n\n";
 
 const generic: HarnessAdapter = {
   name: "generic",
@@ -138,7 +162,38 @@ const claude: HarnessAdapter = {
   projectSkillReadDirectories: [CLAUDE_SKILLS],
 };
 
-export const HARNESS_ADAPTERS: Record<HarnessName, HarnessAdapter> = { generic, codex, claude };
+/**
+ * Antigravity (agy) loads every instruction file it finds and lets none replace another, so agentsmith owns a separate
+ * always-on rule globally and adds personal content to a project as a rule beside the shared `AGENTS.md`. It never
+ * writes `GEMINI.md`, which Antigravity would load as well.
+ */
+const antigravity: HarnessAdapter = {
+  name: "antigravity",
+  globalInstruction(home = canonicalHome()): string {
+    return join(home, ".gemini", "config", "rules", "agentsmith.md");
+  },
+  projectInstruction(projectRoot, scopePath): string {
+    return join(scopeDirectory(projectRoot, scopePath), "AGENTS.md");
+  },
+  instructionPrecedence: 5,
+  instructionFrontMatter: ALWAYS_ON_FRONT_MATTER,
+  projectHarnessContent: false,
+  projectPersonalRule(projectRoot, scopePath): string {
+    return join(scopeDirectory(projectRoot, scopePath), ".agents", "rules", "agentsmith-personal.md");
+  },
+  globalSkillRoot(home = canonicalHome()): string {
+    return join(home, ".gemini", "config", "skills");
+  },
+  projectSkillDirectory: AGENTS_SKILLS,
+  globalSkillReadRoots(home = canonicalHome()): string[] {
+    return [join(home, ".gemini", "config", "skills"), join(home, ".gemini", "skills")];
+  },
+  projectSkillReadDirectories: [AGENTS_SKILLS, AGENT_SKILLS, join("_agents", "skills"), join("_agent", "skills")],
+  // Verified with agy 1.5.15: a skill in .agent/skills wins over a same-named one in .agents/skills, and only it is listed.
+  projectPrioritySkillDirectory: AGENT_SKILLS,
+};
+
+export const HARNESS_ADAPTERS: Record<HarnessName, HarnessAdapter> = { generic, codex, claude, antigravity };
 
 export function getHarnessAdapter(name: HarnessName): HarnessAdapter {
   return HARNESS_ADAPTERS[name];
@@ -176,12 +231,21 @@ export interface SkillRootPlacement {
   readers: HarnessName[];
   /** The only harness reading this root, when exactly one does. Only then may harness-specific content render. */
   exclusiveReader?: HarnessName;
+  /** Readers that also find the skill in a root of their own that wins over this one, so this copy is hidden from them. */
+  shadowed?: HarnessName[];
 }
 
 export interface SkillPlacementResult {
   placements: SkillRootPlacement[];
   /** Requested harnesses that no candidate root could serve without making the skill visible twice. */
   unplaceable: HarnessName[];
+}
+
+/** A project skill root only `harness` reads and that wins over its other roots, if the harness has one. */
+export function prioritySkillRoot(harness: HarnessName, location: SkillLocation): string | undefined {
+  const directory = getHarnessAdapter(harness).projectPrioritySkillDirectory;
+  if (location.mode !== "project" || directory === undefined) return undefined;
+  return resolve(scopeDirectory(location.projectRoot, location.scopePath), directory);
 }
 
 /**
@@ -191,30 +255,61 @@ export interface SkillPlacementResult {
  * chosen first; a root is skipped when it would add nothing new or would make the skill visible twice to a
  * harness already served. For example, generic's `.agents/skills` serves both generic and Codex, so Codex's
  * own `.codex/skills` is not used when both are requested.
+ *
+ * `specific` names harnesses whose own content the skill carries. A harness with a priority root (Antigravity's
+ * `.agent/skills`) gets its own copy there, which hides any copy in a shared root from it.
  */
-export function placeSkill(harnesses: readonly HarnessName[], location: SkillLocation): SkillPlacementResult {
+export function placeSkill(harnesses: readonly HarnessName[], location: SkillLocation, specific: readonly HarnessName[] = []): SkillPlacementResult {
   const requested = HARNESS_NAMES.filter((harness) => harnesses.includes(harness));
-  const candidates: Array<{ root: string; owner: number; serves: HarnessName[]; readers: HarnessName[] }> = [];
+  const placements: SkillRootPlacement[] = [];
+  const prioritized: HarnessName[] = [];
   for (const harness of requested) {
+    const root = specific.includes(harness) ? prioritySkillRoot(harness, location) : undefined;
+    if (root === undefined) continue;
+    const readers = skillRootReaders(root, location);
+    prioritized.push(harness);
+    placements.push({ root, serves: [harness], readers, exclusiveReader: readers.length === 1 ? readers[0] : undefined });
+  }
+  const rest = requested.filter((harness) => !prioritized.includes(harness));
+  const candidates: Array<{ root: string; owner: number; serves: HarnessName[]; readers: HarnessName[] }> = [];
+  for (const harness of rest) {
     const root = skillWriteRoot(harness, location);
     if (root === undefined) continue;
     const resolved = resolve(root);
     if (candidates.some((candidate) => candidate.root === resolved)) continue;
     const readers = skillRootReaders(resolved, location);
-    candidates.push({ root: resolved, owner: HARNESS_NAMES.indexOf(harness), readers, serves: requested.filter((item) => readers.includes(item)) });
+    candidates.push({ root: resolved, owner: HARNESS_NAMES.indexOf(harness), readers, serves: rest.filter((item) => readers.includes(item)) });
   }
   candidates.sort((a, b) => b.serves.length - a.serves.length || a.owner - b.owner);
   const served = new Set<HarnessName>();
-  const placements: SkillRootPlacement[] = [];
   for (const candidate of candidates) {
     if (candidate.serves.length === 0 || candidate.serves.some((harness) => served.has(harness))) continue;
     for (const harness of candidate.serves) served.add(harness);
+    const shadowed = candidate.readers.filter((harness) => prioritized.includes(harness));
     placements.push({
       root: candidate.root,
       serves: candidate.serves,
       readers: candidate.readers,
       exclusiveReader: candidate.readers.length === 1 ? candidate.readers[0] : undefined,
+      ...(shadowed.length > 0 ? { shadowed } : {}),
     });
   }
-  return { placements, unplaceable: requested.filter((harness) => !served.has(harness)) };
+  return { placements, unplaceable: rest.filter((harness) => !served.has(harness)) };
+}
+
+/**
+ * Every Skill Root path suffix agentsmith may write to, relative to a scope directory or the home directory, such as
+ * `.agents/skills` and `.gemini/config/skills`. Pruning stops at these roots.
+ */
+export function skillRootSuffixes(): string[] {
+  const home = "/agentsmith-home";
+  const suffixes = new Set<string>();
+  for (const harness of HARNESS_NAMES) {
+    const adapter = getHarnessAdapter(harness);
+    suffixes.add(adapter.projectSkillDirectory);
+    if (adapter.projectPrioritySkillDirectory !== undefined) suffixes.add(adapter.projectPrioritySkillDirectory);
+    const global = adapter.globalSkillRoot(home);
+    if (global !== undefined) suffixes.add(global.slice(home.length + 1));
+  }
+  return [...suffixes];
 }
