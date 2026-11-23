@@ -100,6 +100,17 @@ Symlinks above those folders are fine. Your home folder, the project, and the So
 
 Use `asmith project explain` or `asmith global explain` to inspect artifact and effective-chain sizes. Reduce duplicated material, move reusable workflow detail into an on-demand skill, or intentionally raise the corresponding budget.
 
+## Harness limit reported
+
+A diagnostic such as `WARNING codex-project-doc-bytes` or `ERROR claude-import-depth` means a generated file or skill crosses a limit the harness itself enforces. The message names the file or scope, the size, the limit, what the harness does past it, and the `budgets.<harness>.<key>` that sets it. See [harness limits](/reference/configuration#harness-limits) for the full table.
+
+- **`codex-project-doc-bytes`**: Codex reads at most 32 KiB of project instructions by default, summed over every directory from the repository root to where it starts. Move detail out of the shared ancestors into a nested scope or a skill. If you raised `project_doc_max_bytes` in Codex, set `[budgets.codex] project_doc_bytes` to match.
+- **`claude-instruction-file-lines`** (notice): the `CLAUDE.md` with what it imports is longer than Claude Code recommends. It still loads; trim it when you can. Notices never fail a run.
+- **`claude-on-demand-file-chars`**: a nested `CLAUDE.md` is loaded only when Claude Code works in that folder, and then only its start is read. Shorten it or move detail into a skill.
+- **`claude-import-depth`**: an `@import` chain goes deeper than four hops, so the deepest files never load. Import them from a shallower file.
+- **`codex-skill-name-chars`**: Codex will not load a skill whose name is longer than 64 characters. Rename the skill directory and its `name`.
+- **`*-skill-description-chars`**, **`*-skill-listing-*`**: descriptions are truncated, or the listing of all skills at that scope, global ones included, is over the harness's budget. Shorten descriptions, disable skills a harness does not need with [`harness_skills`](/reference/configuration#per-harness-skills), or remove unused global skills. Claude's listing budget scales with the context window; raise `[budgets.claude] skill_listing_tokens` if yours is larger.
+
 ## Diagnose without writing
 
 ```sh

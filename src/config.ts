@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import { parse } from "smol-toml";
 
+import { limitKeys } from "./limits.ts";
 import {
   HARNESS_NAMES,
   RENAMED_HARNESSES,
@@ -164,23 +165,56 @@ function boolean(value: unknown, label: string, path: string, fallback: boolean)
   return value;
 }
 
+const BUDGET_KEYS = ["instruction_layer_bytes", "effective_instruction_bytes", "skill_markdown_bytes"] as const;
+
 function budgets(value: unknown, path: string): Budgets {
   if (value === undefined) return {};
   const input = table(value, "budgets", path);
-  exactKeys(input, ["instruction_layer_bytes", "effective_instruction_bytes", "skill_markdown_bytes"], "budgets", path);
-  const positive = (key: string): number | undefined => {
-    const item = input[key];
+  const tables = Object.keys(input).filter(
+    (key) => !(BUDGET_KEYS as readonly string[]).includes(key) && typeof input[key] === "object" && input[key] !== null && !Array.isArray(input[key]),
+  );
+  exactKeys(input, [...BUDGET_KEYS, ...tables], "budgets", path);
+  const positive = (entry: TomlTable, label: string, key: string): number | undefined => {
+    const item = entry[key];
     if (item === undefined) return undefined;
     if (typeof item !== "number" || !Number.isSafeInteger(item) || item <= 0) {
-      fail(`budgets.${key} must be a positive integer`, path);
+      fail(`${label}.${key} must be a positive integer`, path);
     }
     return item;
   };
-  return {
-    instructionLayerBytes: positive("instruction_layer_bytes"),
-    effectiveInstructionBytes: positive("effective_instruction_bytes"),
-    skillMarkdownBytes: positive("skill_markdown_bytes"),
+  const result: Budgets = {
+    instructionLayerBytes: positive(input, "budgets", "instruction_layer_bytes"),
+    effectiveInstructionBytes: positive(input, "budgets", "effective_instruction_bytes"),
+    skillMarkdownBytes: positive(input, "budgets", "skill_markdown_bytes"),
   };
+  for (const name of tables) {
+    const [harness] = harnesses([name], "budgets", path);
+    const keys = limitKeys(harness!);
+    if (keys.length === 0) fail(`budgets.${name} configures harness ${JSON.stringify(name)}, which has no built-in limits`, path);
+    const entry = table(input[name], `budgets.${name}`, path);
+    exactKeys(entry, keys, `budgets.${name}`, path);
+    const overrides: Record<string, number> = {};
+    for (const key of keys) {
+      const item = positive(entry, `budgets.${name}`, key);
+      if (item !== undefined) overrides[key] = item;
+    }
+    result.harnesses = { ...result.harnesses, [harness!]: overrides };
+  }
+  return result;
+}
+
+/** Budgets from `override` win per key, and per limit key within each harness. */
+export function mergeBudgets(base: Budgets, override: Budgets): Budgets {
+  const merged: Budgets = {
+    instructionLayerBytes: override.instructionLayerBytes ?? base.instructionLayerBytes,
+    effectiveInstructionBytes: override.effectiveInstructionBytes ?? base.effectiveInstructionBytes,
+    skillMarkdownBytes: override.skillMarkdownBytes ?? base.skillMarkdownBytes,
+  };
+  for (const harness of HARNESS_NAMES) {
+    const limits = { ...base.harnesses?.[harness], ...override.harnesses?.[harness] };
+    if (Object.keys(limits).length > 0) merged.harnesses = { ...merged.harnesses, [harness]: limits };
+  }
+  return merged;
 }
 
 function readToml(path: string): TomlTable {
@@ -453,12 +487,7 @@ export function loadProfileConfig(sourceRoot: string, name: string): ProfileConf
       `profile ${JSON.stringify(leaf.name)} must set harnesses and template, directly or through extends (chain: ${layers.map((layer) => layer.name).join(" -> ")})`,
       leaf.path,
     );
-  const mergedBudgets: Budgets = {};
-  for (const layer of layers) {
-    for (const [key, value] of Object.entries(layer.budgets) as Array<[keyof Budgets, number | undefined]>) {
-      if (value !== undefined) mergedBudgets[key] = value;
-    }
-  }
+  const mergedBudgets = layers.reduce<Budgets>((merged, layer) => mergeBudgets(merged, layer.budgets), {});
   const mergedHarnessSkills: HarnessSkills = {};
   for (const harness of HARNESS_NAMES) {
     const contributing = layers.filter((layer) => layer.harnessSkills[harness] !== undefined);

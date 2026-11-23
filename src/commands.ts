@@ -346,6 +346,8 @@ export interface GlobalGenerateOptions {
 export async function generateGlobal(plan: BuiltPlan, options: GlobalGenerateOptions, report?: RunReport): Promise<void> {
   await classify("config", () => assertPlanValid(plan));
   for (const item of plan.diagnostics.filter((diagnostic) => diagnostic.severity === "warning")) warn(report, diagnosticsText([item]));
+  // Notices are printed but never recorded as run warnings.
+  printDiagnostics(plan.diagnostics.filter((diagnostic) => diagnostic.severity === "notice"));
   const prepared = await prepareGlobalPlan(plan);
   const conflicts = await preflightGlobalPlan(plan, {
     state: prepared.previous,

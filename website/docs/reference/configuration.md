@@ -43,9 +43,54 @@ Path: `<source>/agentsmith.toml`.
 instruction_layer_bytes = 24576
 effective_instruction_bytes = 32768
 skill_markdown_bytes = 16384
+
+[budgets.codex]
+project_doc_bytes = 65536
 ```
 
-All budget values are optional positive UTF-8 byte thresholds. They warn rather than truncate.
+All budget values are optional positive integers. The three top-level keys are UTF-8 byte thresholds that apply to every harness; they warn rather than truncate. A `[budgets.<harness>]` table overrides the [harness limits](#harness-limits) of one harness.
+
+## Harness limits
+
+agentsmith checks every selected harness against the limits that harness actually enforces, without any configuration. Each check models what the harness loads: the files in every directory from the repository root down to a scope, override files in place of the files they replace, and every skill the harness lists at a scope, including global skills and skills agentsmith did not write. The checks run in `lint`, `generate`, `sync`, and `add`.
+
+| Harness | Key | What is measured | Default | Severity | Past the limit |
+| --- | --- | --- | --- | --- | --- |
+| `claude` | `instruction_file_lines` | each `CLAUDE.md` or `CLAUDE.local.md` agentsmith writes, with the files it `@import`s | 200 lines (recommended) | notice | Claude Code loads it all, but follows long files less reliably |
+| `claude` | `on_demand_file_chars` | each nested `CLAUDE.md` or `CLAUDE.local.md` (a scope below the repository root), with its imports | 40,000 characters | warning | Claude Code reads only the start of a file it loads on demand |
+| `claude` | `instruction_file_bytes` | each instruction file agentsmith writes | 4 MiB | error | Claude Code skips the file |
+| `claude` | `import_depth` | `@import` hops from an instruction file agentsmith writes | 4 | error | Claude Code does not load deeper imports |
+| `claude` | `skill_description_chars` | a skill's `description` plus `when_to_use` | 1,536 characters | warning | Claude Code truncates it in the skill listing |
+| `claude` | `skill_listing_tokens` | every skill listed at a scope: name, description, and `when_to_use` | 2,000 tokens, estimated at 4 characters per token (about 1% of a 200K-token context window) | warning | Claude Code shortens or leaves out descriptions |
+| `claude` | `skill_file_lines` | each `SKILL.md` | 500 lines (recommended) | notice | Claude Code loads it whole when the skill runs |
+| `codex` | `project_doc_bytes` | the project `AGENTS.md` chain at a scope: one file per directory from the repository root, `AGENTS.override.md` counted instead of the `AGENTS.md` it replaces | 32 KiB | warning | Codex truncates the file that crosses the limit and skips every later file |
+| `codex` | `skill_name_chars` | a skill's `name` | 64 characters | error | Codex fails to parse the skill and does not load it |
+| `codex` | `skill_description_chars` | a skill's `description` | 1,024 characters | warning | Codex truncates it in its skill catalog |
+| `codex` | `skill_listing_chars` | every skill description Codex reads at a scope, each counted up to `skill_description_chars` | 8,000 characters | warning | Codex drops descriptions from its catalog |
+
+`generic` has no limits of its own; Codex's limits cover `.agents/` content because Codex reads it.
+
+Each message names the harness, the file or scope, the measured size, the limit, what the harness does past it, and the key that overrides it, for example:
+
+```text
+WARNING codex-project-doc-bytes: Codex: the instruction files loaded at scope app (/repo/AGENTS.md, /repo/app/AGENTS.md) are 40,980 bytes, over the 32,768-byte limit for the project AGENTS.md chain (project_doc_max_bytes); Codex truncates the file that crosses the limit and skips every later file (budgets.codex.project_doc_bytes)
+```
+
+Diagnostic codes are `<harness>-<key>` with dashes, such as `claude-import-depth`. Token counts are estimates and say so. A `notice` never fails a run, even with `--warnings-as-errors`; warnings fail only with `--warnings-as-errors`; errors always fail.
+
+Change a limit when you changed the harness, for example after raising Codex's `project_doc_max_bytes` or running Claude Code with a larger context window:
+
+```toml
+[budgets.codex]
+project_doc_bytes = 65536     # matches project_doc_max_bytes = 65536 in ~/.codex/config.toml
+
+[budgets.claude]
+skill_listing_tokens = 10000  # 1% of a 1M-token context window
+```
+
+`[budgets.<harness>]` is accepted wherever `[budgets]` is: the Source Repository root, profiles, and the project config. Values merge per key like the other budgets. An unknown harness, a harness without limits (`generic`), an unknown key, or a value that is not a positive integer is a configuration error.
+
+Assumptions the checks make: Claude Code starts at the repository root, so a nested scope's `CLAUDE.md` is loaded on demand; an `@path` outside code counts as an import only when the file exists; and a `CLAUDE.md` listed in `claudeMdExcludes` is not loaded.
 
 ## Profile
 
@@ -75,7 +120,7 @@ Profile budgets override matching Source Repository defaults. See [per-harness s
 | `packs` | No | Ordered pack Source IDs. |
 | `skills_enable` | No | Skills to enable in addition to pack-enabled skills. |
 | `skills_disable` | No | Skills to exclude. |
-| `budgets` | No | Same keys as the Source Repository root. |
+| `budgets` | No | Same keys as the Source Repository root, including `[budgets.<harness>]`. |
 | `exclusive` | No | `true` reports every skill agentsmith did not write. See [exclusive mode](#exclusive-mode). Default `false`. |
 | `exclusive_allow` | No | Skill directory name globs that exclusive mode leaves alone. |
 | `projects` | No | `[[projects]]` entries that configure [third-party repositories](#third-party-repositories). |
@@ -98,7 +143,7 @@ A profile may extend one parent, which may extend another. agentsmith merges the
 | `harnesses`, `template`, `exclusive` | The child's value replaces the parent's when set. |
 | `exclusive_allow` | Ordered union, parent entries first. |
 | `projects` | The child's entries first, then the parent's; the first matching entry wins. |
-| `budgets` | Per key; the child's value wins. The result then overrides Source Repository defaults. |
+| `budgets` | Per key, and per key within each `[budgets.<harness>]`; the child's value wins. The result then overrides Source Repository defaults. |
 
 Packs are additive only; a child cannot remove a parent's pack. A base profile may list only packs; the selected profile must end up with `harnesses` and `template`, set directly or inherited. Cycles and missing parents are errors. `asmith global explain` shows the resolved chain and which profile contributed each pack.
 
