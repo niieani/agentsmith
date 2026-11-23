@@ -6,6 +6,7 @@ import {
   loadProfileConfig,
   loadRootConfig,
   MACHINE_CONFIG_PATH,
+  mergeBudgets,
   matchesAllow,
   projectSourceRoot,
   resolveConfiguredPath,
@@ -13,6 +14,7 @@ import {
 } from "./config.ts";
 import { walkFiles } from "./fs.ts";
 import { gitWorktree } from "./git.ts";
+import { checkHarnessLimits } from "./limits.ts";
 import { resolveProject } from "./project.ts";
 import { loadProjectState, projectStatePath } from "./safety.ts";
 import { getHarnessAdapter, placeSkill, skillReadRoots, skillWriteRoot, type SkillLocation } from "./harness.ts";
@@ -124,6 +126,8 @@ interface SkillPlacement {
   name: string;
   sourceId: string;
   destinationDir: string;
+  /** Rendered SKILL.md of this copy. */
+  skillMd?: string;
 }
 
 interface EnabledSkill {
@@ -163,14 +167,6 @@ interface PlannerContext {
 
 function utf8Bytes(value: string): number {
   return encoder.encode(value).byteLength;
-}
-
-function mergeBudgets(base: Budgets, override: Budgets): Budgets {
-  return {
-    instructionLayerBytes: override.instructionLayerBytes ?? base.instructionLayerBytes,
-    effectiveInstructionBytes: override.effectiveInstructionBytes ?? base.effectiveInstructionBytes,
-    skillMarkdownBytes: override.skillMarkdownBytes ?? base.skillMarkdownBytes,
-  };
 }
 
 function warning(diagnostics: Diagnostic[], code: string, message: string, path?: string): void {
@@ -722,13 +718,14 @@ async function planSkills(context: PlannerContext, scope: ScopeInput, packs: Loa
         skill: skill.name,
         slots: [...ownersBySlot.keys()].sort(),
       });
-      context.skillPlacements.push({
+      const skillPlacement: SkillPlacement = {
         harnesses: placement.readers.filter((harness) => context.configuredHarnesses.includes(harness)),
         scope: scope.path,
         name: skill.name,
         sourceId,
         destinationDir,
-      });
+      };
+      context.skillPlacements.push(skillPlacement);
       let markdownBytes = 0;
       let supportBytes = 0;
       const fileExplanations: unknown[] = [];
@@ -739,6 +736,7 @@ async function planSkills(context: PlannerContext, scope: ScopeInput, packs: Loa
           const rendered = await renderContent(context, new TextDecoder().decode(file.content), file.absolutePath, fileContributions);
           const content = encoder.encode(rendered.content);
           if (file.relativePath === "SKILL.md") {
+            skillPlacement.skillMd = rendered.content;
             try {
               parseSkillIdentity(rendered.content, skillDir, sourceId);
             } catch (cause) {
@@ -995,13 +993,6 @@ function validateEffectiveInstructionBudgets(context: PlannerContext): void {
         `${item.harness} effective instructions at ${item.scope} are ${effective} bytes, exceeding the ${context.budgets.effectiveInstructionBytes}-byte budget`,
       );
     }
-    if (item.harness === "codex" && context.mode === "project" && effective > 32 * 1024) {
-      warning(
-        context.diagnostics,
-        "codex-default-instruction-cap",
-        `Codex effective project instructions at ${item.scope} are ${effective} bytes, exceeding its configurable default 32 KiB cap`,
-      );
-    }
   }
 }
 
@@ -1080,6 +1071,21 @@ async function planScopes(context: PlannerContext, scopes: ScopeInput[]): Promis
   await validateUnmanagedSkillCollisions(context, sorted);
   validateEffectiveInstructionBudgets(context);
   coalesceWrites(context);
+  context.diagnostics.push(
+    ...checkHarnessLimits({
+      mode: context.mode,
+      projectRoot: context.projectRoot,
+      home: context.home,
+      scopes: sorted.map((scope) => ({ path: scope.path, harnesses: scope.harnesses })),
+      writes: context.writes,
+      skills: context.skillPlacements.flatMap((item) =>
+        item.skillMd === undefined ? [] : [{ destinationDir: item.destinationDir, name: item.name, harnesses: item.harnesses, skillMd: item.skillMd }],
+      ),
+      ownedPaths: context.ownedPaths,
+      claudeMdExcludes: context.claudeMdExcludes,
+      overrides: context.budgets.harnesses,
+    }),
+  );
 }
 
 interface ProfileExplanation {

@@ -8,6 +8,8 @@ export interface Budgets {
   instructionLayerBytes?: number;
   effectiveInstructionBytes?: number;
   skillMarkdownBytes?: number;
+  /** `[budgets.<harness>]`: overrides of built-in per-harness limits, by limit key. */
+  harnesses?: Partial<Record<HarnessName, Record<string, number>>>;
 }
 
 export interface MachineConfig {

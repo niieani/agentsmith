@@ -65,3 +65,35 @@ export async function scanSkillRoot(root: string): Promise<{ skills: SkillIdenti
   }
   return { skills, diagnostics };
 }
+
+/**
+ * Leniently reads the top-level string fields of a Markdown file's YAML front matter: plain and quoted scalars, plain
+ * scalars continued on indented lines, and `|`/`>` block scalars. Nested structures are skipped. Returns an empty
+ * record when the file has no front matter.
+ */
+export function frontMatterFields(content: string): Record<string, string> {
+  const lines = content.replace(/\r\n?/g, "\n").split("\n");
+  const fields: Record<string, string> = {};
+  if (lines[0] !== "---") return fields;
+  const end = lines.indexOf("---", 1);
+  if (end < 0) return fields;
+  const body = lines.slice(1, end);
+  for (let index = 0; index < body.length; index++) {
+    const match = /^([A-Za-z_][A-Za-z0-9_-]*):(?:\s+(.*))?$/.exec(body[index]!);
+    if (!match) continue;
+    const value = (match[2] ?? "").trim();
+    const continuation: string[] = [];
+    while (index + 1 < body.length && (/^\s/.test(body[index + 1]!) || body[index + 1] === "")) continuation.push(body[++index]!);
+    while (continuation.length > 0 && continuation.at(-1)!.trim() === "") continuation.pop();
+    const block = /^([|>])[+-]?\d*$/.exec(value);
+    if (block) {
+      const indent = Math.min(...continuation.filter((line) => line.trim() !== "").map((line) => /^\s*/.exec(line)![0].length));
+      const text = continuation.map((line) => line.slice(Number.isFinite(indent) ? indent : 0));
+      fields[match[1]!] = block[1] === "|" ? text.join("\n") : text.join(" ").replace(/\s+/g, " ").trim();
+    } else if (value !== "" || !continuation.some((line) => /^\s*-\s|^\s*[A-Za-z_][\w-]*:/.test(line))) {
+      // Not a nested list or map.
+      fields[match[1]!] = [scalar(value), ...continuation.map((line) => line.trim())].filter((part) => part !== "").join(" ");
+    }
+  }
+  return fields;
+}
