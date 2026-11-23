@@ -118,6 +118,15 @@ describe("antigravity global scope", () => {
     expect(backedUp.exitCode, backedUp.stderr).toBe(0);
     expect(existsSync(join(f.home, ".gemini", "skills", "foreign"))).toBeFalse();
     expect(existsSync(join(f.home, ".gemini", "config", "skills", "kept-one"))).toBeTrue();
+
+    // An unmanaged skill in ~/.gemini/skills can be adopted; it then lands in every selected harness's root.
+    await put(join(f.home, ".gemini", "skills", "stray", "SKILL.md"), skillMd("stray"));
+    const adopted = await f.asmith("global", "adopt", "--skill", "stray");
+    expect(adopted.exitCode, adopted.stderr).toBe(0);
+    expect(await readFile(join(f.source, "skills", "stray", "SKILL.md"), "utf8")).toBe(skillMd("stray"));
+    expect(existsSync(join(f.home, ".gemini", "skills", "stray"))).toBeFalse();
+    expect(await readFile(join(f.home, ".gemini", "config", "skills", "stray", "SKILL.md"), "utf8")).toBe(skillMd("stray"));
+    expect(existsSync(join(f.home, ".agents", "skills", "stray", "SKILL.md"))).toBeTrue();
   });
 
   test("a same-named unmanaged skill in ~/.gemini/skills collides with a planned one", async () => {
