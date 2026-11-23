@@ -30,7 +30,7 @@ profile = "laptop"
 home = "home"
 ```
 
-When `home` is set, agentsmith uses it in place of `$HOME` for everything it owns: global artifacts (`<home>/.claude/CLAUDE.md`, `<home>/.codex/AGENTS.md`, `<home>/.agents/skills`, …), `state.toml`, `status.json`, stored content blobs, backups, and scheduler logs, all under `<home>/.agents/agentsmith/`. `CODEX_HOME` is ignored while `home` is set, so a sandbox never writes into your real `~/.codex`. The directory must already exist.
+When `home` is set, agentsmith uses it in place of `$HOME` for everything it owns: global artifacts (`<home>/.claude/CLAUDE.md`, `<home>/.codex/AGENTS.md`, `<home>/.agents/skills`, `<home>/.gemini/config/rules/agentsmith.md`, …), `state.toml`, `status.json`, stored content blobs, backups, and scheduler logs, all under `<home>/.agents/agentsmith/`. `CODEX_HOME` is ignored while `home` is set, so a sandbox never writes into your real `~/.codex`. The directory must already exist.
 
 Git and SSH still run with your real `$HOME`, so your identity, keys, and credential helpers keep working for `global sync`, `global add --push`, and `global init`. Pass the config with `--config` to every global command, including `global status`. `global schedule install --config` schedules a job that syncs the sandbox; the LaunchAgent or systemd unit itself stays in your real home. `global init --config` keeps an existing config's `home` and, without `--source`, clones into `<home>/.agents/agentsmith/source`.
 
@@ -162,7 +162,9 @@ Some repositories already commit their own `AGENTS.md`, `CLAUDE.md`, or skills, 
 | `keep` (default) | upstream `AGENTS.md`, then your layer | your layer only | still loaded |
 | `replace` | your layer only | your layer only | excluded through `claudeMdExcludes` |
 
-With `keep`, a directory that has an upstream `AGENTS.md` but no `CLAUDE.md` gets `@AGENTS.md` at the top of `CLAUDE.local.md`, because a `CLAUDE.local.md` turns off Claude's fallback to `AGENTS.md`. Upstream skills stay visible; one with the same name as a generated skill is an error. Generic tools keep reading the upstream `AGENTS.md`.
+With `keep`, a directory that has an upstream `AGENTS.md` but no `CLAUDE.md` gets `@AGENTS.md` at the top of `CLAUDE.local.md`, because a `CLAUDE.local.md` turns off Claude's fallback to `AGENTS.md`. Upstream skills stay visible; one with the same name as a generic skill is an error. Generic tools keep reading the upstream `AGENTS.md`.
+
+Antigravity reads every `AGENTS.md`, `GEMINI.md`, and always-on rule, so with either mode it gets your whole layer in `.agents/rules/agentsmith-personal.md` beside the upstream files. `replace` cannot hide upstream instructions from it; `lint` warns (`upstream-replace-cumulative`) when `antigravity` is selected.
 
 You can put `upstream` in a `.config/agentsmith/config.toml` you add to the repository yourself; agentsmith excludes `/.config/agentsmith/` through `.git/info/exclude` so it stays out of `git status`. Without any project config, add an entry to your profile instead:
 
@@ -195,7 +197,7 @@ exclusive = true
 exclusive_allow = ["find-skills", "vercel-*"]
 ```
 
-With exclusive mode on, agentsmith expects to own every skill a selected harness can see in the scope being generated. It checks every Skill Root that a selected harness reads, globally or in each exclusive project scope (for example `~/.agents/skills`, `~/.codex/skills`, and `~/.claude/skills`), and reports each skill directory it did not write. Directories whose name matches an `exclusive_allow` glob are left alone, which suits skills that another tool installs, such as `npx skills add`. Hidden directories, such as Codex's `.system`, are skipped.
+With exclusive mode on, agentsmith expects to own every skill a selected harness can see in the scope being generated. It checks every Skill Root that a selected harness reads, globally or in each exclusive project scope (for example `~/.agents/skills`, `~/.codex/skills`, `~/.claude/skills`, and Antigravity's `~/.gemini/config/skills` and `~/.gemini/skills`), and reports each skill directory it did not write. Directories whose name matches an `exclusive_allow` glob are left alone, which suits skills that another tool installs, such as `npx skills add`. Hidden directories, such as Codex's `.system`, are skipped.
 
 Globs match the whole directory name: `*` matches any run of characters, `?` one character, and `[ab]` or `[!ab]` one character from, or not from, a set.
 
@@ -229,13 +231,22 @@ A fresh clone, a CI job, or a teammate without agentsmith set up has no machine 
 
 ## Harness destinations
 
-Harness names are `generic`, `codex`, and `claude`. `generic` targets the shared `.agents/` convention that Codex and other agents read. See [harness discovery](/reference/harness-discovery) for what each harness reads and why.
+Harness names are `generic`, `codex`, `claude`, and `antigravity`. `generic` targets the shared `.agents/` convention that Codex and other agents read. See [harness discovery](/reference/harness-discovery) for what each harness reads and why.
 
 | Harness | Global instructions | Project instructions | Global skills | Project skills |
 | --- | --- | --- | --- | --- |
 | `generic` | none | `<scope>/AGENTS.md` | `~/.agents/skills` | `<scope>/.agents/skills` |
 | `codex` | `$CODEX_HOME/AGENTS.md` (normally `~/.codex/AGENTS.md`) | `<scope>/AGENTS.md` | none; use `generic` | `<scope>/.codex/skills`, only for skills not enabled for `generic` |
 | `claude` | `~/.claude/CLAUDE.md` | `<scope>/CLAUDE.md` | `~/.claude/skills` | `<scope>/.claude/skills` |
+| `antigravity` | `~/.gemini/config/rules/agentsmith.md` (always-on rule) | `<scope>/AGENTS.md` | `~/.gemini/config/skills` | `<scope>/.agents/skills`; `<scope>/.agent/skills` for skills with Antigravity content |
+
+### Antigravity
+
+Antigravity (`agy`) loads every instruction file it finds: nothing overrides or hides another file. agentsmith therefore:
+
+- writes global instructions to its own rule file, `~/.gemini/config/rules/agentsmith.md`, starting with `trigger: always_on` front matter. It uses `templates/<family>/antigravity.md` and `instructions/antigravity/` snippets. Antigravity does not read `~/.agents/skills`, so global skills enabled for it get their own copy in `~/.gemini/config/skills`;
+- shares the project `<scope>/AGENTS.md` with `codex` and `generic` and never writes `GEMINI.md`, which Antigravity would load as well. In a project, `instructions/antigravity/` snippets are an error and the `antigravity.md` variant is not used, because every tool reading `AGENTS.md` would see them. `lint` warns when a scope has a `GEMINI.md` beside `AGENTS.md`;
+- writes personal additions to `<scope>/.agents/rules/agentsmith-personal.md` ([below](#shared-and-personal-layers)).
 
 ### Shared `AGENTS.md`
 
@@ -248,6 +259,8 @@ Codex reads both `.agents/skills` and `.codex/skills` and keeps every copy, so o
 - A skill enabled for `generic` goes to `.agents/skills` (or `~/.agents/skills`) and also serves Codex. It renders only common skill-slot content. Codex-specific `skill-slots/harnesses/codex/` content consumed by that skill is an error, because Codex would read the common copy.
 - A skill enabled for `codex` but not `generic` goes to `<scope>/.codex/skills` with Codex content. In a global profile this is an error: enable the skill for `generic`.
 - A skill enabled for `claude` goes to the Claude root with Claude content.
+- A skill enabled for `antigravity` goes to `.agents/skills` in a project (shared with `generic` and Codex) and to `~/.gemini/config/skills` globally, with Antigravity content there.
+- A project skill that consumes `skill-slots/harnesses/antigravity/` content gets an extra copy in `<scope>/.agent/skills` with that content. Only Antigravity reads `.agent/skills`, and its copy wins over the one in `.agents/skills`, so the two copies do not collide.
 
 Harness-specific content renders only where exactly one harness reads the skill. Collision checks consider every root each selected harness reads, so a planned or unmanaged skill in `.codex/skills` collides with one of the same name in `.agents/skills` when `codex` is selected.
 
@@ -265,9 +278,33 @@ Every project Instruction Layer is rendered twice:
 | Layer | Rendered from | Files | Committed |
 | --- | --- | --- | --- |
 | Shared | shared inputs only | `<scope>/AGENTS.md`, `<scope>/CLAUDE.md` (or `@AGENTS.md`) | yes |
-| Personal | every input | `<scope>/AGENTS.override.md` for `codex`, `<scope>/CLAUDE.local.md` for `claude` | no, excluded through `.git/info/exclude` |
+| Personal | every input | `<scope>/AGENTS.override.md` for `codex`, `<scope>/CLAUDE.local.md` for `claude`, `<scope>/.agents/rules/agentsmith-personal.md` (additions only) for `antigravity` | no, excluded through `.git/info/exclude` |
 
 The personal files are written only when they differ from the shared layer. Codex reads `AGENTS.override.md` instead of `AGENTS.md`. For Claude, agentsmith adds `<scope>/CLAUDE.md` to `claudeMdExcludes` in `<project>/.claude/settings.local.json`, so Claude loads only `CLAUDE.local.md` for that folder. agentsmith owns only the `claudeMdExcludes` entries it added and keeps every other setting. `generic` has no personal file; other agents read the shared `AGENTS.md`.
+
+Antigravity cannot read one file instead of another, so its personal file holds only what the shared layer lacks: an always-on rule, written only when the scope has personal snippets, that says it extends `AGENTS.md` and takes precedence where they conflict, then lists each personal snippet under the heading its slot has in the template. For a template like
+
+```md
+# Guide
+
+## Style
+
+<!-- agentsmith:slot style -->
+```
+
+a personal `style` snippet produces:
+
+```md
+---
+trigger: always_on
+---
+
+These personal instructions extend AGENTS.md and take precedence over it where they conflict.
+
+## Style
+
+Prefer early returns.
+```
 
 Adding a personal snippet or pack never changes the shared layer, so teammates never see your personal instructions in a diff. A Source Repository partial included by a project template renders as nothing in the shared layer. When the template itself comes from the Source Repository, no shared file is written and only the personal files carry the scope's instructions. To commit such a template with the project, copy it into `.config/agentsmith/` with [`asmith project init --template NAME`](/reference/commands#copying-a-template-into-the-project), which sets `template = "project:NAME"`.
 

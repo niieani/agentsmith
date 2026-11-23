@@ -91,7 +91,7 @@ Without a machine configuration, project commands render what shared inputs defi
 
 A skill whose required slot is then empty is skipped with the warning `skill-skipped-required-slot`, and an Instruction Layer whose required slot is empty is skipped with `instruction-layer-skipped-required-slot`; with a Source Repository both stay `required-slot-empty` errors. An empty optional slot renders empty. A missing `project:` source is still an error. Project `*.local.md` snippets still render, so the personal layer may still differ from the shared layer.
 
-The shared layer (section 5.5) applies the same rules whether or not a Source Repository is configured, without notices.
+The shared layer (section 5.6) applies the same rules whether or not a Source Repository is configured, without notices.
 
 ## 4. Configuration schema
 
@@ -149,7 +149,7 @@ A profile may set `extends = "<profile name>"` to inherit from one parent profil
 
 Profiles accept `exclusive` (boolean, default `false`; the nearest profile that sets it wins) and `exclusive_allow` (a list of skill directory name globs; ordered union through the chain). See section 7.3.
 
-A profile may declare `[[projects]]` entries that configure third-party repositories without an agentsmith configuration of their own (section 5.6):
+A profile may declare `[[projects]]` entries that configure third-party repositories without an agentsmith configuration of their own (section 5.7):
 
 ```toml
 [[projects]]
@@ -212,7 +212,7 @@ packs = ["service"]
 
 The project root is the directory containing `.config/agentsmith/config.toml`. Scope paths are unique, normalized, existing project-relative directories that may not escape the project. A harness override must be a nonempty subset of the project defaults. `claude_import_agents_md` is an optional boolean, default `true` (section 5.3).
 
-`upstream = "keep" | "replace"` at the top level marks a third-party repository (section 5.6). Without it, the project owns its shared layer.
+`upstream = "keep" | "replace"` at the top level marks a third-party repository (section 5.7). Without it, the project owns its shared layer.
 
 `exclusive` and `exclusive_allow` are accepted at the top level and in each scope. A scope's `exclusive` overrides the top-level value (default `false`); its `exclusive_allow` is appended to the top-level list. See section 7.3.
 
@@ -231,7 +231,7 @@ templates/software/default.md
 
 The harness-specific template wins; `default.md` is the fallback. Absence of both is an error.
 
-Harness names are `generic`, `codex`, and `claude`. Each adapter declares its write destinations and every skill root the harness reads; placement, content, and collision rules are computed from that data. The discovery facts behind these tables are in the [harness discovery reference](../website/docs/reference/harness-discovery.md).
+Harness names are `generic`, `codex`, `claude`, and `antigravity`. Each adapter declares its write destinations and every skill root the harness reads; placement, content, and collision rules are computed from that data. The discovery facts behind these tables are in the [harness discovery reference](../website/docs/reference/harness-discovery.md).
 
 ### 5.1 Generic adapter
 
@@ -254,7 +254,7 @@ No harness reads `~/.agents/AGENTS.md`, so `generic` emits no global Instruction
 | Skill Root | none | `<scope>/.codex/skills` |
 | Skill roots read | `~/.agents/skills`, `$CODEX_HOME/skills` | `<dir>/.agents/skills`, `<dir>/.codex/skills` |
 
-Codex marks `$CODEX_HOME/skills` deprecated, so global Codex skills come from `generic`. Codex reads `AGENTS.override.md` instead of `AGENTS.md` in the same directory; agentsmith writes it for the personal layer (section 5.5). An existing `AGENTS.override.md` that agentsmith did not record writing is a hard preflight error (`codex-override-shadow`) because it shadows the generated `AGENTS.md`; so is `$CODEX_HOME/AGENTS.override.md` beside the global layer. The adapter models global then repository-to-working-directory instruction order. It warns when a project instruction chain exceeds Codex's documented default 32 KiB cap and labels the cap as configurable.
+Codex marks `$CODEX_HOME/skills` deprecated, so global Codex skills come from `generic`. Codex reads `AGENTS.override.md` instead of `AGENTS.md` in the same directory; agentsmith writes it for the personal layer (section 5.6). An existing `AGENTS.override.md` that agentsmith did not record writing is a hard preflight error (`codex-override-shadow`) because it shadows the generated `AGENTS.md`; so is `$CODEX_HOME/AGENTS.override.md` beside the global layer. The adapter models global then repository-to-working-directory instruction order. It warns when a project instruction chain exceeds Codex's documented default 32 KiB cap and labels the cap as configurable.
 
 ### 5.3 Claude Code adapter
 
@@ -267,17 +267,33 @@ Codex marks `$CODEX_HOME/skills` deprecated, so global Codex skills come from `g
 
 The adapter models ancestor discovery and nested on-demand discovery. Generated Claude artifacts are flat and self-contained, with one exception: when a project scope's rendered `CLAUDE.md` is byte-identical to the `AGENTS.md` rendered at the same scope, `CLAUDE.md` contains only `@AGENTS.md`. Claude Code never loads an imported `AGENTS.md` twice, whatever its Project instructions setting. Omitting `CLAUDE.md` is not supported, because any `CLAUDE.md` above the working directory disables Claude Code's `AGENTS.md` fallback. Project configuration `claude_import_agents_md = false` disables the import.
 
-### 5.4 Shared instruction files
+### 5.4 Antigravity adapter
+
+`antigravity` targets Antigravity (`agy`), which loads every instruction file it finds and lets none replace another.
+
+| Artifact | Global destination | Scoped destination |
+|---|---|---|
+| Instruction Layer | `~/.gemini/config/rules/agentsmith.md` | `<scope>/AGENTS.md` |
+| Personal Instruction Layer | none | `<scope>/.agents/rules/agentsmith-personal.md` (additions, section 5.6) |
+| Skill Root | `~/.gemini/config/skills` | `<scope>/.agents/skills`; `<scope>/.agent/skills` for a skill with Antigravity content (section 7.1) |
+| Skill roots read | `~/.gemini/config/skills`, `~/.gemini/skills` | `<dir>/.agents/skills`, `<dir>/.agent/skills`, `<dir>/_agents/skills`, `<dir>/_agent/skills` |
+
+The global Instruction Layer is a rule file agentsmith owns. It starts with the front matter `---`, `trigger: always_on`, `---` and a blank line, then the rendered layer; the `antigravity.md` template variant and `instructions/antigravity/` snippets apply. Antigravity does not read `~/.agents/skills`, so `generic`'s global skills do not reach it.
+
+In a project, Antigravity reads the shared `<scope>/AGENTS.md`. agentsmith never writes `GEMINI.md`, which Antigravity would load too. Because every tool reading `AGENTS.md` sees that file, the `antigravity.md` variant is not used for it and `instructions/antigravity/` snippets selected at a project scope are errors (`harness-instruction-content-project`). A scope selecting `antigravity` that contains `GEMINI.md` beside an existing or planned `AGENTS.md` produces the warning `gemini-md-beside-agents-md`.
+
+### 5.5 Shared instruction files
 
 Harnesses whose adapters resolve to the same instruction destination share one artifact. For `<scope>/AGENTS.md`, shared by `generic` and `codex`:
 
 - the template is the first existing of `codex.md` (when `codex` is selected), `generic.md` (when `generic` is selected), and `default.md`;
 - common instruction snippets render first, then `instructions/generic/` snippets when `generic` is selected, then `instructions/codex/` snippets when `codex` is selected;
-- the `AGENTS.override.md` preflight and personal file apply when `codex` is selected.
+- the `AGENTS.override.md` preflight and personal file apply when `codex` is selected;
+- `antigravity` shares the file but contributes no template variant or snippets (section 5.4), and adds a personal rule (section 5.6).
 
 In general, the selected harness with the highest adapter precedence supplies the template variant, and harness snippets render in ascending precedence.
 
-### 5.5 Shared and personal project layers
+### 5.6 Shared and personal project layers
 
 A project input is **shared** when it lives in the project's own `.config/agentsmith/` tree and is not a `*.local.md` file. Every other input is **personal**: Source Repository templates, packs (their instruction and skill-slot snippets), skills, and partials, and project `*.local.md` snippets and partials.
 
@@ -285,6 +301,7 @@ Each project Instruction Layer renders twice:
 
 - The **shared layer** renders from shared inputs only and is written to the adapter's Instruction Layer file (`<scope>/AGENTS.md`, `<scope>/CLAUDE.md` or its `@AGENTS.md` import). It is meant to be committed, and adding or changing a personal input never changes it. A personal include renders as nothing; a personal pack contributes nothing. When the template itself is personal, the shared file is not written (notice `shared-layer-unavailable`). When shared inputs alone fail to render, for example a required slot only a personal pack fills, the shared file is not written (warning `shared-layer-incomplete`).
 - The **personal layer** renders from every input and is written only when it differs from the shared layer (or no shared file is written), to each sharing harness's personal file: `<scope>/AGENTS.override.md` for `codex` and `<scope>/CLAUDE.local.md` for `claude`. `generic` has no personal file: generic tools read the shared layer. With `claude_import_agents_md`, a `CLAUDE.local.md` byte-identical to the `AGENTS.override.md` planned beside it contains only `@AGENTS.override.md`.
+- `antigravity` cannot read one file instead of another, so its personal layer holds only the additions: `<scope>/.agents/rules/agentsmith-personal.md`, an always-on rule written only when the layer has personal snippets (snippets the personal layer renders and the shared layer does not). It holds the `trigger: always_on` front matter, the line "These personal instructions extend AGENTS.md and take precedence over it where they conflict.", then the personal `prepend` snippets, each other slot's personal snippets under the nearest heading above that slot in the rendered template (one heading per run of slots sharing it), in template order, and the personal `append` snippets. When no shared file is written because the template is personal, the rule holds the whole personal layer without that line.
 
 When both `<scope>/CLAUDE.md` and `<scope>/CLAUDE.local.md` are written, the absolute path of `<scope>/CLAUDE.md` is added to `claudeMdExcludes` in `<project>/.claude/settings.local.json`, so Claude Code loads only `CLAUDE.local.md` for that directory and does not fall back to `AGENTS.md`. agentsmith never writes an exclude without the local file beside it: stale entries are removed before personal files are deleted, and new ones are added after personal files are written.
 
@@ -302,7 +319,7 @@ A line already present anywhere in the file is not added again, and every other 
 
 Skills are not layered: shared and personal skills render once, with every input, into the same Skill Roots, which are meant to be ignored (`project init`, section 11.1).
 
-### 5.6 Third-party repositories
+### 5.7 Third-party repositories
 
 A repository whose committed instruction files belong to someone else is configured with `upstream` in its project configuration, or, when it has none, by a profile `[[projects]]` entry. Project commands that find no `.config/agentsmith/config.toml` load the machine configuration's profile and use the first entry whose `path` equals the Git worktree root or whose `remote` matches one of the repository's remote URLs. Remotes compare as `host/path` with the scheme, user, trailing `/`, and `.git` removed and the host lowercased, so `git@github.com:acme/tool.git`, `ssh://git@github.com/acme/tool`, and `https://github.com/acme/tool` match `github.com/acme/tool`; local paths are canonicalized. A profile entry is a project with one repository scope at `.`, default `upstream = "keep"`.
 
@@ -310,10 +327,11 @@ Every input is personal; there is no shared layer, and agentsmith never writes a
 
 - `keep`: `AGENTS.override.md` holds the upstream `AGENTS.md` (when present and not written by agentsmith), a blank line, and the personal layer, because Codex reads it instead of `AGENTS.md`. `CLAUDE.local.md` holds only the personal layer and no `claudeMdExcludes` entry is written, because Claude reads it beside the upstream `CLAUDE.md`. When the directory has no `CLAUDE.md` or `.claude/CLAUDE.md` but has an upstream `AGENTS.md`, `CLAUDE.local.md` starts with `@AGENTS.md` and a blank line, since its presence turns off Claude Code's `AGENTS.md` fallback.
 - `replace`: both files hold only the personal layer, and `<scope>/CLAUDE.md` is added to `claudeMdExcludes`.
+- For `antigravity`, in either mode, `.agents/rules/agentsmith-personal.md` holds the extension line and the whole personal layer; Antigravity reads it beside the upstream files. `replace` cannot hide upstream `AGENTS.md`, `GEMINI.md`, or rules from Antigravity, so a scope selecting `antigravity` produces the warning `upstream-replace-cumulative`.
 
 Upstream skills stay visible; a generated skill whose name matches one is an error (section 8.1). Generic tools read the upstream `AGENTS.md`. Because the repository's `.gitignore` is not agentsmith's to edit, each generated skill directory and, for a project configuration, `/.config/agentsmith/` are added to `info/exclude` unless Git tracks something inside them.
 
-### 5.7 Physical destination collisions
+### 5.8 Physical destination collisions
 
 If adapters plan the same physical destination outside a shared instruction artifact, agentsmith coalesces byte-identical content into one write. Different content for the same destination is a planning error.
 
@@ -406,6 +424,10 @@ Each skill enabled at a scope for a set of harnesses is written to the fewest Sk
 | `generic`, with or without `codex` | `<scope>/.agents/skills` | `~/.agents/skills` |
 | `codex` without `generic` | `<scope>/.codex/skills` | error `skill-harness-unplaceable` |
 | `claude` | `<scope>/.claude/skills` | `~/.claude/skills` |
+| `antigravity` | `<scope>/.agents/skills` (shared with `generic` and `codex`) | `~/.gemini/config/skills` |
+| `antigravity`, consuming an `antigravity` skill snippet | `<scope>/.agent/skills`, plus the shared root for the other harnesses | `~/.gemini/config/skills` |
+
+A harness may declare a priority Skill Root: one only it reads, which wins over its other roots when a skill name exists in both. Antigravity's is `<scope>/.agent/skills` (verified with agy 1.5.15: the `.agent/skills` copy is listed and used, the `.agents/skills` copy is not). A skill that consumes a harness-specific snippet of a harness with a priority root is written there for that harness, and placement continues for the other harnesses. The shared copy is then shadowed for that harness: its snippets are not checked against the shared root and the two copies do not collide for it.
 
 A harness with no Skill Root of its own that no chosen root serves produces `skill-harness-unplaceable`, naming the harnesses whose roots it reads.
 
@@ -420,6 +442,7 @@ Visibility is evaluated per harness over every Skill Root that harness reads. Co
 - A planned skill colliding with a visible unmanaged filesystem skill is an error.
 - Two unmanaged visible skills colliding with each other produce a warning.
 - Malformed or unreadable unmanaged `SKILL.md` produces a warning.
+- A skill directory whose `SKILL.md` is recorded in global or project state but no longer planned there is stale, not unmanaged: it is deleted by the run and never collides.
 - Plugin, admin, bundled, and otherwise undiscoverable external skills are out of scope.
 - When machine configuration is available, project checks include generated personal skills. Hermetic checks state that only project scopes were analyzed.
 
@@ -475,7 +498,7 @@ Every `global sync` and `global generate` writes `status.json` atomically after 
 
 ### 8.2.2 Adoption
 
-`global adopt` considers every existing global artifact whose content differs from recorded state, plus every planned instruction destination that exists unrecorded. It adopts only Instruction Layers (`AGENTS.md`, `CLAUDE.md`) whose content equals `prefix + stored + suffix`, where `stored` is the blob for the recorded hash and the first occurrence of `stored` determines the split. It refuses the whole operation, writing nothing, when any candidate is a skill file, a stale artifact, unrecorded, missing its blob, or edited anywhere else.
+`global adopt` considers every existing global artifact whose content differs from recorded state, plus every planned instruction destination that exists unrecorded. It adopts only Instruction Layers (`AGENTS.md`, `CLAUDE.md`, Antigravity's `agentsmith.md` rule) whose content equals `prefix + stored + suffix`, where `stored` is the blob for the recorded hash and the first occurrence of `stored` determines the split. For a layer that starts with its harness's front matter (Antigravity's rule), the current file must start with the same front matter, and the split is made on what follows it, so adopted text lands after the front matter. It refuses the whole operation, writing nothing, when any candidate is a skill file, a stale artifact, unrecorded, missing its blob, or edited anywhere else.
 
 Adopted text is written to snippets in `<source>/packs/<pack>/instructions/<harness>/`: prefixes to `prepend/00-adopted.local.md` (new text before existing content) and suffixes to `append/99-adopted.local.md` (new text after existing content). With `--slot NAME`, prefix then suffix are appended to `<NAME>/99-adopted.local.md`. `--pack` must be selected by the active profile and is required unless the profile selects exactly one pack. Every snippet path must be ignored by Git in the Source Repository (`git check-ignore`). After writing the snippets, adopt rebuilds the plan, checks that the adopted text renders into each artifact, and generates with the adopted destinations accepted despite their modification. If any step fails, snippet files are restored. `--dry-run` reports without writing.
 
@@ -500,7 +523,7 @@ Adopted text is written to snippets in `<source>/packs/<pack>/instructions/<harn
 
 - Global candidates are the recorded artifacts in global state that exist. One is unchanged when it is a regular file whose SHA-256 equals the recorded hash. Project candidates are the recorded project paths that exist, limited with `--scope` to paths whose deepest containing declared scope is that scope. One is unchanged when it is a regular file whose SHA-256 equals the recorded hash, or whose bytes equal the current project plan's write for that path, or when Git reports it `tracked-clean`; if the project plan cannot be built, only Git is consulted (with a warning).
 - Any changed candidate fails the command with `artifact-modified` (exit 5) before anything is removed, in dry runs too, unless `--on-modified=backup` or `--force`. With `backup`, changed global artifacts are backed up as in section 8.2 (an instruction file beside itself, a skill file's whole skill directory under the backup root) and changed project artifacts are moved to `<Git directory>/agentsmith/backups/<UTC timestamp>/<original absolute path>`; then they are removed. With `--force` they are removed without a backup.
-- Project clean also removes the `claudeMdExcludes` entries recorded for the removed paths, before the files. It keeps every `info/exclude` line (section 5.5) and says so.
+- Project clean also removes the `claudeMdExcludes` entries recorded for the removed paths, before the files. It keeps every `info/exclude` line (section 5.6) and says so.
 - Then the mode's state is removed: global `state.toml`, `status.json`, and `blobs/`; project state, unless `--scope` leaves other recorded paths, in which case state is rewritten without the removed paths.
 - Each now-empty parent directory of a removed path is removed, up to but excluding the home (global; the sandbox home when set), the worktree root (project artifacts), or the Git directory (project state).
 - The machine configuration, Source Repository, backups, logs, and the installed schedule are not touched. Removed tracked project files remain Git worktree deletions.
@@ -593,7 +616,7 @@ asmith project explain [--project PATH] [--json]
 asmith project add SLOT [TEXT] [--project PATH] [--scope PATH] [--file PATH] [--skill-slot] [--harness NAME] [--pack NAME] [--placement gap|first|last] [--name NAME] [--skip-generate] [--dry-run]
 ```
 
-`project` walks from the requested path, or current directory, toward its ancestors to find `.config/agentsmith/config.toml`. When none exists, `generate`, `diff`, `lint`, `explain`, and `clean` fall back to a matching profile `[[projects]]` entry (section 5.6).
+`project` walks from the requested path, or current directory, toward its ancestors to find `.config/agentsmith/config.toml`. When none exists, `generate`, `diff`, `lint`, `explain`, and `clean` fall back to a matching profile `[[projects]]` entry (section 5.7).
 
 Exit status:
 
@@ -613,9 +636,9 @@ Warnings alone succeed unless `--warnings-as-errors` is active. Notices report i
 
 `project init [--project PATH] [--template NAME] [--prepare]` works on the Git worktree root containing `--project` or the current directory (not a Git repository: configuration error). It runs, stopping at the first failure:
 
-1. If `.config/agentsmith/config.toml` is absent, write one selecting the harnesses whose directory exists at the root (`.agents/` → `generic`, `.codex/` → `codex`, `.claude/` → `claude`), or every harness when none does, with one repository scope `.` that has no template (with `--template NAME`: `template = "project:NAME"`) and no packs. An existing configuration is kept and its harnesses are used. With `--template`, the copy of step 2 is planned and checked before this step, so its errors leave the repository unchanged.
+1. If `.config/agentsmith/config.toml` is absent, write one selecting the harnesses whose marker exists at the root (`.agents/` → `generic`, `.codex/` → `codex`, `.claude/` → `claude`, `.agent/` or a `GEMINI.md` file → `antigravity`), or every harness when none does, with one repository scope `.` that has no template (with `--template NAME`: `template = "project:NAME"`) and no packs. An existing configuration is kept and its harnesses are used. With `--template`, the copy of step 2 is planned and checked before this step, so its errors leave the repository unchanged.
 2. With `--template NAME` (a machine configuration is required; `NAME` must be a Source ID that is not `project:`-qualified): the template family is resolved as `source:NAME` (missing: configuration error). Every regular file directly in its directory is copied to `.config/agentsmith/templates/NAME/`; a symlink is a configuration error. Include directives outside code fences in copied files are followed transitively: a `project:` include is not followed; any other include resolves as in generation (unqualified: project first) and, when it resolves into the Source Repository, that partial is copied to `.config/agentsmith/partials/<name>`. In copied files every `source:<name>` include is rewritten to `project:<name>`. Each destination is checked first: an existing file with identical content is skipped, and any other existing path is a configuration error listing every such path. An existing configuration in which some scope names `NAME` or `project:NAME` is left alone. Otherwise scope `.` gets `template = "project:NAME"` (replacing the starter comment, or after its `path` line) when it has no template; when it has one, the configuration is unchanged and init prints the line to add by hand. Without `--template`, when a machine configuration names a Source Repository with template families and scope `.` does not use a project template, a hint names `asmith project init --template <name>` and the available families.
-3. Append to `.gitignore`, under one comment line, every missing line of: `/<dir>/*` and `!/<dir>/.gitkeep` for each selected harness's project skill directory (`.agents/skills`, `.codex/skills`, `.claude/skills`), then `/.config/agentsmith/**/*.local.md`. Create each `<dir>/.gitkeep`. Claude Code reloads only skill directories that existed when a session started; the placeholder keeps the directory. Skill directories Git already tracks under a skill root are reported with `committed-skill` warnings.
+3. Append to `.gitignore`, under one comment line, every missing line of: `/<dir>/*` and `!/<dir>/.gitkeep` for each selected harness's project skill directory (`.agents/skills`, `.codex/skills`, `.claude/skills`), `/<dir>/` for each priority skill directory (`.agent/skills` for `antigravity`), then `/.config/agentsmith/**/*.local.md`. Create each `<dir>/.gitkeep`. Claude Code reloads only skill directories that existed when a session started; the placeholder keeps the directory. Skill directories Git already tracks under a skill root are reported with `committed-skill` warnings.
 4. With `--prepare`: `package.json` must exist (configuration error). The package manager is the `packageManager` field's name when it is `bun`, `pnpm`, `yarn`, or `npm`; otherwise the first lockfile present of `bun.lock`, `bun.lockb` (bun), `pnpm-lock.yaml` (pnpm), `yarn.lock` (yarn), `package-lock.json` (npm); otherwise npm. Unless `asmith` is in `devDependencies` or `dependencies`, run `bun add -d asmith`, `pnpm add -D asmith`, `yarn add -D asmith`, or `npm install -D asmith` in the root (failure: exit 1). Then, when `scripts.prepare` is absent, set it to `asmith project generate`, keeping the file's indentation and final newline. A `prepare` containing `asmith project generate` is left unchanged; any other is left unchanged with a `prepare-script-kept` warning printing `<existing> && asmith project generate`. Commands printed afterwards use `bunx asmith`, `pnpm exec asmith`, `yarn asmith`, or `npx asmith`.
 
 The command is idempotent. agentsmith installs no session hooks: they would run on every start, resume, compaction, and subagent, and no harness loads instruction files or skills a hook creates during the same turn.
@@ -638,4 +661,4 @@ The built-in adapters are based on the harness vendors' documented behavior:
 - [Claude Code project memory and CLAUDE.md](https://code.claude.com/docs/en/memory)
 - [Claude Code skills](https://code.claude.com/docs/en/skills)
 
-Codex behavior was verified against the Codex CLI source; the [harness discovery reference](../website/docs/reference/harness-discovery.md) records the details and unverified points.
+Codex behavior was verified against the Codex CLI source, and Antigravity behavior empirically against `agy` 1.5.13 and 1.5.15; the [harness discovery reference](../website/docs/reference/harness-discovery.md) records the details and unverified points.

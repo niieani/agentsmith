@@ -1,0 +1,11 @@
+# Add an Antigravity harness with an additive personal rule and a priority skill root
+
+Antigravity (`agy`) loads every instruction file it finds, globally and from the working directory up to the repository root, and nothing overrides or excludes another file. agentsmith therefore owns a separate always-on rule for the global layer (`~/.gemini/config/rules/agentsmith.md`) instead of a `GEMINI.md` or `AGENTS.md` users may keep there, and shares the project `<scope>/AGENTS.md` with `codex` and `generic` without ever writing `GEMINI.md`. Since every tool reading `AGENTS.md` sees the project file, Antigravity-specific instruction content is global only. Without a way to read one file instead of another, the personal layer cannot replace the shared one, so it becomes an additive rule, `<scope>/.agents/rules/agentsmith-personal.md`, holding only the personal snippets under their slot's heading and stating that they take precedence. The facts are in the [harness discovery reference](../../website/docs/reference/harness-discovery.md#antigravity).
+
+Antigravity resolves a skill name found in several roots by priority instead of loading both, and `.agent/skills`, which only it reads, wins over the shared `.agents/skills`. Adapters may now declare such a priority skill root. A skill that consumes the harness's own skill-slot content gets a copy there, and its shared copy is treated as shadowed for that harness, rather than rejecting harness content in the shared root.
+
+## Consequences
+
+- Global Antigravity skills land in `~/.gemini/config/skills`; `generic`'s `~/.agents/skills` does not reach Antigravity.
+- `upstream = "replace"` cannot hide upstream instructions from Antigravity; lint warns.
+- The priority result was observed on agy 1.5.15. If a later version stops preferring `.agent/skills`, the shadowed copy becomes a duplicate and the placement must go back to a lint error.

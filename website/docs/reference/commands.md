@@ -100,9 +100,9 @@ Every `global sync` and `global generate` writes `~/.agents/agentsmith/status.js
 
 ### Adopting local edits
 
-`asmith global adopt` handles global `AGENTS.md` and `CLAUDE.md` files edited by hand. For each one, it compares the file to the content agentsmith last generated. When the file is exactly *added text + generated content + added text*, it writes the added text as snippets in the Source Repository and regenerates:
+`asmith global adopt` handles global `AGENTS.md` and `CLAUDE.md` files, and Antigravity's `agentsmith.md` rule, edited by hand. For each one, it compares the file to the content agentsmith last generated. When the file is exactly *added text + generated content + added text*, it writes the added text as snippets in the Source Repository and regenerates:
 
-- The text before goes to `packs/<pack>/instructions/<harness>/prepend/00-adopted.local.md`.
+- The text before goes to `packs/<pack>/instructions/<harness>/prepend/00-adopted.local.md`. Antigravity's rule must keep its `trigger: always_on` front matter at the top; text is adopted after it.
 - The text after goes to `packs/<pack>/instructions/<harness>/append/99-adopted.local.md`.
 - With `--slot NAME`, both parts go to `packs/<pack>/instructions/<harness>/<NAME>/99-adopted.local.md`. The slot must exist in the template.
 
@@ -198,9 +198,9 @@ A global snippet that is not `--local` is committed by default, only the new fil
 
 `asmith project init` works on the Git repository containing `--project` or the current directory:
 
-1. Writes `.config/agentsmith/config.toml` unless it exists, with `harnesses` detected from existing `.agents/` (`generic`), `.codex/` (`codex`), and `.claude/` (`claude`) directories, or all three when none exists, and one repository scope without a template (with `--template NAME`, using `project:NAME`).
+1. Writes `.config/agentsmith/config.toml` unless it exists, with `harnesses` detected from existing `.agents/` (`generic`), `.codex/` (`codex`), `.claude/` (`claude`), and `.agent/` directories or a `GEMINI.md` file (`antigravity`), or every harness when none exists, and one repository scope without a template (with `--template NAME`, using `project:NAME`).
 2. With `--template NAME`, copies the template family `NAME` from your Source Repository into the project, so the committed `AGENTS.md` and `CLAUDE.md` can use it (see [copying a template](#copying-a-template-into-the-project)). Without it, when your machine config has a Source Repository with templates, init prints a hint naming the command and the available templates.
-3. Appends missing `.gitignore` lines for each selected harness's skill folder with a kept placeholder (`/.claude/skills/*`, `!/.claude/skills/.gitkeep`, and the same for `.agents/skills` and `.codex/skills`), and `/.config/agentsmith/**/*.local.md`. Creates the `.gitkeep` placeholders. A skill the repository already commits stays tracked and is reported with a warning.
+3. Appends missing `.gitignore` lines for each selected harness's skill folder with a kept placeholder (`/.claude/skills/*`, `!/.claude/skills/.gitkeep`, and the same for `.agents/skills` and `.codex/skills`), `/.agent/skills/` for `antigravity`, and `/.config/agentsmith/**/*.local.md`. Creates the `.gitkeep` placeholders. A skill the repository already commits stays tracked and is reported with a warning.
 4. With `--prepare`, requires `package.json`. It picks the package manager from the `packageManager` field, then the lockfile (`bun.lock` or `bun.lockb`: bun, `pnpm-lock.yaml`: pnpm, `yarn.lock`: yarn, `package-lock.json`: npm), then npm, and runs its command to add `asmith` as a dev dependency (`bun add -d`, `pnpm add -D`, `yarn add -D`, `npm install -D`) unless `asmith` is already a dependency. Then it sets `scripts.prepare` to `asmith project generate`. A `prepare` script that already runs it is left alone; any other one is kept unchanged with a `WARNING prepare-script-kept` that prints the chained command. Printed commands use the package manager's runner: `bunx asmith`, `pnpm exec asmith`, `yarn asmith`, or `npx asmith`.
 
 Rerunning it changes nothing that is already in place. See [committing project instructions](/guides/committing-project-instructions).
