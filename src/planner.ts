@@ -14,7 +14,7 @@ import {
 import { walkFiles } from "./fs.ts";
 import { gitWorktree } from "./git.ts";
 import { resolveProject } from "./project.ts";
-import { loadProjectState, projectStatePath } from "./safety.ts";
+import { globalStatePath, loadGlobalState, loadProjectState, projectStatePath } from "./safety.ts";
 import { getHarnessAdapter, placeSkill, skillReadRoots, skillWriteRoot, type SkillLocation } from "./harness.ts";
 import { normalizeMarkdown, RESERVED_EDGE_SLOTS, renderMarkdown } from "./markdown.ts";
 import {
@@ -919,7 +919,9 @@ async function validateUnmanagedSkillCollisions(context: PlannerContext, scopes:
     const scanned = await scanSkillRoot(root);
     context.diagnostics.push(...scanned.diagnostics);
     for (const skill of scanned.skills) {
-      if (!plannedDirs.has(resolve(skill.sourceDir))) unmanaged.push({ ...skill, ...metadata });
+      // A skill agentsmith recorded writing and no longer plans there is stale and is deleted, not a foreign skill.
+      if (plannedDirs.has(resolve(skill.sourceDir)) || context.ownedPaths.has(resolve(skill.sourceDir, "SKILL.md"))) continue;
+      unmanaged.push({ ...skill, ...metadata });
     }
   }
   // In exclusive mode an unmanaged skill is reported (and can be backed up) on its own, instead of failing planning.
@@ -1124,7 +1126,7 @@ export async function buildGlobalPlan(configPath = MACHINE_CONFIG_PATH): Promise
     sources: { sourceRoot: machine.source },
     home: machine.home,
     skipped: [],
-    ownedPaths: new Set(),
+    ownedPaths: await ownedGlobalPaths(machine.home),
     claudeMdExcludes: [],
     budgets: mergeBudgets(root.budgets, profile.budgets),
     configuredHarnesses: profile.harnesses,
@@ -1155,6 +1157,15 @@ export async function buildGlobalPlan(configPath = MACHINE_CONFIG_PATH): Promise
     chain: profile.chain,
     packs: profile.packs.map((pack) => ({ pack, profile: profile.packProfiles[pack]! })),
   });
+}
+
+/** Absolute paths recorded in the global state, or none when it is unreadable. */
+async function ownedGlobalPaths(home: string | undefined): Promise<Set<string>> {
+  try {
+    return new Set(Object.keys((await loadGlobalState(globalStatePath(home))).artifacts).map((path) => resolve(path)));
+  } catch {
+    return new Set();
+  }
 }
 
 /** Absolute paths recorded in the project's state, or none when Git or the state is unavailable. */
