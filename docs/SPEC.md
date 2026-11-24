@@ -334,6 +334,8 @@ Every input is personal; there is no shared layer, and agentsmith never writes a
 - `replace`: both files hold only the personal layer, and `<scope>/CLAUDE.md` is added to `claudeMdExcludes`.
 - For `antigravity`, in either mode, `.agents/rules/agentsmith-personal.md` holds the extension line and the whole personal layer; Antigravity reads it beside the upstream files. `replace` cannot hide upstream `AGENTS.md`, `GEMINI.md`, or rules from Antigravity, so a scope selecting `antigravity` produces the warning `upstream-replace-cumulative`.
 
+A file agentsmith recorded that Git tracks, such as a shared `AGENTS.md` generated before the project switched to upstream mode, is released rather than deleted: agentsmith prints the notice `upstream-file-released`, drops it from project state, and treats it as upstream from then on.
+
 Upstream skills stay visible; a generated skill whose name matches one is an error (section 8.1). Generic tools read the upstream `AGENTS.md`. Because the repository's `.gitignore` is not agentsmith's to edit, each generated skill directory and, for a project configuration, `/.config/agentsmith/` are added to `info/exclude` unless Git tracks something inside them.
 
 ### 5.8 Physical destination collisions

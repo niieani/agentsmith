@@ -13,7 +13,7 @@ import {
   parseSourceId,
 } from "./config.ts";
 import { walkFiles } from "./fs.ts";
-import { gitWorktree } from "./git.ts";
+import { gitIsTracked, gitWorktree } from "./git.ts";
 import { checkHarnessLimits } from "./limits.ts";
 import { resolveProject } from "./project.ts";
 import { globalStatePath, loadGlobalState, loadProjectState, projectStatePath } from "./safety.ts";
@@ -1379,10 +1379,20 @@ async function ownedGlobalPaths(home: string | undefined): Promise<Set<string>> 
 }
 
 /** Absolute paths recorded in the project's state, or none when Git or the state is unavailable. */
-async function ownedProjectPaths(projectRoot: string): Promise<Set<string>> {
+/**
+ * Paths agentsmith recorded for the project. In upstream mode a recorded file Git tracks belongs to the repository
+ * (agentsmith generated it before the project switched to upstream mode), so it is not owned.
+ */
+async function ownedProjectPaths(projectRoot: string, upstream: boolean): Promise<Set<string>> {
   try {
     const worktree = await gitWorktree(projectRoot);
-    return new Set((await loadProjectState(projectStatePath(worktree))).paths.map((path) => resolve(worktree.root, path)));
+    const owned = new Set<string>();
+    for (const path of (await loadProjectState(projectStatePath(worktree))).paths) {
+      const absolute = resolve(worktree.root, path);
+      if (upstream && (await gitIsTracked(worktree.root, absolute))) continue;
+      owned.add(absolute);
+    }
+    return owned;
   } catch {
     return new Set();
   }
@@ -1399,7 +1409,7 @@ export async function buildProjectPlan(projectStart = process.cwd(), machineConf
     sharedSources: project.upstream === undefined ? { projectRoot, sharedOnly: true } : undefined,
     upstream: project.upstream,
     skipped: [],
-    ownedPaths: await ownedProjectPaths(projectRoot),
+    ownedPaths: await ownedProjectPaths(projectRoot, project.upstream !== undefined),
     claudeMdExcludes: [],
     projectRoot,
     home,

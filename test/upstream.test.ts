@@ -162,6 +162,43 @@ describe("third-party repositories", () => {
     expect(result.stderr).toContain(join(f.project, "CLAUDE.local.md"));
     expect(await readFile(join(f.project, "CLAUDE.local.md"), "utf8")).toBe("Committed by upstream.\n");
   });
+  test("switching to upstream mode leaves files agentsmith committed earlier to the repository", async () => {
+    const f = await projectFixture("agentsmith-upstream-switch-");
+    await put(join(f.config, "config.toml"), ['harnesses = ["codex"]', "", "[[scopes]]", 'path = "."', 'template = "guide"', ""].join("\n"));
+    await put(join(f.config, "templates", "guide", "default.md"), "# Shared guide\n");
+    expect((await f.asmith("project", "generate")).exitCode).toBe(0);
+    await commitAll(f, "generated");
+
+    await put(join(f.source, "agentsmith.toml"), "");
+    await put(join(f.source, "profiles", "me.toml"), 'harnesses = ["codex"]\n');
+    await put(join(f.source, "templates", "mine", "default.md"), "# Mine\n");
+    await put(f.machine, `source = ${JSON.stringify(f.source)}\nprofile = "me"\n`);
+    await put(
+      join(f.config, "config.toml"),
+      ['upstream = "keep"', 'harnesses = ["codex"]', "", "[[scopes]]", 'path = "."', 'template = "mine"', ""].join("\n"),
+    );
+    const result = await f.asmith("project", "generate");
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stderr).toContain("upstream-file-released");
+    expect(await readFile(join(f.project, "AGENTS.md"), "utf8")).toBe("# Shared guide\n");
+    // The released file is now upstream, so keep carries it into the override.
+    expect(await readFile(join(f.project, "AGENTS.override.md"), "utf8")).toBe("# Shared guide\n\n# Mine\n");
+    expect(await f.git("status", "--porcelain")).not.toContain("AGENTS.md\n");
+    expect(await readFile(join(f.project, ".git", "agentsmith", "state.toml"), "utf8")).not.toContain('"AGENTS.md"');
+  });
+
+  test("never claims a claudeMdExcludes entry the user already had", async () => {
+    const f = await upstreamFixture();
+    const own = join(f.project, "CLAUDE.md");
+    await put(join(f.project, ".claude", "settings.local.json"), `${JSON.stringify({ claudeMdExcludes: [own] })}\n`);
+    await projectConfig(f, "replace");
+    expect((await f.asmith("project", "generate")).exitCode).toBe(0);
+    expect(await readFile(join(f.project, ".git", "agentsmith", "state.toml"), "utf8")).not.toContain(own);
+    await projectConfig(f, "keep");
+    const keep = await f.asmith("project", "generate");
+    expect(keep.exitCode, keep.stderr).toBe(0);
+    expect((await settings(f)).claudeMdExcludes).toEqual([own]);
+  });
 });
 
 describe("profile project entries", () => {

@@ -118,9 +118,18 @@ async function prepareProjectPlan(plan: BuiltPlan): Promise<{
   const statePath = projectStatePath(worktree);
   const previous = await loadProjectState(statePath);
   const current = new Set(plan.plannedPaths.map((path) => relativeStatePath(worktree.root, path)));
-  plan.deletes = previous.paths
-    .filter((path) => !current.has(path))
-    .map((path): PlannedDelete => ({ destination: resolve(worktree.root, path), kind: "skill" }));
+  plan.deletes = [];
+  for (const path of previous.paths.filter((item) => !current.has(item))) {
+    const destination = resolve(worktree.root, path);
+    // In upstream mode the repository's committed files belong to its authors, even ones agentsmith generated before.
+    if (plan.upstream !== undefined && (await gitIsTracked(worktree.root, destination))) {
+      console.error(
+        `NOTICE upstream-file-released: ${destination} is committed, so with upstream = "${plan.upstream}" agentsmith leaves it to the repository and stops managing it`,
+      );
+      continue;
+    }
+    plan.deletes.push({ destination, kind: "skill" });
+  }
   return { worktree, statePath, previous };
 }
 
@@ -233,6 +242,8 @@ export interface ProjectEntries {
   settingsPath: string;
   excludes: string[];
   claudeMdExcludes: string[];
+  /** The `claudeMdExcludes` entries agentsmith owns after this run: those it owned before or adds now. */
+  ownedClaudeMdExcludes: string[];
   presentExcludes: string[];
   previousClaudeMdExcludes: string[];
 }
@@ -273,11 +284,15 @@ export async function projectEntries(plan: BuiltPlan, worktreeRoot: string, prev
       ...(await untrackedDirectories(worktreeRoot, plan.personalExcludes)).map((path) => excludeEntry(worktreeRoot, path, true)),
     ],
     claudeMdExcludes: plan.claudeMdExcludes,
+    ownedClaudeMdExcludes: plan.claudeMdExcludes,
     presentExcludes,
     previousClaudeMdExcludes,
   };
-  // Validate the settings file before anything is written.
-  if (entries.claudeMdExcludes.length > 0 || previousClaudeMdExcludes.length > 0) await readClaudeSettings(settingsPath);
+  // Validate the settings file before anything is written. An entry the user already had stays theirs.
+  if (entries.claudeMdExcludes.length > 0 || previousClaudeMdExcludes.length > 0) {
+    const existing = ((await readClaudeSettings(settingsPath))?.claudeMdExcludes as string[] | undefined) ?? [];
+    entries.ownedClaudeMdExcludes = plan.claudeMdExcludes.filter((entry) => previousClaudeMdExcludes.includes(entry) || !existing.includes(entry));
+  }
   if (
     entries.claudeMdExcludes.length > 0 &&
     (await gitPathStatus(worktreeRoot, settingsPath)) !== "missing" &&
@@ -307,7 +322,7 @@ export async function generateProject(plan: BuiltPlan, options: ProjectGenerateO
     ...plan,
     writes: [
       ...plan.writes,
-      projectStateWrite(prepared.statePath, prepared.worktree.root, plan, { excludes: entries.excludes, claudeMdExcludes: entries.claudeMdExcludes }),
+      projectStateWrite(prepared.statePath, prepared.worktree.root, plan, { excludes: entries.excludes, claudeMdExcludes: entries.ownedClaudeMdExcludes }),
     ],
   };
   const quarantined = await quarantinePaths(

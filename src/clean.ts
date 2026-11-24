@@ -189,7 +189,10 @@ export async function cleanProject(options: CleanOptions): Promise<void> {
     console.error(`WARNING clean-plan-unavailable: comparing with Git only, because the project plan failed: ${errorMessage(cause)}`);
   }
 
-  const selected = state.paths.filter((path) => scope === undefined || owningScope(path, scopes) === scope);
+  // State paths are relative to the worktree; scopes are relative to the project, which may sit below it.
+  const projectPath = (absolute: string) => relative(projectRoot, absolute).split(sep).join("/");
+  const inScope = (absolute: string) => scope === undefined || owningScope(projectPath(absolute), scopes) === scope;
+  const selected = state.paths.filter((path) => inScope(resolve(worktree.root, path)));
   const plan: CleanPlan = {
     mode: "project",
     unchanged: [],
@@ -215,14 +218,13 @@ export async function cleanProject(options: CleanOptions): Promise<void> {
   if (remaining.length === 0 && (await present(statePath))) plan.stateFiles.push(statePath);
 
   // Entries agentsmith added to files it shares with the user go with the artifacts they serve.
-  const inScope = (path: string) => scope === undefined || owningScope(path, scopes) === scope;
   const settingsPath = claudeLocalSettingsPath(projectRoot);
   const settingsEntry = excludeEntry(worktree.root, settingsPath);
-  const claudeEntries = (state.claudeMdExcludes ?? []).filter((entry) => inScope(relative(worktree.root, entry).split(sep).join("/")));
+  const claudeEntries = (state.claudeMdExcludes ?? []).filter((entry) => inScope(entry));
   const remainingClaude = (state.claudeMdExcludes ?? []).filter((entry) => !claudeEntries.includes(entry));
   // info/exclude is shared by every worktree, so its lines stay; they only stop matching files once those are gone.
   const excludeEntries = (state.excludes ?? []).filter((entry) =>
-    entry === settingsEntry ? remainingClaude.length === 0 : inScope(entry.replace(/^\//, "").replace(/\/$/, "")),
+    entry === settingsEntry ? remainingClaude.length === 0 : inScope(resolve(worktree.root, entry.replace(/^\//, "").replace(/\/$/, ""))),
   );
   const excludePath = await infoExcludePath(worktree.root);
   if (claudeEntries.length > 0) await classify("config", () => readClaudeSettings(settingsPath));

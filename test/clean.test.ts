@@ -251,3 +251,30 @@ describe("project clean", () => {
     expect(existsSync(join(f.project, ".git", "agentsmith", "state.toml"))).toBeFalse();
   });
 });
+
+test("project clean --scope resolves scopes of a project below the worktree root", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agentsmith-clean-nested-"));
+  const worktree = join(root, "repo");
+  const project = join(worktree, "app");
+  const config = join(project, ".config", "agentsmith");
+  await put(
+    join(config, "config.toml"),
+    ['harnesses = ["codex"]', "", "[[scopes]]", 'path = "."', 'template = "base"', "", "[[scopes]]", 'path = "api"', 'template = "base"', ""].join("\n"),
+  );
+  await put(join(config, "templates", "base", "default.md"), "# Project\n");
+  await put(join(project, "api", "README.md"), "api\n");
+  const env = { ...Bun.env, HOME: root, CODEX_HOME: undefined };
+  const git = async (...args: string[]) => expect((await run(["git", ...args], worktree, env)).exitCode).toBe(0);
+  await git("init", "-q");
+  await git("config", "user.email", "fixture@example.test");
+  await git("config", "user.name", "Fixture");
+  const asmith = (...args: string[]) => run(["bun", cli, ...args], project, env);
+  expect((await asmith("project", "generate")).exitCode).toBe(0);
+  await git("add", ".");
+  await git("commit", "-qm", "generated");
+
+  const api = await asmith("project", "clean", "--scope", "api", "--yes");
+  expect(api.exitCode, api.stderr).toBe(0);
+  expect(existsSync(join(project, "api", "AGENTS.md"))).toBeFalse();
+  expect(existsSync(join(project, "AGENTS.md"))).toBeTrue();
+});

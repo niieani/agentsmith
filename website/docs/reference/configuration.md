@@ -213,6 +213,8 @@ With `keep`, a directory that has an upstream `AGENTS.md` but no `CLAUDE.md` get
 
 Antigravity reads every `AGENTS.md`, `GEMINI.md`, and always-on rule, so with either mode it gets your whole layer in `.agents/rules/agentsmith-personal.md` beside the upstream files. `replace` cannot hide upstream instructions from it; `lint` warns (`upstream-replace-cumulative`) when `antigravity` is selected.
 
+Switching an existing project to `upstream` leaves the committed files agentsmith generated before in place (`NOTICE upstream-file-released`): they now belong to the repository, and `keep` carries their content into `AGENTS.override.md`.
+
 You can put `upstream` in a `.config/agentsmith/config.toml` you add to the repository yourself; agentsmith excludes `/.config/agentsmith/` through `.git/info/exclude` so it stays out of `git status`. Without any project config, add an entry to your profile instead:
 
 ```toml title="profiles/laptop.toml"
