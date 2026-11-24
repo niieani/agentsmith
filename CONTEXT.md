@@ -12,6 +12,10 @@ _Avoid_: Context repo, global repo, synced repo
 The machine-owned selection of a Source Repository and an active profile.
 _Avoid_: Global config, host file
 
+**Sandbox Home**:
+A directory named by a Machine Configuration's `home` that replaces `$HOME` for every artifact and piece of state agentsmith owns, while Git keeps the real home.
+_Avoid_: Fake home, test home
+
 **Project Configuration**:
 The project-owned declaration of its harnesses and scopes.
 _Avoid_: Project profile, local config
@@ -20,9 +24,17 @@ _Avoid_: Project profile, local config
 An agent runtime with its own instruction and skill discovery semantics.
 _Avoid_: Tool, client
 
+**Generic Harness**:
+The harness named `generic`, which targets the shared `.agents/` convention read by Codex and other agents rather than one runtime.
+_Avoid_: Universal harness, default harness
+
 **Harness Adapter**:
-agentsmith's mapping between scopes, artifact kinds, and a harness's native discovery model.
+agentsmith's mapping between scopes, artifact kinds, and a harness's native discovery model, including every Skill Root the harness reads.
 _Avoid_: Output adapter, arbitrary target
+
+**Harness Limit**:
+A size or shape limit a harness itself enforces on what it loads, such as Codex's 32 KiB project instruction cap, checked by agentsmith with a built-in default that `[budgets.<harness>]` can override.
+_Avoid_: Quota, cap setting
 
 **Artifact**:
 A complete agent-facing instruction or capability produced by agentsmith.
@@ -53,12 +65,40 @@ The instruction layers and skill artifacts visible at a working location after a
 _Avoid_: Generated context, merged scope
 
 **Instruction Layer**:
-A complete instruction artifact associated with one scope and combined with instruction layers from broader applicable scopes.
+A complete instruction artifact associated with one scope and combined with instruction layers from broader applicable scopes. Harnesses that read the same file, such as Codex and the Generic Harness with `AGENTS.md`, share one Instruction Layer.
 _Avoid_: Instructions target, AGENTS target
+
+**Shared Input**:
+Project source material in the project's committed `.config/agentsmith/` tree, other than a `*.local.md` file.
+_Avoid_: Team input, committed source
+
+**Personal Input**:
+Any input that is not a Shared Input: Source Repository material and project `*.local.md` files.
+_Avoid_: Private input, local input
+
+**Shared Layer**:
+A project Instruction Layer rendered from Shared Inputs only and meant to be committed, such as `<scope>/AGENTS.md`.
+_Avoid_: Team layer, base layer
+
+**Personal Layer**:
+A project Instruction Layer rendered from every input into the file a harness reads instead of the Shared Layer, such as `AGENTS.override.md` or `CLAUDE.local.md`, and excluded from Git. A harness that loads every instruction file (Antigravity) instead gets a personal rule holding only the personal additions.
+_Avoid_: Override layer, local layer
 
 **Skill Root**:
 The collection of skill artifacts associated with one scope.
 _Avoid_: Skills target, skill catalog
+
+**Shared Skill Root**:
+A Skill Root read by more than one harness, such as `.agents/skills`, read by the Generic Harness, Codex, and Antigravity. Skill Artifacts placed there carry only harness-neutral content.
+_Avoid_: Common root, generic folder
+
+**Priority Skill Root**:
+A Skill Root only one harness reads that wins over its other roots when a skill name appears in both, such as Antigravity's `.agent/skills`. A skill carrying that harness's content gets a copy there, which shadows its copy in a Shared Skill Root for that harness.
+_Avoid_: Override root, preferred folder
+
+**Skill Placement**:
+The choice of Skill Roots for one Enabled Skill so that each harness it is enabled for reads it exactly once.
+_Avoid_: Skill copy, fan-out
 
 **Skill Artifact**:
 One assembled skill placed in a skill root.
@@ -79,6 +119,10 @@ _Avoid_: Marker, magic comment
 **Slot**:
 A named insertion point where selected packs may contribute content to a template.
 _Avoid_: Section, placeholder, hook
+
+**Edge Slot**:
+One of the reserved slots, `prepend` and `append`, implicitly placed at the very top and bottom of every Instruction Layer. Edge snippets are inserted verbatim.
+_Avoid_: Header slot, footer slot
 
 **Snippet**:
 An ordered piece of content contributed by a pack to a slot.
@@ -113,7 +157,7 @@ Machine-owned source material that participates in assembly without belonging to
 _Avoid_: Override, dirty source
 
 **Profile**:
-A named selection of harnesses, a template family, and ordered packs used to assemble a machine's global artifacts.
+A named selection of harnesses, a template family, and ordered packs used to assemble a machine's global artifacts. A profile may extend one parent profile, inheriting its selection and appending its own packs; packs are never removed.
 _Avoid_: Host, configuration
 
 **Generation Plan**:
@@ -140,6 +184,22 @@ _Avoid_: User generation, host generation
 Generation of project-owned artifacts for the scopes declared by that project.
 _Avoid_: Local generation, project sync
 
+**Stored Content**:
+The copy of a global artifact's last generated content, kept by hash beside global state so later edits can be compared with it.
+_Avoid_: Cache, snapshot
+
+**Run Status**:
+The record of the most recent global sync or generate run: when it ran, its outcome, and its warnings.
+_Avoid_: Log, health file
+
+**Adoption**:
+Turning text added strictly before or after a global Instruction Layer's Stored Content into Local Source snippets, so that generation reproduces the edited artifact.
+_Avoid_: Import, merge
+
+**Artifact Backup**:
+A modified or unrecorded global artifact renamed aside with a timestamp so generation can proceed.
+_Avoid_: Snapshot, stash
+
 **Skill**:
 A named agent-facing capability that may be assembled from a template, partials, and pack contributions.
 _Avoid_: Command, workflow
@@ -149,8 +209,20 @@ The public identity declared by a skill and exposed to a harness.
 _Avoid_: Source ID, skill path
 
 **Enabled Skill**:
-A skill selected for generation in a scope by at least one pack and not excluded by the active configuration.
+A skill selected for generation in a scope, for one or more harnesses, by a pack or skill list and not excluded by the active configuration.
 _Avoid_: Installed skill, active skill
+
+**Unmanaged Skill**:
+A skill directory in a Skill Root that agentsmith did not write. Exclusive Mode reports it; Skill Adoption turns it into a managed skill.
+_Avoid_: Foreign skill, external skill
+
+**Exclusive Mode**:
+An opt-in profile or project setting under which every Unmanaged Skill visible to a selected harness, other than allowed names, fails generation or is moved to backups.
+_Avoid_: Strict mode, owned mode
+
+**Skill Adoption**:
+Copying an Unmanaged Skill into the Source Repository or project source and enabling it in a pack, so generation reproduces it.
+_Avoid_: Skill import
 
 **Skill Exclusion**:
 A scope-local decision not to generate a skill that the same scope would otherwise enable.

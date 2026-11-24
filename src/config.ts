@@ -3,17 +3,22 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import { parse } from "smol-toml";
 
+import { limitKeys } from "./limits.ts";
 import {
   HARNESS_NAMES,
+  RENAMED_HARNESSES,
   type Budgets,
   type HarnessName,
+  type HarnessSkills,
   type MachineConfig,
   type PackConfig,
   type ProfileConfig,
+  type ProfileProject,
   type ProjectConfig,
   type RootConfig,
   type ScopeConfig,
   type SourceId,
+  type UpstreamMode,
 } from "./types.ts";
 
 export const MACHINE_CONFIG_PATH = "~/.agents/agentsmith/config.toml";
@@ -83,27 +88,133 @@ function harnesses(value: unknown, label: string, path: string, required = true)
   const values = unique(stringList(value, label, path, required), label, path);
   if (required && values.length === 0) fail(`${label} must not be empty`, path);
   const allowed = new Set<string>(HARNESS_NAMES);
-  for (const value of values) if (!allowed.has(value)) fail(`${label} contains unknown harness ${JSON.stringify(value)}`, path);
+  for (const value of values) {
+    if (allowed.has(value)) continue;
+    const renamed = RENAMED_HARNESSES[value];
+    fail(
+      renamed === undefined
+        ? `${label} contains unknown harness ${JSON.stringify(value)}`
+        : `${label} contains harness ${JSON.stringify(value)}, which was renamed to ${JSON.stringify(renamed)}`,
+      path,
+    );
+  }
   return values as HarnessName[];
 }
+
+function harnessSkills(value: unknown, label: string, selected: readonly HarnessName[] | undefined, path: string): HarnessSkills {
+  if (value === undefined) return {};
+  const input = table(value, label, path);
+  const result: HarnessSkills = {};
+  for (const [name, selection] of Object.entries(input)) {
+    const [harness] = harnesses([name], `${label} harness`, path);
+    if (selected !== undefined && !selected.includes(harness!))
+      fail(`${label}.${name} configures harness ${JSON.stringify(name)}, which is not selected`, path);
+    const entry = table(selection, `${label}.${name}`, path);
+    exactKeys(entry, ["enable", "disable"], `${label}.${name}`, path);
+    const enable = sourceIds(entry.enable, `${label}.${name}.enable`, path);
+    const disable = sourceIds(entry.disable, `${label}.${name}.disable`, path);
+    const both = enable.find((item) => disable.includes(item));
+    if (both !== undefined) fail(`${label}.${name} both enables and disables ${JSON.stringify(both)}`, path);
+    result[harness!] = { enable, disable };
+  }
+  return result;
+}
+
+/** Skill directory name globs: `*` and `?` match within the name, `[...]` matches one listed character. */
+function globs(value: unknown, label: string, path: string): string[] {
+  const values = unique(stringList(value, label, path), label, path);
+  for (const glob of values) {
+    if (glob.includes("/") || glob.includes("\\") || glob.includes("\0"))
+      fail(`${label} entry ${JSON.stringify(glob)} must match a skill directory name, not a path`, path);
+    try {
+      globPattern(glob);
+    } catch {
+      fail(`${label} entry ${JSON.stringify(glob)} is not a valid glob`, path);
+    }
+  }
+  return values;
+}
+
+/** Compile a skill directory name glob to an anchored regular expression. */
+export function globPattern(glob: string): RegExp {
+  let source = "";
+  for (let index = 0; index < glob.length; index++) {
+    const char = glob[index]!;
+    if (char === "*") source += ".*";
+    else if (char === "?") source += ".";
+    else if (char === "[") {
+      const end = glob.indexOf("]", index + 2);
+      if (end < 0) throw new Error(`unterminated [ in ${glob}`);
+      let body = glob.slice(index + 1, end);
+      if (body.startsWith("!")) body = `^${body.slice(1)}`;
+      source += `[${body.replaceAll("\\", "\\\\")}]`;
+      index = end;
+    } else source += char.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${source}$`, "s");
+}
+
+/** Whether a skill directory name matches any `exclusive_allow` glob. */
+export function matchesAllow(name: string, allow: readonly string[]): boolean {
+  return allow.some((glob) => globPattern(glob).test(name));
+}
+
+function boolean(value: unknown, label: string, path: string, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  if (typeof value !== "boolean") fail(`${label} must be a boolean`, path);
+  return value;
+}
+
+const BUDGET_KEYS = ["instruction_layer_bytes", "effective_instruction_bytes", "skill_markdown_bytes"] as const;
 
 function budgets(value: unknown, path: string): Budgets {
   if (value === undefined) return {};
   const input = table(value, "budgets", path);
-  exactKeys(input, ["instruction_layer_bytes", "effective_instruction_bytes", "skill_markdown_bytes"], "budgets", path);
-  const positive = (key: string): number | undefined => {
-    const item = input[key];
+  const tables = Object.keys(input).filter(
+    (key) => !(BUDGET_KEYS as readonly string[]).includes(key) && typeof input[key] === "object" && input[key] !== null && !Array.isArray(input[key]),
+  );
+  exactKeys(input, [...BUDGET_KEYS, ...tables], "budgets", path);
+  const positive = (entry: TomlTable, label: string, key: string): number | undefined => {
+    const item = entry[key];
     if (item === undefined) return undefined;
     if (typeof item !== "number" || !Number.isSafeInteger(item) || item <= 0) {
-      fail(`budgets.${key} must be a positive integer`, path);
+      fail(`${label}.${key} must be a positive integer`, path);
     }
     return item;
   };
-  return {
-    instructionLayerBytes: positive("instruction_layer_bytes"),
-    effectiveInstructionBytes: positive("effective_instruction_bytes"),
-    skillMarkdownBytes: positive("skill_markdown_bytes"),
+  const result: Budgets = {
+    instructionLayerBytes: positive(input, "budgets", "instruction_layer_bytes"),
+    effectiveInstructionBytes: positive(input, "budgets", "effective_instruction_bytes"),
+    skillMarkdownBytes: positive(input, "budgets", "skill_markdown_bytes"),
   };
+  for (const name of tables) {
+    const [harness] = harnesses([name], "budgets", path);
+    const keys = limitKeys(harness!);
+    if (keys.length === 0) fail(`budgets.${name} configures harness ${JSON.stringify(name)}, which has no built-in limits`, path);
+    const entry = table(input[name], `budgets.${name}`, path);
+    exactKeys(entry, keys, `budgets.${name}`, path);
+    const overrides: Record<string, number> = {};
+    for (const key of keys) {
+      const item = positive(entry, `budgets.${name}`, key);
+      if (item !== undefined) overrides[key] = item;
+    }
+    result.harnesses = { ...result.harnesses, [harness!]: overrides };
+  }
+  return result;
+}
+
+/** Budgets from `override` win per key, and per limit key within each harness. */
+export function mergeBudgets(base: Budgets, override: Budgets): Budgets {
+  const merged: Budgets = {
+    instructionLayerBytes: override.instructionLayerBytes ?? base.instructionLayerBytes,
+    effectiveInstructionBytes: override.effectiveInstructionBytes ?? base.effectiveInstructionBytes,
+    skillMarkdownBytes: override.skillMarkdownBytes ?? base.skillMarkdownBytes,
+  };
+  for (const harness of HARNESS_NAMES) {
+    const limits = { ...base.harnesses?.[harness], ...override.harnesses?.[harness] };
+    if (Object.keys(limits).length > 0) merged.harnesses = { ...merged.harnesses, [harness]: limits };
+  }
+  return merged;
 }
 
 function readToml(path: string): TomlTable {
@@ -179,16 +290,50 @@ function contained(root: string, candidate: string, label: string): string {
 export function loadMachineConfig(path: string): MachineConfig {
   const absolutePath = resolveConfiguredPath(path, join(resolve("."), ".agentsmith-cli-path"));
   const input = readToml(absolutePath);
-  exactKeys(input, ["source", "profile"], "machine configuration", absolutePath);
+  exactKeys(input, ["source", "profile", "home"], "machine configuration", absolutePath);
   const profile = string(input.profile, "profile", absolutePath);
   if (parseSourceId(profile).owner !== undefined) fail("machine profile cannot be ownership-qualified", absolutePath);
   const source = resolveConfiguredPath(string(input.source, "source", absolutePath), absolutePath);
   if (!existsSync(source) || !lstatSync(source).isDirectory()) fail(`source is not an existing directory: ${source}`, absolutePath);
   if (lstatSync(source).isSymbolicLink()) fail(`source must not be a symlink: ${source}`, absolutePath);
   return {
-    source,
+    // The source itself is not a symlink (checked above); resolving its ancestors makes it compare equal to Git's root.
+    source: realpathSync(source),
     profile,
+    ...(input.home === undefined ? {} : { home: machineHome(input.home, absolutePath) }),
   };
+}
+
+function machineHome(value: unknown, configPath: string): string {
+  const home = resolveConfiguredPath(string(value, "home", configPath), configPath);
+  if (!existsSync(home) || !lstatSync(realpathSync(home)).isDirectory()) fail(`home is not an existing directory: ${home}`, configPath);
+  // Like $HOME, a sandbox home is a root: its symlinked ancestors are resolved so paths below it compare equal to Git's.
+  return realpathSync(home);
+}
+
+/**
+ * The sandbox home a machine config selects, for commands that must never fall back to the real home by mistake:
+ * undefined only when the config does not exist or sets no `home`; an unreadable config or invalid `home` throws.
+ */
+export function requireMachineHome(configPath: string): string | undefined {
+  const absolutePath = resolveConfiguredPath(configPath, join(resolve("."), ".agentsmith-cli-path"));
+  if (!existsSync(absolutePath)) return undefined;
+  const input = readToml(absolutePath);
+  return input.home === undefined ? undefined : machineHome(input.home, absolutePath);
+}
+
+/**
+ * The sandbox home a machine config selects, read leniently so run status and cleanup still find agentsmith's state
+ * when the rest of the config is invalid. Undefined when the config is missing, unreadable, or sets no valid home.
+ */
+export function readMachineHome(configPath: string): string | undefined {
+  const absolutePath = resolveConfiguredPath(configPath, join(resolve("."), ".agentsmith-cli-path"));
+  try {
+    const input = readToml(absolutePath);
+    return input.home === undefined ? undefined : machineHome(input.home, absolutePath);
+  } catch {
+    return undefined;
+  }
 }
 
 export function loadRootConfig(sourceRoot: string): RootConfig {
@@ -198,22 +343,180 @@ export function loadRootConfig(sourceRoot: string): RootConfig {
   return { budgets: budgets(input.budgets, path) };
 }
 
-export function loadProfileConfig(sourceRoot: string, name: string): ProfileConfig {
-  const path = profileConfigPath(resolve(sourceRoot), name);
+interface ProfileLayer {
+  name: string;
+  path: string;
+  extends?: string;
+  harnesses?: HarnessName[];
+  template?: string;
+  packs: string[];
+  skillsEnable: string[];
+  skillsDisable: string[];
+  harnessSkills: HarnessSkills;
+  budgets: Budgets;
+  exclusive?: boolean;
+  exclusiveAllow: string[];
+  projects: ProfileProject[];
+}
+
+function upstreamMode(value: unknown, label: string, path: string): UpstreamMode {
+  if (value !== "keep" && value !== "replace") fail(`${label} must be "keep" or "replace"`, path);
+  return value;
+}
+
+function profileProject(value: unknown, index: number, path: string): ProfileProject {
+  const label = `projects[${index}]`;
+  const input = table(value, label, path);
+  exactKeys(input, ["path", "remote", "upstream", "harnesses", "template", "packs", "skills_enable", "skills_disable"], label, path);
+  if ((input.path === undefined) === (input.remote === undefined)) fail(`${label} must set exactly one of path and remote`, path);
+  const template = input.template === undefined ? undefined : string(input.template, `${label}.template`, path);
+  const entry: ProfileProject = {
+    ...(input.path === undefined ? {} : { path: canonicalPath(resolveConfiguredPath(string(input.path, `${label}.path`, path), path)) }),
+    ...(input.remote === undefined ? {} : { remote: string(input.remote, `${label}.remote`, path) }),
+    upstream: input.upstream === undefined ? "keep" : upstreamMode(input.upstream, `${label}.upstream`, path),
+    harnesses: input.harnesses === undefined ? undefined : harnesses(input.harnesses, `${label}.harnesses`, path),
+    template,
+    packs: sourceIds(input.packs, `${label}.packs`, path),
+    skillsEnable: sourceIds(input.skills_enable, `${label}.skills_enable`, path),
+    skillsDisable: sourceIds(input.skills_disable, `${label}.skills_disable`, path),
+    file: path,
+  };
+  for (const sourceId of [...(template === undefined ? [] : [template]), ...entry.packs, ...entry.skillsEnable, ...entry.skillsDisable]) {
+    if (parseSourceId(sourceId).owner === "project") fail(`${label} cannot reference project-owned sources`, path);
+  }
+  return entry;
+}
+
+function canonicalPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+function loadProfileLayer(name: string, path: string): ProfileLayer {
   const input = readToml(path);
-  exactKeys(input, ["harnesses", "template", "packs", "skills_enable", "skills_disable", "budgets"], "profile", path);
-  const result: ProfileConfig = {
-    harnesses: harnesses(input.harnesses, "harnesses", path),
-    template: string(input.template, "template", path),
+  exactKeys(
+    input,
+    ["extends", "harnesses", "template", "packs", "skills_enable", "skills_disable", "harness_skills", "budgets", "exclusive", "exclusive_allow", "projects"],
+    "profile",
+    path,
+  );
+  if (input.projects !== undefined && !Array.isArray(input.projects)) fail("projects must be an array of tables", path);
+  const parent = input.extends === undefined ? undefined : string(input.extends, "extends", path);
+  if (parent !== undefined && parseSourceId(parent).owner !== undefined) fail("extends cannot name an ownership-qualified profile", path);
+  const layer: ProfileLayer = {
+    name,
+    path,
+    extends: parent,
+    harnesses: input.harnesses === undefined ? undefined : harnesses(input.harnesses, "harnesses", path),
+    template: input.template === undefined ? undefined : string(input.template, "template", path),
     packs: sourceIds(input.packs, "packs", path),
     skillsEnable: sourceIds(input.skills_enable, "skills_enable", path),
     skillsDisable: sourceIds(input.skills_disable, "skills_disable", path),
+    // Harness selection may be inherited, so it is checked after the chain is merged.
+    harnessSkills: harnessSkills(input.harness_skills, "harness_skills", undefined, path),
     budgets: budgets(input.budgets, path),
+    exclusive: input.exclusive === undefined ? undefined : boolean(input.exclusive, "exclusive", path, false),
+    exclusiveAllow: globs(input.exclusive_allow, "exclusive_allow", path),
+    projects: ((input.projects as unknown[] | undefined) ?? []).map((value, index) => profileProject(value, index, path)),
   };
-  for (const sourceId of [result.template, ...result.packs, ...result.skillsEnable, ...result.skillsDisable]) {
+  const harnessSelections = Object.values(layer.harnessSkills).flatMap((item) => [...item.enable, ...item.disable]);
+  for (const sourceId of [
+    ...(layer.template === undefined ? [] : [layer.template]),
+    ...layer.packs,
+    ...layer.skillsEnable,
+    ...layer.skillsDisable,
+    ...harnessSelections,
+  ]) {
     if (parseSourceId(sourceId).owner === "project") fail("global profiles cannot reference project-owned sources", path);
   }
-  return result;
+  return layer;
+}
+
+function orderedUnion(lists: string[][]): string[] {
+  return [...new Set(lists.flat())];
+}
+
+/**
+ * Loads a profile and its `extends` ancestors, merging root ancestor first: packs append (a pack repeated anywhere in
+ * the chain is an error), skill lists form an ordered union, `harnesses` and `template` take the nearest value, and
+ * budgets merge per key with the child winning.
+ */
+export function loadProfileConfig(sourceRoot: string, name: string): ProfileConfig {
+  const root = resolve(sourceRoot);
+  const layers: ProfileLayer[] = [];
+  const seen = new Set<string>();
+  let current: string | undefined = name;
+  let child: ProfileLayer | undefined;
+  while (current !== undefined) {
+    const path = profileConfigPath(root, current);
+    const id = parseSourceId(current).name;
+    if (seen.has(id)) {
+      fail(`profile extends cycle: ${[...layers.map((layer) => layer.name), id].join(" -> ")}`, child?.path);
+    }
+    seen.add(id);
+    if (child !== undefined && !existsSync(path)) fail(`profile ${JSON.stringify(child.name)} extends missing profile ${JSON.stringify(id)}`, child.path);
+    const layer = loadProfileLayer(id, path);
+    layers.push(layer);
+    child = layer;
+    current = layer.extends;
+  }
+  layers.reverse();
+  const leaf = layers[layers.length - 1]!;
+
+  const packs: string[] = [];
+  const packProfiles = new Map<string, string>();
+  for (const layer of layers) {
+    for (const pack of layer.packs) {
+      const previous = packProfiles.get(pack);
+      if (previous !== undefined) {
+        fail(`profile ${JSON.stringify(layer.name)} repeats pack ${JSON.stringify(pack)} inherited from profile ${JSON.stringify(previous)}`, layer.path);
+      }
+      packProfiles.set(pack, layer.name);
+      packs.push(pack);
+    }
+  }
+  const nearest = <T>(pick: (layer: ProfileLayer) => T | undefined): T | undefined =>
+    layers.reduce<T | undefined>((value, layer) => pick(layer) ?? value, undefined);
+  const resolvedHarnesses = nearest((layer) => layer.harnesses);
+  const template = nearest((layer) => layer.template);
+  if (resolvedHarnesses === undefined || template === undefined)
+    fail(
+      `profile ${JSON.stringify(leaf.name)} must set harnesses and template, directly or through extends (chain: ${layers.map((layer) => layer.name).join(" -> ")})`,
+      leaf.path,
+    );
+  const mergedBudgets = layers.reduce<Budgets>((merged, layer) => mergeBudgets(merged, layer.budgets), {});
+  const mergedHarnessSkills: HarnessSkills = {};
+  for (const harness of HARNESS_NAMES) {
+    const contributing = layers.filter((layer) => layer.harnessSkills[harness] !== undefined);
+    if (contributing.length === 0) continue;
+    if (!resolvedHarnesses.includes(harness)) {
+      fail(
+        `harness_skills.${harness} configures harness ${JSON.stringify(harness)}, which is not selected by profile ${JSON.stringify(leaf.name)}`,
+        contributing[0]!.path,
+      );
+    }
+    mergedHarnessSkills[harness] = {
+      enable: orderedUnion(contributing.map((layer) => layer.harnessSkills[harness]!.enable)),
+      disable: orderedUnion(contributing.map((layer) => layer.harnessSkills[harness]!.disable)),
+    };
+  }
+  return {
+    harnesses: resolvedHarnesses,
+    template,
+    packs,
+    skillsEnable: orderedUnion(layers.map((layer) => layer.skillsEnable)),
+    skillsDisable: orderedUnion(layers.map((layer) => layer.skillsDisable)),
+    harnessSkills: mergedHarnessSkills,
+    budgets: mergedBudgets,
+    exclusive: nearest((layer) => layer.exclusive) ?? false,
+    exclusiveAllow: orderedUnion(layers.map((layer) => layer.exclusiveAllow)),
+    chain: layers.map((layer) => layer.name),
+    packProfiles: Object.fromEntries(packProfiles),
+    projects: [...layers].reverse().flatMap((layer) => layer.projects),
+  };
 }
 
 export function loadPackConfig(packDir: string): PackConfig {
@@ -254,7 +557,12 @@ function normalizeScopePath(raw: string, root: string, configPath: string): stri
 
 function scope(value: unknown, index: number, projectHarnesses: HarnessName[], root: string, path: string): ScopeConfig {
   const input = table(value, `scopes[${index}]`, path);
-  exactKeys(input, ["path", "template", "packs", "harnesses", "skills_enable", "skills_disable"], `scopes[${index}]`, path);
+  exactKeys(
+    input,
+    ["path", "template", "packs", "harnesses", "skills_enable", "skills_disable", "harness_skills", "exclusive", "exclusive_allow"],
+    `scopes[${index}]`,
+    path,
+  );
   const scopeHarnesses = input.harnesses === undefined ? undefined : harnesses(input.harnesses, `scopes[${index}].harnesses`, path);
   if (scopeHarnesses !== undefined) {
     const defaults = new Set(projectHarnesses);
@@ -269,6 +577,9 @@ function scope(value: unknown, index: number, projectHarnesses: HarnessName[], r
     harnesses: scopeHarnesses,
     skillsEnable: sourceIds(input.skills_enable, `scopes[${index}].skills_enable`, path),
     skillsDisable: sourceIds(input.skills_disable, `scopes[${index}].skills_disable`, path),
+    harnessSkills: harnessSkills(input.harness_skills, `scopes[${index}].harness_skills`, scopeHarnesses ?? projectHarnesses, path),
+    exclusive: input.exclusive === undefined ? undefined : boolean(input.exclusive, `scopes[${index}].exclusive`, path, false),
+    exclusiveAllow: globs(input.exclusive_allow, `scopes[${index}].exclusive_allow`, path),
   };
 }
 
@@ -276,7 +587,12 @@ export function loadProjectConfig(path: string): ProjectConfig {
   const absolutePath = resolve(path);
   const root = projectRootFromConfig(absolutePath);
   const input = readToml(absolutePath);
-  exactKeys(input, ["harnesses", "budgets", "scopes"], "project configuration", absolutePath);
+  exactKeys(
+    input,
+    ["harnesses", "claude_import_agents_md", "budgets", "exclusive", "exclusive_allow", "upstream", "scopes"],
+    "project configuration",
+    absolutePath,
+  );
   const projectHarnesses = harnesses(input.harnesses, "harnesses", absolutePath);
   if (!Array.isArray(input.scopes)) fail("scopes must be an array of tables", absolutePath);
   const scopes = input.scopes.map((value, index) => scope(value, index, projectHarnesses, root, absolutePath));
@@ -300,7 +616,15 @@ export function loadProjectConfig(path: string): ProjectConfig {
       }
     }
   }
-  return { harnesses: projectHarnesses, budgets: budgets(input.budgets, absolutePath), scopes };
+  return {
+    harnesses: projectHarnesses,
+    budgets: budgets(input.budgets, absolutePath),
+    claudeImportAgentsMd: boolean(input.claude_import_agents_md, "claude_import_agents_md", absolutePath, true),
+    exclusive: boolean(input.exclusive, "exclusive", absolutePath, false),
+    exclusiveAllow: globs(input.exclusive_allow, "exclusive_allow", absolutePath),
+    ...(input.upstream === undefined ? {} : { upstream: upstreamMode(input.upstream, "upstream", absolutePath) }),
+    scopes,
+  };
 }
 
 export function discoverProjectConfig(start: string): string {

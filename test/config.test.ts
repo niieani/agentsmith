@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -11,9 +11,11 @@ import {
   loadProfileConfig,
   loadProjectConfig,
   loadRootConfig,
+  matchesAllow,
   parseSourceId,
   projectConfigPath,
   projectSourceRoot,
+  readMachineHome,
   resolveConfiguredPath,
   sourceRootConfigPath,
 } from "../src/config.ts";
@@ -46,10 +48,53 @@ function sourceFixture(): string {
   file(join(root, "skills/review/SKILL.md"), "---\nname: review\ndescription: Review\n---\n");
   file(
     join(root, "profiles/studio.toml"),
-    `harnesses = [\"codex\", \"claude-code\"]\ntemplate = \"personal\"\npacks = [\"base\"]\nskills_enable = [\"review\"]\nskills_disable = []\n[budgets]\neffective_instruction_bytes = 200\n`,
+    `harnesses = [\"codex\", \"claude\"]\ntemplate = \"personal\"\npacks = [\"base\"]\nskills_enable = [\"review\"]\nskills_disable = []\n[budgets]\neffective_instruction_bytes = 200\n`,
   );
   return root;
 }
+
+describe("machine config home", () => {
+  test("resolves home relative to the config file and canonicalizes it", () => {
+    const source = temp();
+    const sandbox = temp();
+    mkdirSync(join(sandbox, "home"));
+    symlinkSync(join(sandbox, "home"), join(sandbox, "link"));
+    const machine = join(sandbox, "config.toml");
+    file(machine, `source = ${JSON.stringify(source)}\nprofile = "studio"\nhome = "link"\n`);
+    expect(loadMachineConfig(machine)).toEqual({ source, profile: "studio", home: join(sandbox, "home") });
+    expect(readMachineHome(machine)).toBe(join(sandbox, "home"));
+
+    file(machine, `source = ${JSON.stringify(source)}\nprofile = "studio"\nhome = "missing"\n`);
+    expect(() => loadMachineConfig(machine)).toThrow(`home is not an existing directory: ${join(sandbox, "missing")}`);
+    expect(readMachineHome(machine)).toBeUndefined();
+    file(machine, `source = ${JSON.stringify(source)}\nprofile = "studio"\nhome = ""\n`);
+    expect(() => loadMachineConfig(machine)).toThrow("home must be a nonempty string");
+  });
+
+  test("reads home leniently when the rest of the config is invalid", () => {
+    const sandbox = temp();
+    const machine = join(sandbox, "config.toml");
+    file(machine, `source = "missing"\nhome = "."\n`);
+    expect(readMachineHome(machine)).toBe(sandbox);
+    expect(readMachineHome(join(sandbox, "absent.toml"))).toBeUndefined();
+    file(machine, "not toml [");
+    expect(readMachineHome(machine)).toBeUndefined();
+  });
+});
+
+describe("exclusive_allow globs", () => {
+  test("match whole skill directory names", () => {
+    expect(matchesAllow("npx-tool", ["npx-*"])).toBeTrue();
+    expect(matchesAllow("my-npx-tool", ["npx-*"])).toBeFalse();
+    expect(matchesAllow("tool-a", ["tool-?"])).toBeTrue();
+    expect(matchesAllow("tool-ab", ["tool-?"])).toBeFalse();
+    expect(matchesAllow("tool-b", ["tool-[ab]"])).toBeTrue();
+    expect(matchesAllow("tool-c", ["tool-[!ab]"])).toBeTrue();
+    expect(matchesAllow("a.b", ["a.b"])).toBeTrue();
+    expect(matchesAllow("axb", ["a.b"])).toBeFalse();
+    expect(matchesAllow("anything", [])).toBeFalse();
+  });
+});
 
 describe("Source IDs and paths", () => {
   test("parses unqualified, source-qualified, and project-qualified IDs", () => {
@@ -171,7 +216,7 @@ describe("strict TOML loaders", () => {
     expect(loadMachineConfig(machine)).toEqual({ source, profile: "studio" });
     expect(loadRootConfig(source).budgets.instructionLayerBytes).toBe(100);
     expect(loadProfileConfig(source, "studio")).toMatchObject({
-      harnesses: ["codex", "claude-code"],
+      harnesses: ["codex", "claude"],
       template: "personal",
       packs: ["base"],
       skillsEnable: ["review"],
@@ -197,6 +242,143 @@ describe("strict TOML loaders", () => {
   });
 });
 
+describe("profile extends", () => {
+  function chainFixture(): string {
+    const source = sourceFixture();
+    file(
+      join(source, "profiles/mac.toml"),
+      [
+        'harnesses = ["codex", "claude"]',
+        'template = "personal"',
+        'packs = ["base", "macos"]',
+        'skills_enable = ["review", "shared"]',
+        'skills_disable = ["publish"]',
+        "[budgets]",
+        "instruction_layer_bytes = 10",
+        "effective_instruction_bytes = 20",
+        "",
+      ].join("\n"),
+    );
+    file(
+      join(source, "profiles/studio.toml"),
+      ['extends = "mac"', 'packs = ["server"]', 'skills_enable = ["shared", "deploy"]', "[budgets]", "effective_instruction_bytes = 30", ""].join("\n"),
+    );
+    file(
+      join(source, "profiles/desk.toml"),
+      ['extends = "studio"', 'harnesses = ["codex"]', 'template = "desk"', 'packs = ["gpu"]', 'skills_disable = ["deploy"]', ""].join("\n"),
+    );
+    return source;
+  }
+
+  test("merges exclusive mode through extends: nearest exclusive wins, allow lists form an ordered union", () => {
+    const source = chainFixture();
+    file(
+      join(source, "profiles/mac.toml"),
+      `exclusive = true\nexclusive_allow = ["npx-*", "shared"]\n${readFileSync(join(source, "profiles/mac.toml"), "utf8")}`,
+    );
+    file(join(source, "profiles/studio.toml"), `exclusive_allow = ["shared", "tool-[ab]"]\n${readFileSync(join(source, "profiles/studio.toml"), "utf8")}`);
+    expect(loadProfileConfig(source, "studio")).toMatchObject({ exclusive: true, exclusiveAllow: ["npx-*", "shared", "tool-[ab]"] });
+    file(join(source, "profiles/desk.toml"), `exclusive = false\n${readFileSync(join(source, "profiles/desk.toml"), "utf8")}`);
+    expect(loadProfileConfig(source, "desk")).toMatchObject({ exclusive: false, exclusiveAllow: ["npx-*", "shared", "tool-[ab]"] });
+    file(join(source, "profiles/desk.toml"), `exclusive_allow = ["[oops"]\n${readFileSync(join(source, "profiles/desk.toml"), "utf8")}`);
+    expect(() => loadProfileConfig(source, "desk")).toThrow("is not a valid glob");
+  });
+
+  test("merges a chain root ancestor first", () => {
+    const source = chainFixture();
+    expect(loadProfileConfig(source, "studio")).toEqual({
+      harnesses: ["codex", "claude"],
+      template: "personal",
+      packs: ["base", "macos", "server"],
+      skillsEnable: ["review", "shared", "deploy"],
+      skillsDisable: ["publish"],
+      harnessSkills: {},
+      budgets: { instructionLayerBytes: 10, effectiveInstructionBytes: 30 },
+      exclusive: false,
+      exclusiveAllow: [],
+      chain: ["mac", "studio"],
+      packProfiles: { base: "mac", macos: "mac", server: "studio" },
+      projects: [],
+    });
+    expect(loadProfileConfig(source, "desk")).toMatchObject({
+      harnesses: ["codex"],
+      template: "desk",
+      packs: ["base", "macos", "server", "gpu"],
+      skillsDisable: ["publish", "deploy"],
+      budgets: { instructionLayerBytes: 10, effectiveInstructionBytes: 30 },
+      chain: ["mac", "studio", "desk"],
+      packProfiles: { gpu: "desk", server: "studio", base: "mac" },
+    });
+  });
+
+  test("a profile without extends reports a single-entry chain", () => {
+    expect(loadProfileConfig(sourceFixture(), "studio")).toMatchObject({ chain: ["studio"], packProfiles: { base: "studio" } });
+  });
+
+  test("rejects cycles, including self-extension", () => {
+    const source = chainFixture();
+    file(join(source, "profiles/mac.toml"), 'extends = "desk"\n');
+    expect(() => loadProfileConfig(source, "desk")).toThrow(/profile extends cycle: desk -> studio -> mac -> desk/);
+    file(join(source, "profiles/self.toml"), 'extends = "self"\n');
+    expect(() => loadProfileConfig(source, "self")).toThrow(/profile extends cycle: self -> self/);
+  });
+
+  test("rejects a missing parent", () => {
+    const source = chainFixture();
+    file(join(source, "profiles/orphan.toml"), 'extends = "nowhere"\npacks = []\n');
+    expect(() => loadProfileConfig(source, "orphan")).toThrow(/profile "orphan" extends missing profile "nowhere"/);
+  });
+
+  test("rejects ownership-qualified and invalid parents", () => {
+    const source = chainFixture();
+    file(join(source, "profiles/bad.toml"), 'extends = "source:mac"\n');
+    expect(() => loadProfileConfig(source, "bad")).toThrow(/ownership-qualified/);
+    file(join(source, "profiles/bad.toml"), 'extends = ""\n');
+    expect(() => loadProfileConfig(source, "bad")).toThrow(/extends must be a nonempty string/);
+    file(join(source, "profiles/bad.toml"), 'extends = "../escape"\n');
+    expect(() => loadProfileConfig(source, "bad")).toThrow(/invalid Source ID/);
+  });
+
+  test("rejects a pack repeated across the chain", () => {
+    const source = chainFixture();
+    file(join(source, "profiles/studio.toml"), 'extends = "mac"\npacks = ["server", "macos"]\n');
+    expect(() => loadProfileConfig(source, "studio")).toThrow(/profile "studio" repeats pack "macos" inherited from profile "mac"/);
+    file(join(source, "profiles/studio.toml"), 'extends = "mac"\npacks = ["server"]\n');
+    file(join(source, "profiles/desk.toml"), 'extends = "studio"\npacks = ["base"]\n');
+    expect(() => loadProfileConfig(source, "desk")).toThrow(/profile "desk" repeats pack "base" inherited from profile "mac"/);
+  });
+
+  test("merges harness_skills across extends and checks selection against inherited harnesses", () => {
+    const source = chainFixture();
+    file(
+      join(source, "profiles/mac.toml"),
+      'harnesses = ["codex", "claude"]\ntemplate = "personal"\npacks = ["base"]\n[harness_skills.claude]\nenable = ["review"]\n',
+    );
+    file(join(source, "profiles/studio.toml"), 'extends = "mac"\npacks = ["server"]\n[harness_skills.claude]\nenable = ["shared"]\ndisable = ["publish"]\n');
+    expect(loadProfileConfig(source, "studio").harnessSkills).toEqual({ claude: { enable: ["review", "shared"], disable: ["publish"] } });
+    file(join(source, "profiles/studio.toml"), 'extends = "mac"\npacks = ["server"]\n[harness_skills.generic]\nenable = ["shared"]\n');
+    expect(() => loadProfileConfig(source, "studio")).toThrow(
+      /studio\.toml: harness_skills\.generic configures harness "generic", which is not selected by profile "studio"/,
+    );
+  });
+
+  test("requires the resolved profile to set harnesses and template", () => {
+    const source = chainFixture();
+    file(join(source, "profiles/partial.toml"), 'packs = ["base"]\n');
+    expect(() => loadProfileConfig(source, "partial")).toThrow(/profile "partial" must set harnesses and template/);
+    file(join(source, "profiles/root.toml"), 'packs = ["base"]\n');
+    file(join(source, "profiles/leaf.toml"), 'extends = "root"\nharnesses = ["codex"]\npacks = ["server"]\n');
+    expect(() => loadProfileConfig(source, "leaf")).toThrow(
+      /leaf\.toml: profile "leaf" must set harnesses and template, directly or through extends \(chain: root -> leaf\)/,
+    );
+    file(join(source, "profiles/leaf.toml"), 'extends = "root"\nharnesses = ["codex"]\ntemplate = "personal"\npacks = ["server"]\n');
+    expect(loadProfileConfig(source, "leaf")).toMatchObject({ harnesses: ["codex"], template: "personal", packs: ["base", "server"], chain: ["root", "leaf"] });
+    file(join(source, "profiles/root.toml"), 'harnesses = ["codex"]\ntemplate = "personal"\npacks = ["base"]\n');
+    file(join(source, "profiles/leaf.toml"), 'extends = "root"\nharnesses = []\n');
+    expect(() => loadProfileConfig(source, "leaf")).toThrow(/leaf\.toml: harnesses must not be empty/);
+  });
+});
+
 describe("project configuration", () => {
   function projectFixture(): { root: string; config: string } {
     const root = temp();
@@ -206,7 +388,7 @@ describe("project configuration", () => {
     const config = projectConfigPath(root);
     file(
       config,
-      `harnesses = [\"codex\", \"claude-code\"]\n[budgets]\ninstruction_layer_bytes = 20000\n[[scopes]]\npath = \".\"\ntemplate = \"software\"\npacks = [\"base\"]\n[[scopes]]\npath = \"apps/ios/../ios\"\ntemplate = \"project:custom\"\npacks = [\"project:deploy\"]\nharnesses = [\"codex\"]\n`,
+      `harnesses = [\"codex\", \"claude\"]\n[budgets]\ninstruction_layer_bytes = 20000\n[[scopes]]\npath = \".\"\ntemplate = \"software\"\npacks = [\"base\"]\n[[scopes]]\npath = \"apps/ios/../ios\"\ntemplate = \"project:custom\"\npacks = [\"project:deploy\"]\nharnesses = [\"codex\"]\n`,
     );
     return { root, config };
   }
@@ -214,13 +396,56 @@ describe("project configuration", () => {
   test("normalizes scopes, fills optional lists, and parses owned source IDs", () => {
     const { config } = projectFixture();
     expect(loadProjectConfig(config)).toEqual({
-      harnesses: ["codex", "claude-code"],
+      harnesses: ["codex", "claude"],
       budgets: { instructionLayerBytes: 20000, effectiveInstructionBytes: undefined, skillMarkdownBytes: undefined },
+      claudeImportAgentsMd: true,
+      exclusive: false,
+      exclusiveAllow: [],
       scopes: [
-        { path: ".", template: "software", packs: ["base"], harnesses: undefined, skillsEnable: [], skillsDisable: [] },
-        { path: "apps/ios", template: "project:custom", packs: ["project:deploy"], harnesses: ["codex"], skillsEnable: [], skillsDisable: [] },
+        {
+          path: ".",
+          template: "software",
+          packs: ["base"],
+          harnesses: undefined,
+          skillsEnable: [],
+          skillsDisable: [],
+          harnessSkills: {},
+          exclusive: undefined,
+          exclusiveAllow: [],
+        },
+        {
+          path: "apps/ios",
+          template: "project:custom",
+          packs: ["project:deploy"],
+          harnesses: ["codex"],
+          skillsEnable: [],
+          skillsDisable: [],
+          harnessSkills: {},
+          exclusive: undefined,
+          exclusiveAllow: [],
+        },
       ],
     });
+  });
+
+  test("parses exclusive mode at the top level and per scope", () => {
+    const { config } = projectFixture();
+    file(
+      config,
+      'harnesses = ["codex"]\nexclusive = true\nexclusive_allow = ["vendor-*"]\n[[scopes]]\npath = "."\npacks = []\n[[scopes]]\npath = "apps/ios"\npacks = []\nexclusive = false\nexclusive_allow = ["ios-?"]\n',
+    );
+    expect(loadProjectConfig(config)).toMatchObject({
+      exclusive: true,
+      exclusiveAllow: ["vendor-*"],
+      scopes: [
+        { path: ".", exclusive: undefined, exclusiveAllow: [] },
+        { path: "apps/ios", exclusive: false, exclusiveAllow: ["ios-?"] },
+      ],
+    });
+    file(config, 'harnesses = ["codex"]\nexclusive_allow = ["a/b"]\n[[scopes]]\npath = "."\npacks = []\n');
+    expect(() => loadProjectConfig(config)).toThrow("must match a skill directory name, not a path");
+    file(config, 'harnesses = ["codex"]\nexclusive = "yes"\n[[scopes]]\npath = "."\npacks = []\n');
+    expect(() => loadProjectConfig(config)).toThrow("exclusive must be a boolean");
   });
 
   test("discovers config from a descendant or file", () => {
@@ -237,12 +462,73 @@ describe("project configuration", () => {
     expect(() => loadProjectConfig(config)).toThrow(/duplicate normalized scope/);
     file(config, `harnesses = ["codex"]\n[[scopes]]\npath = "apps/ios"\npacks = []\n`);
     expect(() => loadProjectConfig(config)).toThrow(/Repository Scope/);
-    file(config, `harnesses = [\"codex\"]\n[[scopes]]\npath = \".\"\npacks = []\nharnesses = [\"claude-code\"]\n`);
+    file(config, `harnesses = [\"codex\"]\n[[scopes]]\npath = \".\"\npacks = []\nharnesses = [\"claude\"]\n`);
     expect(() => loadProjectConfig(config)).toThrow(/subset/);
+    file(config, `harnesses = ["claude-code"]\n[[scopes]]\npath = "."\npacks = []\n`);
+    expect(() => loadProjectConfig(config)).toThrow(/"claude-code", which was renamed to "claude"/);
     file(config, `harnesses = [\"codex\"]\n[[scopes]]\npath = \"..\"\npacks = []\n`);
     expect(() => loadProjectConfig(config)).toThrow(/escapes/);
     file(config, `harnesses = [\"codex\"]\n[[scopes]]\npath = \".\"\npacks = [\"base\"]\n[[scopes]]\npath = \"apps/ios\"\npacks = [\"base\"]\n`);
     expect(() => loadProjectConfig(config)).toThrow(/repeats inherited pack/);
     expect(() => discoverProjectConfig(temp())).toThrow(/no .*config\.toml found/);
+  });
+  test("parses per-harness skill selections and the CLAUDE.md import opt-out", () => {
+    const { config } = projectFixture();
+    file(
+      config,
+      [
+        'harnesses = ["generic", "codex", "claude"]',
+        "claude_import_agents_md = false",
+        "[[scopes]]",
+        'path = "."',
+        "packs = []",
+        "[scopes.harness_skills.claude]",
+        'enable = ["deploy"]',
+        'disable = ["review"]',
+        "[scopes.harness_skills.generic]",
+        'disable = ["deploy"]',
+        "",
+      ].join("\n"),
+    );
+    const loaded = loadProjectConfig(config);
+    expect(loaded.claudeImportAgentsMd).toBeFalse();
+    expect(loaded.scopes[0]!.harnessSkills).toEqual({ claude: { enable: ["deploy"], disable: ["review"] }, generic: { enable: [], disable: ["deploy"] } });
+  });
+
+  test("rejects invalid per-harness skill selections", () => {
+    const { config } = projectFixture();
+    const scope = (body: string, harnesses = '["codex", "claude"]') => file(config, `harnesses = ${harnesses}\n[[scopes]]\npath = "."\npacks = []\n${body}\n`);
+    scope('[scopes.harness_skills.gemini]\nenable = ["x"]');
+    expect(() => loadProjectConfig(config)).toThrow(/unknown harness "gemini"/);
+    scope('[scopes.harness_skills.generic]\nenable = ["x"]');
+    expect(() => loadProjectConfig(config)).toThrow(/harness "generic", which is not selected/);
+    scope('harnesses = ["codex"]\n[scopes.harness_skills.claude]\nenable = ["x"]');
+    expect(() => loadProjectConfig(config)).toThrow(/harness "claude", which is not selected/);
+    scope('[scopes.harness_skills.claude-code]\nenable = ["x"]');
+    expect(() => loadProjectConfig(config)).toThrow(/renamed to "claude"/);
+    scope('[scopes.harness_skills.codex]\nskills = ["x"]');
+    expect(() => loadProjectConfig(config)).toThrow(/unknown scopes\[0\]\.harness_skills\.codex key: skills/);
+    scope('[scopes.harness_skills.codex]\nenable = ["x"]\ndisable = ["x"]');
+    expect(() => loadProjectConfig(config)).toThrow(/both enables and disables "x"/);
+    scope("harness_skills = 1");
+    expect(() => loadProjectConfig(config)).toThrow(/must be a TOML table/);
+    file(config, 'harnesses = ["codex"]\nclaude_import_agents_md = "no"\n[[scopes]]\npath = "."\npacks = []\n');
+    expect(() => loadProjectConfig(config)).toThrow(/claude_import_agents_md must be a boolean/);
+  });
+
+  test("validates per-harness skill selections in profiles", () => {
+    const source = sourceFixture();
+    file(
+      join(source, "profiles/studio.toml"),
+      'harnesses = ["generic", "claude"]\ntemplate = "personal"\npacks = []\n[harness_skills.claude]\nenable = ["review"]\n',
+    );
+    expect(loadProfileConfig(source, "studio").harnessSkills).toEqual({ claude: { enable: ["review"], disable: [] } });
+    file(join(source, "profiles/studio.toml"), 'harnesses = ["generic"]\ntemplate = "personal"\npacks = []\n[harness_skills.codex]\nenable = ["review"]\n');
+    expect(() => loadProfileConfig(source, "studio")).toThrow(/not selected/);
+    file(
+      join(source, "profiles/studio.toml"),
+      'harnesses = ["claude"]\ntemplate = "personal"\npacks = []\n[harness_skills.claude]\nenable = ["project:review"]\n',
+    );
+    expect(() => loadProfileConfig(source, "studio")).toThrow(/project-owned sources/);
   });
 });

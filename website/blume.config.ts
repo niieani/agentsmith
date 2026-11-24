@@ -31,10 +31,26 @@ export default defineConfig({
           "/use-cases/feature-cookbook",
         ],
       },
-      { label: "Guides", items: ["/guides/projects-and-scopes", "/guides/packs-and-templates", "/guides/skills", "/guides/safe-workflows"] },
+      {
+        label: "Guides",
+        items: [
+          "/guides/projects-and-scopes",
+          "/guides/committing-project-instructions",
+          "/guides/packs-and-templates",
+          "/guides/skills",
+          "/guides/safe-workflows",
+        ],
+      },
       {
         label: "Reference",
-        items: ["/reference/configuration", "/reference/commands", "/reference/directives", "/reference/source-layout", "/reference/troubleshooting"],
+        items: [
+          "/reference/configuration",
+          "/reference/commands",
+          "/reference/directives",
+          "/reference/source-layout",
+          "/reference/harness-discovery",
+          "/reference/troubleshooting",
+        ],
       },
     ],
   },

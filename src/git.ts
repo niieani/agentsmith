@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { access } from "node:fs/promises";
 import { resolve, relative, sep } from "node:path";
+import { AgentsmithError, classify } from "./errors.ts";
 
 export interface CommandResult {
   stdout: string;
@@ -20,11 +21,21 @@ export class CommandError extends Error {
   }
 }
 
-export async function runCommand(command: string, args: readonly string[], options: { cwd?: string; allowFailure?: boolean } = {}): Promise<CommandResult> {
+export interface RunCommandOptions {
+  cwd?: string;
+  allowFailure?: boolean;
+  /** Replaces the inherited environment; `GIT_TERMINAL_PROMPT=0` is always set. */
+  env?: NodeJS.ProcessEnv;
+  /** Kill the command after this many milliseconds. */
+  timeoutMs?: number;
+}
+
+export async function runCommand(command: string, args: readonly string[], options: RunCommandOptions = {}): Promise<CommandResult> {
   const child = spawn(command, args, {
     cwd: options.cwd,
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    env: { ...(options.env ?? process.env), GIT_TERMINAL_PROMPT: "0" },
+    timeout: options.timeoutMs,
   });
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
@@ -80,6 +91,9 @@ export async function gitPathStatus(worktreeRoot: string, path: string): Promise
     if (code === "??") return "untracked";
     if (code === "DD" || code === "AU" || code === "UD" || code === "UA" || code === "DU" || code === "AA" || code === "UU") return "conflicted";
     if (code[0] !== " ") return "staged";
+    // A tracked file deleted only in the worktree (for example by `project clean`) holds no local content: Git still
+    // has it in the index and HEAD, so recreating it loses nothing.
+    if (code === " D") return "missing";
     if (code[1] !== " ") return "modified";
   }
 
@@ -98,18 +112,43 @@ export async function gitPathStatus(worktreeRoot: string, path: string): Promise
 
 /** Reject source changes that could be overwritten or make a pull unsafe. Ignored files are allowed. */
 export async function ensureCleanSource(sourceRoot: string): Promise<void> {
-  const worktree = await gitWorktree(sourceRoot);
+  const worktree = await classify("config", () => gitWorktree(sourceRoot));
   if (resolve(sourceRoot) !== worktree.root) {
-    throw new Error(`Source Repository must be the Git worktree root: ${sourceRoot}`);
+    throw new AgentsmithError("config", `Source Repository must be the Git worktree root: ${sourceRoot}`);
   }
   const status = await runCommand("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], { cwd: worktree.root });
   if (status.stdout.length > 0) {
-    throw new Error("Source Repository has tracked, staged, conflicted, or nonignored untracked changes");
+    throw new AgentsmithError("source-dirty", "Source Repository has tracked, staged, conflicted, or nonignored untracked changes");
   }
 }
 
 /** Pull only when Git can fast-forward, without ever prompting for credentials. */
 export async function gitPullFfOnly(sourceRoot: string): Promise<void> {
   await ensureCleanSource(sourceRoot);
-  await runCommand("git", ["pull", "--ff-only"], { cwd: sourceRoot });
+  await classify("source-pull", () => runCommand("git", ["pull", "--ff-only"], { cwd: sourceRoot }));
+}
+
+/** The checked-out commit of a Git worktree, or undefined when unavailable. */
+export async function gitHeadCommit(root: string): Promise<string | undefined> {
+  const result = await runCommand("git", ["rev-parse", "--verify", "-q", "HEAD"], { cwd: root, allowFailure: true }).catch(() => undefined);
+  return result?.exitCode === 0 ? result.stdout.trim() || undefined : undefined;
+}
+
+/** Whether Git ignores a path, so writing it cannot dirty the worktree. */
+export async function gitIsIgnored(root: string, path: string): Promise<boolean> {
+  const result = await runCommand("git", ["check-ignore", "-q", "--", path], { cwd: root, allowFailure: true });
+  if (result.exitCode > 1) throw new Error(`git check-ignore failed: ${result.stderr.trim() || `exit status ${result.exitCode}`}`);
+  return result.exitCode === 0;
+}
+
+/** Whether Git tracks a path in the index. */
+export async function gitIsTracked(root: string, path: string): Promise<boolean> {
+  const result = await runCommand("git", ["ls-files", "--error-unmatch", "--", path], { cwd: root, allowFailure: true });
+  return result.exitCode === 0;
+}
+
+/** Whether Git tracks a path, or any path below a directory. */
+export async function gitHasTracked(root: string, path: string): Promise<boolean> {
+  const result = await runCommand("git", ["ls-files", "-z", "--", path], { cwd: root, allowFailure: true });
+  return result.exitCode === 0 && result.stdout.length > 0;
 }

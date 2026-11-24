@@ -128,7 +128,7 @@ packs = ["base", "github"]
 skills_enable = ["triage-issue"]
 ```
 
-For Codex, agentsmith emits a self-contained file at:
+With the `generic` harness selected, agentsmith emits a self-contained file that Codex and other `.agents/` readers share:
 
 ```text
 .agents/skills/triage-issue/SKILL.md
@@ -186,12 +186,14 @@ Choosing the tracker pack and specializing for a harness are separate decisions.
 ```text
 packs/github/skill-slots/
 └── harnesses/
-    └── claude-code/
+    └── claude/
         └── tracker/
             └── 20-claude.md
 ```
 
 Common snippets render first, followed by harness-specific snippets. Codex remains unchanged.
+
+Codex-specific snippets are stricter. Codex reads the shared `.agents/skills` copy, so a `harnesses/codex/` snippet is an error for a skill also enabled for `generic`. Ship it only to Codex by disabling the skill for `generic` (`[harness_skills.generic] disable = ["triage-issue"]`); it then lands in `.codex/skills` with the Codex content.
 
 ## 8. Give consumers an escape hatch
 

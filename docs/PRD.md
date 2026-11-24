@@ -2,7 +2,7 @@
 
 ## Summary
 
-agentsmith is a personal, Git-backed command-line tool that assembles agent instruction files and Agent Skills for multiple machines, projects, project subtrees, and agent harnesses. It turns reusable Markdown sources into the native files that Codex and Claude Code discover.
+agentsmith is a personal, Git-backed command-line tool that assembles agent instruction files and Agent Skills for multiple machines, projects, project subtrees, and agent harnesses. It turns reusable Markdown sources into the native files that Codex, Claude Code, and other agents reading the shared `.agents/` convention discover.
 
 The CLI is named `asmith`. The canonical project spelling is lowercase `agentsmith`.
 
@@ -27,7 +27,7 @@ agentsmith exists to provide that complete workflow while keeping its source mod
 
 1. Synchronize a reusable Source Repository and generate personal artifacts for an active machine profile.
 2. Generate project-owned artifacts without performing project-side synchronization.
-3. Support Codex and Claude Code through validated, explicit harness adapters.
+3. Support Codex, Claude Code, and the shared `.agents/` convention (`generic`) through validated, explicit harness adapters.
 4. Model global, repository, and subtree scopes according to native instruction and skill discovery.
 5. Compose instructions and skills from template families, additive ordered packs, slots, snippets, and partials.
 6. Make every planned artifact explainable and previewable before it is written.
@@ -37,7 +37,7 @@ agentsmith exists to provide that complete workflow while keeping its source mod
 
 ## Non-goals for v1
 
-- A daemon, login hook, scheduler, or automatic background synchronization.
+- A daemon or login hook. Unattended synchronization uses an OS-level per-user timer (launchd or a systemd user timer) that `asmith global schedule install` sets up to run `global sync`; agentsmith runs no background process of its own.
 - Project-side `git pull` or any implicit project network operation.
 - Arbitrary custom harness definitions or configurable raw destination paths.
 - Symlink-based deployment.
@@ -46,13 +46,13 @@ agentsmith exists to provide that complete workflow while keeping its source mod
 - Boolean pack conditions, pack dependencies, conflicts, or suppressing packs.
 - Runtime skill chaining or runtime partial includes.
 - Skill version resolution as a separate package-management concept.
-- Website implementation, package publication, release automation, or multi-user administration.
+- Multi-user administration.
 
 ## Users and scenarios
 
 ### Multiple machines
 
-A laptop profile selects `base`, `personal`, and `macos`. A studio profile adds `server`. A Linux VM selects `base` and `server`. `asmith global sync` fast-forwards the shared Source Repository and regenerates every harness configured by the active profile.
+A laptop profile selects `base`, `personal`, and `macos`. A studio profile extends a shared base profile and adds `server`. A Linux VM selects `base` and `server`. `asmith global sync` fast-forwards the shared Source Repository and regenerates every harness configured by the active profile. A new machine is set up with one `asmith global init --schedule` command, after which a timer keeps it in sync unattended and `asmith global status` reports whether its last run succeeded.
 
 ### Precise instruction composition
 
@@ -108,8 +108,11 @@ Project generation requires Git for path-specific overwrite safety. Lint, diff, 
 
 v1 supports:
 
-- Codex: global `AGENTS.md`, scoped `AGENTS.md`, global Agent Skills, and scoped `.agents/skills`;
-- Claude Code: global `CLAUDE.md`, scoped `CLAUDE.md`, global Claude skills, and scoped `.claude/skills`.
+- `generic`: the shared `.agents/` convention: scoped `AGENTS.md`, global `~/.agents/skills`, and scoped `.agents/skills`;
+- `codex`: global `AGENTS.md`, scoped `AGENTS.md` shared with `generic`, and scoped `.codex/skills` for skills not enabled for `generic`;
+- `claude`: global `CLAUDE.md`, scoped `CLAUDE.md` (an `@AGENTS.md` import when its content equals the scope's `AGENTS.md`), global Claude skills, and scoped `.claude/skills`.
+
+Each skill is written once per skill root, so no harness sees the same name twice.
 
 Adapters own native paths, discovery rules, instruction shadowing checks, and skill-root behavior. The composition engine remains harness-neutral.
 
@@ -138,7 +141,7 @@ Adapters own native paths, discovery rules, instruction shadowing checks, and sk
 ### Skill selection
 
 - Packs auto-enable skills explicitly listed by their manifest.
-- A scope may explicitly enable additional skills or exclude skills it would otherwise introduce.
+- A profile or scope may explicitly enable additional skills or exclude skills it would otherwise introduce, for every selected harness or for one harness.
 - Repeated enablement of the same Source ID is idempotent.
 - Multiple packs may contribute to one enabled skill, and one pack skill-slot contribution may feed multiple enabled skills.
 - Exclusion is scope-local and cannot hide an inherited skill.
@@ -155,7 +158,7 @@ Adapters own native paths, discovery rules, instruction shadowing checks, and sk
 - The complete Generation Plan is rendered, linted, and preflighted before any write.
 - Project generation may replace only tracked-clean destinations. Dirty, staged, conflicted, untracked, or ignored existing destinations fail the whole operation.
 - Project generation has no force bypass.
-- Global generation may replace only files matching agentsmith's recorded state. Initial adoption or explicit recovery requires `--force`.
+- Global generation may replace only files matching agentsmith's recorded state. Initial adoption or explicit recovery requires `--force`; `--on-modified=backup` instead moves a modified file aside and continues, recording the backup in the run status.
 - No ownership marker or hash is inserted into an artifact.
 - Stale artifacts are deleted only when recorded as agentsmith-owned and still clean.
 - Writes are atomic per artifact, and a failed application restores the previous set.
@@ -164,7 +167,7 @@ Adapters own native paths, discovery rules, instruction shadowing checks, and sk
 ## Quality requirements
 
 - Deterministic results across repeated runs on the same inputs.
-- Strict, versioned TOML; unknown keys are errors.
+- Strict TOML with no schema-version field; unknown keys, including `version`, are errors.
 - Clear diagnostics containing the responsible source and destination paths.
 - No partial output after validation or preflight failure.
 - Unit coverage for parsing, rendering, planning, and safety rules.
@@ -172,7 +175,7 @@ Adapters own native paths, discovery rules, instruction shadowing checks, and sk
 
 ## Acceptance criteria
 
-1. Ordered pack snippets render into the exact named template slots for both built-in harnesses.
+1. Ordered pack snippets render into the exact named template slots for every built-in harness.
 2. A project with root, iOS, and API scopes generates native instruction and skill artifacts without duplicating broader pack content.
 3. A static skill passes through unchanged apart from Markdown normalization; a composed skill resolves includes and slots into a self-contained directory.
 4. Missing includes, include cycles, path traversal, malformed directives, missing required slots, and lost selected contributions fail before writes.

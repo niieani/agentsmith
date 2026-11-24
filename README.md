@@ -1,6 +1,6 @@
 # agentsmith
 
-agentsmith assembles agent instructions and skills from Git-backed templates and reusable packs. It generates native, scope-aware artifacts for Codex and Claude Code while protecting local edits.
+agentsmith assembles agent instructions and skills from Git-backed templates and reusable packs. It generates native, scope-aware artifacts for Codex, Claude Code, Antigravity, and the shared `.agents/` convention while protecting local edits.
 
 The command is `asmith`.
 
@@ -8,7 +8,7 @@ The command is `asmith`.
 
 - synchronizes one reusable Source Repository across machines;
 - selects machine behavior through profiles and ordered packs;
-- generates `AGENTS.md`, `CLAUDE.md`, and native skill directories;
+- generates `AGENTS.md`, `CLAUDE.md`, Antigravity rules, and native skill directories, placing each skill so no harness sees it twice;
 - supports repository and monorepo subtree scopes;
 - fills precise Markdown slots and flattens reusable partials;
 - previews diffs, validates composition, and explains provenance;
@@ -66,7 +66,15 @@ bun run src/cli.ts --help
 
 ## Machine setup
 
-Create `~/.agents/agentsmith/config.toml`:
+Bootstrap a machine from your Source Repository in one command:
+
+```sh
+asmith global init git@github.com:me/agent-context.git --profile laptop --schedule
+```
+
+This clones the repository to `~/.agents/agentsmith/source`, writes the machine config, lints, shows what it will write, runs the first sync, and installs a launchd agent (macOS) or systemd user timer (Linux) that runs `asmith global sync --on-modified=backup` every hour. If a global file such as `~/.claude/CLAUDE.md` already exists, `init` asks before replacing it (a backup is kept); pass `--yes` to accept without a prompt. Manage the timer with `asmith global schedule install|uninstall|status`. Scheduled syncs cannot use an SSH agent, so give each machine a read-only deploy key or an HTTPS token.
+
+To set up by hand instead, create `~/.agents/agentsmith/config.toml`:
 
 ```toml
 source = "~/.agents/agentsmith/source"
@@ -76,10 +84,12 @@ profile = "laptop"
 The selected Source Repository contains `agentsmith.toml`, profiles, template families, packs, skills, and partials. A minimal profile looks like:
 
 ```toml
-harnesses = ["codex", "claude-code"]
+harnesses = ["generic", "codex", "claude"]
 template = "personal"
 packs = ["base", "macos"]
 ```
+
+`generic` writes `~/.agents/skills` and project `.agents/skills`, which Codex also reads; `codex` writes `~/.codex/AGENTS.md`; `claude` writes `~/.claude/`; `antigravity` writes the always-on rule `~/.gemini/config/rules/agentsmith.md` and `~/.gemini/config/skills`. See [harness discovery](website/docs/reference/harness-discovery.md) for the full mapping.
 
 Then preview and generate:
 
@@ -93,10 +103,10 @@ asmith global sync
 
 ## Project setup
 
-Create `.config/agentsmith/config.toml` in the project root:
+Run `asmith project init --prepare` in the repository, or create `.config/agentsmith/config.toml` in the project root:
 
 ```toml
-harnesses = ["codex", "claude-code"]
+harnesses = ["generic", "codex", "claude"]
 
 [[scopes]]
 path = "."
@@ -117,7 +127,7 @@ asmith project diff
 asmith project generate
 ```
 
-Project generation never pulls Git. Existing outputs must be tracked and clean; newly generated outputs should be reviewed and committed before the next generation.
+Project generation never pulls Git. Inputs in `.config/agentsmith/` render the committed `AGENTS.md` and `CLAUDE.md`; Source Repository inputs and `*.local.md` snippets render personal `AGENTS.override.md` and `CLAUDE.local.md` files that Git never sees. Antigravity reads the shared `AGENTS.md` and gets its additions as rules in `.agents/rules/`. Skills are generated, not committed. agentsmith replaces an existing output only when Git has it tracked and clean or it still holds what agentsmith last wrote.
 
 ## Composition syntax
 

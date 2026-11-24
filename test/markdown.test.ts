@@ -126,6 +126,17 @@ describe("includes", () => {
     expect(result.trace.includes).toEqual(["partials/common.md"]);
   });
 
+  test("leaves out an include the resolver skips on purpose, keeping the spacing", async () => {
+    const result = await renderMarkdown({
+      templatePath: "template.md",
+      content: "# Title\n\n<!-- agentsmith:include personal.md -->\n\nBody.\n",
+      resolveInclude: () => null,
+    });
+    expect(result.diagnostics).toEqual([]);
+    expect(result.content).toBe("# Title\n\nBody.\n");
+    expect(result.trace.includes).toEqual([]);
+  });
+
   test("reports missing includes, resolver failures, and absent resolvers", async () => {
     const missing = await renderMarkdown({
       templatePath: "template.md",
@@ -264,5 +275,21 @@ describe("partial headings", () => {
       }),
     });
     expect(codes(result.diagnostics).filter((code) => code === "partial-setext-heading")).toHaveLength(1);
+  });
+});
+
+describe("slot headings", () => {
+  test("record the heading above each slot in template order, including headings from partials", async () => {
+    const result = await renderMarkdown({
+      templatePath: "templates/default.md",
+      content: "<!-- agentsmith:slot top -->\n\n# Guide\n\n## Notes\n\n<!-- agentsmith:slot notes -->\n\n<!-- agentsmith:include team/rules.md -->\n",
+      resolveInclude: () => ({ path: "partials/rules.md", content: "# Rules\n\n<!-- agentsmith:slot rules -->\n" }),
+    });
+    expect(result.diagnostics).toEqual([]);
+    expect(result.slotHeadings).toEqual([
+      { slot: "top", heading: null },
+      { slot: "notes", heading: "## Notes" },
+      { slot: "rules", heading: "### Rules" },
+    ]);
   });
 });

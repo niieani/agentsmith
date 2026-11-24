@@ -1,4 +1,6 @@
+import { realpathSync } from "node:fs";
 import { lstat, readdir, readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 
 export interface WalkedFile {
@@ -51,4 +53,27 @@ export function lexicalSort<T>(values: T[], key: (value: T) => string): T[] {
     const b = key(right);
     return a < b ? -1 : a > b ? 1 : 0;
   });
+}
+
+/**
+ * Resolve symlinks in an existing root such as a home, project, or source directory, so paths below it compare
+ * equal to what Git reports (macOS `/var` -> `/private/var`, Fedora Atomic `/home` -> `/var/home`). Only roots are
+ * canonicalized: managed paths below them keep their spelling so symlinked destinations are still rejected.
+ */
+export function canonicalRoot(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+/** The home directory with symlinked ancestors resolved. */
+export function canonicalHome(): string {
+  return canonicalRoot(homedir());
+}
+
+/** The home agentsmith writes under: a machine config's sandbox `home` when set, otherwise the real one. */
+export function agentsmithHome(home?: string): string {
+  return home ?? canonicalHome();
 }

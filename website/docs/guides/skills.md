@@ -13,6 +13,18 @@ For a scope, enabled skills are the ordered union of:
 2. `skills_enable` entries on the profile or scope;
 3. minus `skills_disable` entries at that same scope.
 
+A `[harness_skills.<harness>]` table, or `[scopes.harness_skills.<harness>]` in a project, then adds `enable` and removes `disable` entries for that harness only:
+
+```toml
+[harness_skills.claude]
+enable = ["claude-hooks"]
+disable = ["publish"]
+```
+
+## Placement
+
+Each skill is written once for every distinct root its harnesses read. A skill enabled for `generic` lands in `.agents/skills` and also serves Codex; a skill enabled for `codex` but not `generic` lands in `.codex/skills`; Claude Code always gets `.claude/skills`. Harness-specific skill-slot content applies only where one harness alone reads the copy, so Codex-specific content for a skill in `.agents/skills` is an error. See [harness discovery](/reference/harness-discovery#how-agentsmith-places-skills).
+
 A pack that enables skills declares them in its optional `pack.toml`:
 
 ```toml
@@ -83,7 +95,7 @@ A skill can declare slots, and selected packs can provide reusable content for t
 
 ```text
 packs/github/skill-slots/tracker/10-github.md
-packs/github/skill-slots/harnesses/claude-code/tracker/20-claude.md
+packs/github/skill-slots/harnesses/claude/tracker/20-claude.md
 ```
 
 Contributions are keyed by slot name, not skill name. The same `tracker` snippet is inserted into every enabled skill that declares a `tracker` slot. A project-owned pack can therefore supply one project's tracker instructions to any number of shared skills without knowing their names.
@@ -92,6 +104,25 @@ This produces flat, self-contained skills tailored to the selected packs and har
 
 ## Collision protection
 
-agentsmith fails when two visible sources would emit the same public skill name or when a planned skill collides with an unmanaged visible skill. Use `asmith project explain` to see where a skill was enabled and `lint` to detect collisions before writing.
+agentsmith fails when two visible sources would emit the same public skill name or when a planned skill collides with an unmanaged visible skill. Visibility covers every root a harness reads: for Codex, `.agents/skills` and `.codex/skills` both count. Use `asmith project explain` to see where a skill was enabled and `lint` to detect collisions before writing.
+
+## Exclusive mode
+
+By default agentsmith leaves skills it did not write alone. To make sure every skill your agents load comes from the Source Repository, turn on exclusive mode in the profile:
+
+```toml title="profiles/laptop.toml"
+exclusive = true
+exclusive_allow = ["find-skills"]
+```
+
+Now `asmith global lint` and every sync report any other skill in `~/.agents/skills`, `~/.codex/skills`, or `~/.claude/skills`, depending on the selected harnesses. Bring one under management with:
+
+```sh
+asmith global adopt --skill pdf-tools
+```
+
+This copies the skill to `skills/pdf-tools/` in the Source Repository, enables it in the profile's pack, commits, and regenerates it in place. Skills installed by another tool that you want to keep separate belong in `exclusive_allow`. An unattended `global sync --on-modified=backup` moves anything else to `~/.agents/agentsmith/backups/` and records it in `status.json`.
+
+Projects opt in the same way with `exclusive = true` in `.config/agentsmith/config.toml`, per scope if needed, and adopt with `asmith project adopt --skill NAME`. See [exclusive mode](/reference/configuration#exclusive-mode).
 
 For a complete source-to-output example, continue with [Create a composable skill](/use-cases/skill-author).

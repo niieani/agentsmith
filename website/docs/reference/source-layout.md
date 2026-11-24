@@ -13,7 +13,7 @@ templates/
   software/
     default.md
     codex.md
-    claude-code.md
+    claude.md
 packs/
   github/
     pack.toml
@@ -45,6 +45,8 @@ effective_instruction_bytes = 32768
 skill_markdown_bytes = 16384
 ```
 
+It may also override [harness limits](/reference/configuration#harness-limits) per harness with `[budgets.<harness>]` tables.
+
 Configuration files have no schema-version field. A `version` key is rejected.
 
 ## Local machine-only source
@@ -70,7 +72,7 @@ packs/github/skill-slots/
 ├── tracker/
 │   └── 10-github.md
 └── harnesses/
-    └── claude-code/
+    └── claude/
         └── tracker/
             └── 20-claude.md
 ```

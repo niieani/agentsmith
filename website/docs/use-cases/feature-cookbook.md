@@ -113,10 +113,10 @@ agentsmith rebases `# Evidence` to `### Evidence` and preserves the relative chi
 templates/software/
 ├── default.md
 ├── codex.md
-└── claude-code.md
+└── claude.md
 ```
 
-Use only `default.md` while the structure is shared. Add a harness-specific file when the whole structure genuinely differs; it wins over the fallback for that harness.
+Use only `default.md` while the structure is shared. Add a harness-specific file when the whole structure genuinely differs; it wins over the fallback for that harness. Because `generic` and `codex` share one `AGENTS.md`, `codex.md` serves both when `codex` is selected.
 
 For a smaller difference, keep one template and add a harness-specific pack contribution:
 
@@ -132,13 +132,13 @@ packs/review/instructions/codex/tools/20-codex.md
 **Problem:** two machines share personal preferences, but have different operating systems, tools, or responsibilities.
 
 ```toml title="profiles/laptop.toml"
-harnesses = ["codex", "claude-code"]
+harnesses = ["generic", "codex", "claude"]
 template = "personal"
 packs = ["base", "macos", "ios"]
 ```
 
 ```toml title="profiles/server.toml"
-harnesses = ["codex"]
+harnesses = ["generic", "codex"]
 template = "personal"
 packs = ["base", "linux", "operations"]
 ```
@@ -146,6 +146,41 @@ packs = ["base", "linux", "operations"]
 Each machine's local config selects one profile. The shared Source Repository still owns both profiles and all reusable packs.
 
 **Why it helps:** machine identity is local, but machine definitions remain reviewable and synchronized.
+
+## Share a base profile between machines
+
+**Problem:** three Macs select the same harnesses, template, and base packs. Repeating them in every profile means every shared change must be made three times.
+
+```toml title="profiles/mac.toml"
+harnesses = ["generic", "codex", "claude"]
+template = "personal"
+packs = ["base", "macos"]
+```
+
+```toml title="profiles/laptop.toml"
+extends = "mac"
+packs = ["ios"]
+```
+
+The laptop renders `base`, `macos`, then `ios`. A child appends packs and skill lists, and replaces `harnesses` or `template` only when it sets them. `asmith global explain` shows the chain and which profile contributed each pack. See [extending a profile](/reference/configuration#extending-a-profile).
+
+**Why it helps:** shared machine policy lives in one file, and each machine profile states only how it differs.
+
+## Enable a skill for one harness only
+
+**Problem:** a skill that drives Claude Code hooks is useless to Codex, and a review skill should not reach Claude.
+
+```toml title="profiles/laptop.toml"
+skills_enable = ["review"]
+
+[harness_skills.claude]
+enable = ["claude-hooks"]
+disable = ["review"]
+```
+
+`skills_enable` and `skills_disable` apply to every selected harness; a `harness_skills.<harness>` table adjusts one harness after them. In a project, write it as `[scopes.harness_skills.<harness>]` below its scope. See [per-harness skills](/reference/configuration#per-harness-skills).
+
+**Why it helps:** each harness gets only the skills it can use, without splitting the profile or the pack.
 
 ## Add repository-only guidance without polluting shared packs
 
@@ -285,7 +320,7 @@ asmith project lint --warnings-as-errors
 
 **Problem:** someone edited generated `AGENTS.md` directly and then runs generation.
 
-Project generation checks Git status for each planned destination. A modified, staged, conflicted, untracked, or ignored existing output stops the entire plan. There is no project force flag.
+Project generation checks each planned destination. An existing output is replaced when Git reports it tracked and clean, or when agentsmith recorded it and its content still matches what agentsmith wrote, so ignored skills and untracked personal files regenerate freely. Any other modified, staged, conflicted, untracked, or ignored output stops the entire plan. There is no project force flag.
 
 Move the valuable change into its source template or pack, or resolve the generated file intentionally with Git, then regenerate.
 
@@ -304,6 +339,57 @@ packs/server/instructions/tools/90-storage.local.md
 agentsmith scans all Markdown in selected source directories, including ignored local files. `global sync` permits ignored source while rejecting nonignored untracked changes.
 
 **Why it helps:** exceptional host notes use the same composition pipeline without creating a public profile for a private detail.
+
+## Add a rule from the command line
+
+**Problem:** you want to add one instruction to every machine without opening the Source Repository, choosing a file number, and committing by hand.
+
+```sh
+asmith global add tools "Use Bun for scripts and tests." --dry-run
+asmith global add tools "Use Bun for scripts and tests." --push
+```
+
+`add` checks that the active template declares the `tools` slot, writes `packs/<pack>/instructions/tools/NN-use-bun-for-scripts-and-tests.md` in the next free gap, lints, commits only that file, pushes, and regenerates this machine. Other machines pick it up on their next sync. Pass `--pack NAME` when the profile selects several packs, `--harness NAME` for a harness-specific snippet, `--skill-slot` to extend every skill that declares the slot, or `--local` for a Git-ignored machine-only note. In a project, `asmith project add tools "..." --pack local` writes to a project pack instead. See [adding snippets](/reference/commands#adding-snippets).
+
+**Why it helps:** one command validates the slot, picks a non-conflicting number, and leaves the Source Repository clean.
+
+## Keep a hand edit with `global adopt`
+
+**Problem:** you added a few machine-specific lines at the top of the generated `~/.claude/CLAUDE.md`, and the next sync stops because the file changed.
+
+```sh
+asmith global adopt --dry-run
+asmith global adopt
+```
+
+When the edit is strictly before or after the generated content, `adopt` writes it as Git-ignored `*.local.md` snippets in the reserved `prepend` and `append` slots, then regenerates the same file. Use `--slot NAME` to file the text under a template section instead. Edits in the middle of generated content, and edits to skills, are refused. When the profile selects more than one pack, pass `--pack NAME`. See [adopting local edits](/reference/commands#adopting-local-edits).
+
+**Why it helps:** the local addition moves into source once, and later syncs reproduce it instead of fighting it.
+
+## Let unattended machines converge, then check them
+
+**Problem:** a server syncs itself on a timer. If someone hand-edits a generated file there, the default behavior stops every later sync until a person intervenes.
+
+```sh
+asmith global sync --on-modified=backup
+asmith global status --max-age 2h
+```
+
+With `backup`, a modified file is renamed to `<name>.agentsmith-<UTC timestamp>` (a modified skill moves under `~/.agents/agentsmith/backups/`) and the sync continues. Each backup is a warning recorded in `status.json`. `global status` exits nonzero when the last run failed or is older than `--max-age`, with a distinct [exit code](/reference/commands#exit-behavior) per failure. See [unattended global sync](/guides/safe-workflows#unattended-global-sync).
+
+**Why it helps:** machines keep converging, nothing is lost, and monitoring sees one command's exit code.
+
+## Set up a new machine in one line
+
+**Problem:** a new machine needs the context repository cloned, a machine config written, a first sync, and a scheduled job.
+
+```sh
+asmith global init git@github.com:me/agent-context.git --profile studio --schedule
+```
+
+`init` clones to `~/.agents/agentsmith/source`, checks the profile resolves, writes the machine config, lints, previews the first sync, asks before replacing global files it did not write, syncs, and installs an hourly launchd or systemd user timer that runs `global sync --on-modified=backup`. Rerunning it is safe. Give the machine non-interactive read access to the repository, such as a read-only deploy key. See [global setup](/getting-started/global-setup#quick-start-global-init).
+
+**Why it helps:** adding a machine to the fleet is one reviewed command instead of a checklist.
 
 ## Choose the next guide
 

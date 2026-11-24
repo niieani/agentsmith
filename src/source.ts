@@ -3,12 +3,49 @@ import { lstat, readFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { loadPackConfig, parseSourceId, projectSourceRoot, type SourceKind } from "./config.ts";
 import { walkFiles } from "./fs.ts";
-import type { Contribution, HarnessName, PackConfig, SkillIdentity, SourceId } from "./types.ts";
+import { HARNESS_NAMES, RENAMED_HARNESSES, type Contribution, type HarnessName, type PackConfig, type SkillIdentity, type SourceId } from "./types.ts";
 import { readSkillIdentity } from "./skills.ts";
 
 export interface SourceContext {
   sourceRoot?: string;
   projectRoot?: string;
+  /**
+   * Resolve shared inputs only: sources in the project's own `.config/agentsmith/` tree, without `*.local.md` snippets
+   * and partials. The Source Repository is ignored even when configured.
+   */
+  sharedOnly?: boolean;
+}
+
+/** A personal source left out because the context cannot resolve personal inputs. */
+export interface SkippedSource {
+  kind: SourceKind;
+  selection: string;
+}
+
+/** Thrown for a template, skill, or partial that only a Source Repository could provide while none is available. */
+export class PersonalSourceSkipped extends Error {
+  readonly kind: SourceKind;
+  readonly selection: string;
+
+  constructor(kind: SourceKind, selection: string) {
+    super(`${kind} ${JSON.stringify(selection)} is not a shared project input`);
+    this.name = "PersonalSourceSkipped";
+    this.kind = kind;
+    this.selection = selection;
+  }
+}
+
+/** Personal snippets and partials: machine-owned files that never reach the shared layer. */
+export function isLocalSource(path: string): boolean {
+  return path.endsWith(".local.md");
+}
+
+/**
+ * Whether personal inputs are unavailable, so Source IDs the project cannot resolve are skipped rather than missing:
+ * the shared layer, or project generation without a Source Repository.
+ */
+export function personalSourcesUnavailable(context: SourceContext): boolean {
+  return context.projectRoot !== undefined && (context.sharedOnly === true || context.sourceRoot === undefined);
 }
 
 export interface LoadedTemplate {
@@ -36,7 +73,7 @@ function kindPath(kind: SourceKind): string {
 }
 
 function ownerRoot(context: SourceContext, owner: "source" | "project"): string | undefined {
-  if (owner === "source") return context.sourceRoot === undefined ? undefined : resolve(context.sourceRoot);
+  if (owner === "source") return context.sourceRoot === undefined || context.sharedOnly ? undefined : resolve(context.sourceRoot);
   if (context.projectRoot === undefined) return undefined;
   const projectRoot = resolve(context.projectRoot);
   const sourceRoot = projectSourceRoot(projectRoot);
@@ -95,6 +132,8 @@ function findOwnedSource(context: SourceContext, id: SourceId, kind: SourceKind,
 
 function requiredOwners(context: SourceContext, id: SourceId, policy: "singular" | "pack"): Array<"source" | "project"> {
   if (id.owner !== undefined) return [id.owner];
+  const sourceRoot = context.sharedOnly ? undefined : context.sourceRoot;
+  context = { ...context, sourceRoot };
   if (policy === "pack") {
     return [context.sourceRoot === undefined ? undefined : "source", context.projectRoot === undefined ? undefined : "project"].filter(
       (owner): owner is "source" | "project" => owner !== undefined,
@@ -106,6 +145,7 @@ function requiredOwners(context: SourceContext, id: SourceId, policy: "singular"
 }
 
 function missingSource(context: SourceContext, id: SourceId, kind: SourceKind, owners: Array<"source" | "project">): never {
+  if (id.owner !== "project" && personalSourcesUnavailable(context)) throw new PersonalSourceSkipped(kind, id.raw);
   if (id.owner === "source" && context.sourceRoot === undefined) {
     throw new Error(`Source ID ${JSON.stringify(id.raw)} requires machine configuration with a Source Repository`);
   }
@@ -129,27 +169,47 @@ function resolveSingularSource(context: SourceContext, sourceId: string, kind: E
   return missingSource(context, id, kind, owners);
 }
 
-export async function loadTemplate(context: SourceContext, family: string, harness: HarnessName): Promise<LoadedTemplate> {
+/**
+ * Loads a template family for one instruction artifact. `harnesses` lists the harnesses sharing the artifact,
+ * most specific first; the first existing `<harness>.md` wins, then `default.md`.
+ */
+export async function loadTemplate(context: SourceContext, family: string, harnesses: HarnessName | readonly HarnessName[]): Promise<LoadedTemplate> {
   const resolved = resolveSingularSource(context, family, "template");
-  const harnessPath = join(resolved.directory, `${harness}.md`);
-  const defaultPath = join(resolved.directory, "default.md");
-  const path = existsSync(harnessPath) ? harnessPath : defaultPath;
-  if (!existsSync(path)) {
-    throw new Error(`Template family ${JSON.stringify(family)} has neither ${harness}.md nor default.md`);
+  for (const [legacy, renamed] of Object.entries(RENAMED_HARNESSES)) {
+    const legacyPath = join(resolved.directory, `${legacy}.md`);
+    if (existsSync(legacyPath)) throw new Error(`Template ${legacyPath} uses the removed harness name ${JSON.stringify(legacy)}; rename it to ${renamed}.md`);
+  }
+  const variants = typeof harnesses === "string" ? [harnesses] : [...harnesses];
+  const candidates = [...variants.map((harness) => join(resolved.directory, `${harness}.md`)), join(resolved.directory, "default.md")];
+  const path = candidates.find((candidate) => existsSync(candidate));
+  if (path === undefined) {
+    throw new Error(`Template family ${JSON.stringify(family)} has none of ${[...variants.map((harness) => `${harness}.md`), "default.md"].join(", ")}`);
   }
   const stat = await lstat(path);
   if (stat.isSymbolicLink() || !stat.isFile()) throw new Error(`Template must be a regular non-symlink file: ${path}`);
   return { selection: family, sourceId: resolved.sourceId, path, content: await readFile(path, "utf8") };
 }
 
-export function loadPacks(context: SourceContext, selections: string[]): LoadedPack[] {
+/**
+ * Loads selected packs. Where personal inputs are unavailable, a pack only the Source Repository could provide is
+ * left out and reported through `skipped`.
+ */
+export function loadPacks(context: SourceContext, selections: string[], skipped?: SkippedSource[]): LoadedPack[] {
   const loaded: LoadedPack[] = [];
   const seen = new Map<string, string>();
   for (const selection of selections) {
     const id = parseSourceId(selection);
     const owners = requiredOwners(context, id, "pack");
     const matches = owners.map((owner) => findOwnedSource(context, id, "pack", owner)).filter((match): match is ResolvedSource => match !== undefined);
-    if (matches.length === 0) missingSource(context, id, "pack", owners);
+    if (matches.length === 0) {
+      try {
+        missingSource(context, id, "pack", owners);
+      } catch (cause) {
+        if (!(cause instanceof PersonalSourceSkipped)) throw cause;
+        skipped?.push({ kind: "pack", selection });
+        continue;
+      }
+    }
     for (const match of matches) {
       const previous = seen.get(match.sourceId);
       if (previous !== undefined) {
@@ -190,19 +250,32 @@ async function contributionsBySlot(root: string, pack: string): Promise<Contribu
   return contributions;
 }
 
-export async function loadInstructionContributions(pack: LoadedPack, harness: HarnessName): Promise<Contribution[]> {
+function rejectLegacyHarnessDirectory(root: string): void {
+  for (const [legacy, renamed] of Object.entries(RENAMED_HARNESSES)) {
+    const legacyPath = join(root, legacy);
+    if (existsSync(legacyPath)) throw new Error(`${legacyPath} uses the removed harness name ${JSON.stringify(legacy)}; rename the directory to ${renamed}`);
+  }
+}
+
+/** Common instruction snippets, then each listed harness's snippets in the given order. */
+export async function loadInstructionContributions(pack: LoadedPack, harnesses: HarnessName | readonly HarnessName[]): Promise<Contribution[]> {
   const commonRoot = join(pack.directory, "instructions");
   const common = existsSync(commonRoot)
     ? (await contributionsBySlot(commonRoot, pack.sourceId)).filter((item) => {
         const first = item.path.slice(commonRoot.length + 1).split(/[\\/]/)[0];
-        return first !== "codex" && first !== "claude-code";
+        return !(HARNESS_NAMES as readonly string[]).includes(first ?? "");
       })
     : [];
-  const specific = await contributionsBySlot(join(commonRoot, harness), pack.sourceId);
+  rejectLegacyHarnessDirectory(commonRoot);
+  const specific: Contribution[] = [];
+  for (const harness of typeof harnesses === "string" ? [harnesses] : harnesses) {
+    specific.push(...(await contributionsBySlot(join(commonRoot, harness), pack.sourceId)).map((item) => ({ ...item, harness })));
+  }
   return [...common, ...specific];
 }
 
-export async function loadSkillContributions(pack: LoadedPack, harness: HarnessName): Promise<Contribution[]> {
+/** Common skill-slot snippets, then each listed harness's snippets tagged with that harness. */
+export async function loadSkillContributions(pack: LoadedPack, harnesses: HarnessName | readonly HarnessName[]): Promise<Contribution[]> {
   const root = join(pack.directory, "skill-slots");
   const common = existsSync(root)
     ? (await contributionsBySlot(root, pack.sourceId)).filter((item) => {
@@ -210,7 +283,11 @@ export async function loadSkillContributions(pack: LoadedPack, harness: HarnessN
         return first !== "harnesses";
       })
     : [];
-  const specific = await contributionsBySlot(join(root, "harnesses", harness), pack.sourceId);
+  rejectLegacyHarnessDirectory(join(root, "harnesses"));
+  const specific: Contribution[] = [];
+  for (const harness of typeof harnesses === "string" ? [harnesses] : harnesses) {
+    specific.push(...(await contributionsBySlot(join(root, "harnesses", harness), pack.sourceId)).map((item) => ({ ...item, harness })));
+  }
   return [...common, ...specific];
 }
 
@@ -221,5 +298,6 @@ export async function loadSkill(context: SourceContext, sourceId: string): Promi
 
 export async function resolvePartial(context: SourceContext, sourceId: string): Promise<{ path: string; content: string }> {
   const resolved = resolveSingularSource(context, sourceId, "partial");
+  if (context.sharedOnly && isLocalSource(resolved.directory)) throw new PersonalSourceSkipped("partial", sourceId);
   return { path: resolved.directory, content: await readFile(resolved.directory, "utf8") };
 }

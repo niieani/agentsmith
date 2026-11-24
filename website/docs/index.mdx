@@ -5,14 +5,16 @@ sidebar:
   order: 0
 ---
 
-agentsmith turns reusable, Git-backed source material into the native context files that coding agents already understand. Define templates, packs, and skills once; select them for a machine or repository; then let `asmith` generate `AGENTS.md`, `CLAUDE.md`, and native skill directories.
+agentsmith turns reusable, Git-backed source material into the native context files that coding agents already understand. Define templates, packs, and skills once; select them for a machine or repository; then let `asmith` generate `AGENTS.md`, `CLAUDE.md`, Antigravity rules, and native skill directories.
 
 Install the `asmith` command from npm with Node 24 or newer, through Homebrew on Apple Silicon macOS, or as a standalone binary from GitHub Releases.
 
 ## Why agentsmith?
 
 - Keep shared instructions consistent across long-running machines.
-- Adapt the same guidance to Codex and Claude Code.
+- Set up a machine with one command and let a scheduled job keep it in sync unattended.
+- Check each machine with `global status`, keep hand edits as backups, and adopt local additions back into source.
+- Adapt the same guidance to Codex, Claude Code, Antigravity, and the shared `.agents/` convention.
 - Compose project context for repositories and monorepo subtrees.
 - Generate self-contained skills without runtime include chains.
 - Review every change and protect hand-edited output.
@@ -21,7 +23,7 @@ Install the `asmith` command from npm with Node 24 or newer, through Homebrew on
 
 ### Global context
 
-A machine profile selects reusable packs and a template. `asmith global sync` fast-forwards the source repository and regenerates global instructions and skills.
+A machine profile selects reusable packs and a template. `asmith global sync` fast-forwards the source repository and regenerates global instructions and skills. `asmith global init` sets up a new machine in one line and can install a timer that syncs it every hour.
 
 ### Project context
 
