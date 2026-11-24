@@ -1,4 +1,5 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { isatty } from "node:tty";
 import { mkdir, readdir, readFile, rm, rmdir } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { generateProject, runRecordedGlobal } from "./commands.ts";
@@ -151,6 +152,12 @@ export function snippetFileName(number: number, slug: string, local = false): st
 }
 
 async function readStdin(): Promise<string> {
+  // A synchronous read of descriptor 0 works for files and pipes alike; some runtimes end the stream early on Linux.
+  try {
+    return readFileSync(0, "utf8");
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code !== "EAGAIN") throw cause;
+  }
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
   return Buffer.concat(chunks).toString("utf8");
@@ -163,7 +170,7 @@ async function snippetContent(options: AddOptions): Promise<string> {
   let content: string;
   if (options.text !== undefined) content = options.text;
   else if (options.file !== undefined) content = await classify("config", () => readFile(resolve(options.file!), "utf8"));
-  else if (process.stdin.isTTY) throw new AgentsmithError("config", "Pass the snippet as text, with --file PATH, or on standard input");
+  else if (isatty(0)) throw new AgentsmithError("config", "Pass the snippet as text, with --file PATH, or on standard input");
   else content = await readStdin();
   content = content.replace(/\r\n?/g, "\n");
   if (!content.trim()) throw new AgentsmithError("config", "The snippet is empty");

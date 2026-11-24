@@ -306,7 +306,7 @@ describe("global add", () => {
     const tracked = await f.asmith(["global", "add", "notes", "Not ignored.", "--local"]);
     expect(tracked.exitCode).toBe(2);
     expect(tracked.stderr).toContain("not ignored by Git");
-    expect(await readdir(f.notes)).toEqual(["10-shared.md", "11-machine-only.local.md"]);
+    expect((await readdir(f.notes)).sort()).toEqual(["10-shared.md", "11-machine-only.local.md"]);
   });
 
   test("--pack is required with several candidate packs, for add and adopt", async () => {
