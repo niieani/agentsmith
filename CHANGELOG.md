@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.1](https://github.com/niieani/agentsmith/compare/v1.0.0...v1.0.1) (2026-11-27)
+
+
+### Bug Fixes
+
+* build macOS release binaries on the macos-26 runner ([7052fd5](https://github.com/niieani/agentsmith/commit/7052fd5f038e2773a130a29f2bd8df51f98385ef))
+* build macOS release binaries on the macos-26 runner ([e229169](https://github.com/niieani/agentsmith/commit/e229169e708acf115a9f2ce769563f306fb9064c))
+
 ## [1.0.0](https://github.com/niieani/agentsmith/compare/v0.3.0...v1.0.0) (2026-11-24)
 
 
